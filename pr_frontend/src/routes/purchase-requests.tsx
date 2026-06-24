@@ -1,0 +1,90 @@
+import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { Download, FilePlus2, Filter } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PageHeader } from "@/components/app/page-header";
+import { PRTable } from "@/components/app/pr-table";
+import { apiGetPurchaseRequests } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+
+export const Route = createFileRoute("/purchase-requests")({
+  head: () => ({
+    meta: [
+      { title: "Purchase Requests — DOST Caraga" },
+      { name: "description", content: "Browse, filter, and track all Purchase Requests across DOST Caraga offices." },
+    ],
+  }),
+  component: PRListPage,
+});
+
+function PRListPage() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { data: purchaseRequests = [], isLoading, error } = useQuery({
+    queryKey: ["purchase-requests"],
+    queryFn: apiGetPurchaseRequests,
+  });
+
+  if (pathname !== "/purchase-requests") {
+    return <Outlet />;
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-7xl space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
+      <PageHeader
+        eyebrow="Procurement"
+        title="Purchase Requests"
+        subtitle="All Purchase Requests across offices and fund sources."
+        actions={
+          <>
+            <Button variant="outline" className="gap-2 border-border"><Download className="h-4 w-4" /> Export</Button>
+            <Button asChild className="gap-2"><Link to="/purchase-requests/new"><FilePlus2 className="h-4 w-4" /> Create PR</Link></Button>
+          </>
+        }
+      />
+
+      <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Filter className="h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search PR No., office, project…" className="h-9 min-w-0 border-border bg-background sm:max-w-xs" />
+        </div>
+        <div className="grid grid-cols-1 gap-2 min-[430px]:grid-cols-3 sm:flex sm:flex-wrap">
+          <Select defaultValue="all">
+            <SelectTrigger className="h-9 w-full border-border sm:w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="pending">Pending Validation</SelectItem>
+              <SelectItem value="approval">For Approval</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="returned">Returned</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select defaultValue="all">
+            <SelectTrigger className="h-9 w-full border-border sm:w-[140px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Funds</SelectItem>
+              <SelectItem value="gaa">GAA</SelectItem>
+              <SelectItem value="trust">Trust</SelectItem>
+              <SelectItem value="special">Special</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select defaultValue="2026">
+            <SelectTrigger className="h-9 w-full border-border sm:w-[110px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="2026">FY 2026</SelectItem>
+              <SelectItem value="2025">FY 2025</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {error && <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">{error instanceof Error ? error.message : "Unable to load purchase requests."}</div>}
+      {isLoading ? (
+        <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">Fetching data, kindly wait.</div>
+      ) : (
+        <PRTable rows={purchaseRequests} />
+      )}
+    </div>
+  );
+}
