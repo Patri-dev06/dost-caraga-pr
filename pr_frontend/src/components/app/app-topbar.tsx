@@ -1,6 +1,6 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useState } from "react";
-import { Bell, LogOut, Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, LogOut, Moon, Search, Sun } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,21 @@ export function AppTopbar() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [signingOut, setSigningOut] = useState(false);
+  const [isDark, setIsDark] = useState(false);
   const title = titles[pathname] ?? (pathname.startsWith("/purchase-requests/") ? "Purchase Request Detail" : "DOST Procurement");
+
+  useEffect(() => {
+    setIsDark(document.documentElement.classList.contains("dark"));
+  }, []);
+
+  function toggleTheme() {
+    const nextIsDark = !isDark;
+
+    document.documentElement.classList.toggle("dark", nextIsDark);
+    document.documentElement.style.colorScheme = nextIsDark ? "dark" : "light";
+    localStorage.setItem("dost-theme", nextIsDark ? "dark" : "light");
+    setIsDark(nextIsDark);
+  }
 
   async function handleLogout() {
     if (signingOut) return;
@@ -63,8 +77,18 @@ export function AppTopbar() {
           <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Search PRs, items, references…" className="h-9 w-64 border-border bg-background pl-8 2xl:w-72" />
         </div>
-        <Button variant="ghost" size="icon" className="text-navy">
+        <Button variant="ghost" size="icon" className="rounded-full text-navy" aria-label="Notifications" title="Notifications">
           <Bell className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full border border-border bg-background/70 text-navy shadow-sm hover:bg-accent"
+          onClick={toggleTheme}
+          aria-label={isDark ? "Switch to light mode" : "Switch to night mode"}
+          title={isDark ? "Light mode" : "Night mode"}
+        >
+          {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

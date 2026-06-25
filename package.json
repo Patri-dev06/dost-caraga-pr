@@ -1,0 +1,11 @@
+{
+  "name": "dost-caraga-procurement-system",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "setup": "node scripts/setup.mjs",
+    "build": "npm --prefix pr_frontend run build",
+    "lint": "npm --prefix pr_frontend run lint",
+    "test:backend": "pr_backend/vendor/bin/phpunit --configuration pr_backend/phpunit.xml"
+  }
+}

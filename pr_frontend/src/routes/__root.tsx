@@ -8,6 +8,21 @@ import { Toaster } from "@/components/ui/sonner";
 import { AppQueryProvider } from "@/lib/query";
 import { AUTH_EXPIRED_EVENT, getAuthIdleTimeoutMs, hasValidToken, recordAuthActivity } from "@/lib/api";
 
+const themeInitializationScript = `
+  (() => {
+    try {
+      const savedTheme = localStorage.getItem("dost-theme");
+      const isDark = savedTheme === "dark"
+        || (savedTheme === null && window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+      document.documentElement.classList.toggle("dark", isDark);
+      document.documentElement.style.colorScheme = isDark ? "dark" : "light";
+    } catch {
+      // Keep the default light theme when browser storage is unavailable.
+    }
+  })();
+`;
+
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -59,8 +74,9 @@ export const Route = createRootRoute({
 
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitializationScript }} />
         <HeadContent />
       </head>
       <body>

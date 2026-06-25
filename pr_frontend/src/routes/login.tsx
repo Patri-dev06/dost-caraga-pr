@@ -55,12 +55,7 @@ function AuthPage() {
             </div>
           </div>
 
-          <div className="mt-8 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-card/70 px-3.5 py-1.5">
-            <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-            <span className="label-eyebrow text-primary">Procurement Management Platform</span>
-          </div>
-
-          <h1 className="mt-5 text-4xl font-bold leading-[1.1] text-navy xl:text-5xl">
+          <h1 className="mt-8 text-4xl font-bold leading-[1.1] text-navy xl:text-5xl">
             Streamline procurement, validation, and approvals in one platform.
           </h1>
           <p className="mt-5 max-w-lg text-base leading-relaxed text-muted-foreground">

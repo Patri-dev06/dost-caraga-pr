@@ -135,14 +135,19 @@
 
 @layer base {
   * { border-color: var(--color-border); }
+  html {
+    color-scheme: light;
+    overflow-x: hidden;
+  }
+  html.dark { color-scheme: dark; }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     overflow-x: hidden;
+    transition: background-color 180ms ease, color 180ms ease;
   }
-  html { overflow-x: hidden; }
   h1, h2, h3, h4 { color: var(--color-navy); letter-spacing: -0.01em; }
   .label-eyebrow {
     text-transform: uppercase;

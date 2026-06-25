@@ -133,21 +133,7 @@ Appendix E shall contain the procurement and budget documents used as basis for 
 
 ---
 
-# 16. Lovable Design Prompt
-
-Use the following prompt to generate the system interface design in Lovable.
-
-```text
-Create a professional government-style web application UI for “DOST Caraga - Procurement System,” a procurement management and pre‑validation platform for Purchase Requests, PPMP checking, APP‑CSE/APP‑Non‑CSE validation, budget validation, approval routing, tracking, and audit logs.
-Use a clean DOST-inspired color palette: Primary Blue #0072BC, Light Blue Background #DDF3FF, Dark Navy #003B66, Black #000000, White #FFFFFF, and Soft Border Blue #9AD8FF. The interface should use black, white, and blue only, with a formal and minimal government system look.
-Design should be inspired by a modern DOST government system interface: light blue background, DOST-style identity area, large bold headings, rounded pill badges, white cards with thin blue borders, spacious layout, and clean dashboard sections.
-Include pages for Dashboard, Purchase Request Creation, Item Pre-Validation, Approval Inbox, PR Tracking, Procurement References, Budget Allocations, User Management, and Audit Logs. Use sidebar navigation, top bar, dashboard metric cards, clean tables, status badges, approval action buttons, item validation panels, and form sections.
-Make the UI formal, organized, readable, and suitable for internal DOST office use.
-```
-
----
-
-# 17. API Design
+# 16. API Design
 
 ### Proposed REST API endpoints
 

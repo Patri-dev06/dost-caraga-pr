@@ -15,7 +15,6 @@ A web-based procurement system designed to streamline the purchase request creat
 - **UI Components:** Radix UI + shadcn/ui
 - **Styling:** Tailwind CSS
 - **Form Handling:** React Hook Form + Zod validation
-- **Deployment:** Cloudflare Workers
 
 ## Project Structure
 
@@ -41,27 +40,28 @@ A web-based procurement system designed to streamline the purchase request creat
 ### Prerequisites
 - PHP 8.3+
 - Composer
-- Node.js / Bun
+- Node.js 20+
 - PostgreSQL
 
-### Backend Setup
+### Setup
 
 ```bash
-cd pr_backend
-composer install
-cp .env.example .env
-php artisan key:generate
-php artisan migrate
-php artisan serve
+npm run setup
 ```
 
-### Frontend Setup
+This installs frontend and backend dependencies, creates the Laravel environment
+and local PostgreSQL database, runs migrations, and seeds demo data.
+
+### Run
 
 ```bash
-cd pr_frontend
-bun install
-bun run dev
+npm run dev
 ```
+
+Open the frontend URL printed by Vite (normally `http://127.0.0.1:5173`). The root
+command starts both the Laravel API and frontend; Vite selects the next free port if 5173 is occupied.
+
+Demo login: `admin@dost.gov.ph` / `password123`
 
 ## Features (Module 1: Purchase Request Creation and Pre-Validation)
 
