@@ -14,7 +14,9 @@ import { Route as UsersRouteImport } from './routes/users'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as PurchaseRequestsRouteImport } from './routes/purchase-requests'
+import { Route as PpmpDocumentsRouteImport } from './routes/ppmp-documents'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as LibRouteImport } from './routes/lib'
 import { Route as AuditLogsRouteImport } from './routes/audit-logs'
 import { Route as ApprovalInboxRouteImport } from './routes/approval-inbox'
 import { Route as IndexRouteImport } from './routes/index'
@@ -24,6 +26,10 @@ import { Route as ReferencesAppNonCseRouteImport } from './routes/references.app
 import { Route as ReferencesAppCseRouteImport } from './routes/references.app-cse'
 import { Route as PurchaseRequestsNewRouteImport } from './routes/purchase-requests.new'
 import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requests.$prId'
+import { Route as PpmpDocumentsNewRouteImport } from './routes/ppmp-documents.new'
+import { Route as PpmpDocumentsDocIdRouteImport } from './routes/ppmp-documents.$docId'
+import { Route as LibNewRouteImport } from './routes/lib.new'
+import { Route as LibLibIdRouteImport } from './routes/lib.$libId'
 
 const ValidationRoute = ValidationRouteImport.update({
   id: '/validation',
@@ -50,9 +56,19 @@ const PurchaseRequestsRoute = PurchaseRequestsRouteImport.update({
   path: '/purchase-requests',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PpmpDocumentsRoute = PpmpDocumentsRouteImport.update({
+  id: '/ppmp-documents',
+  path: '/ppmp-documents',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibRoute = LibRouteImport.update({
+  id: '/lib',
+  path: '/lib',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuditLogsRoute = AuditLogsRouteImport.update({
@@ -100,17 +116,43 @@ const PurchaseRequestsPrIdRoute = PurchaseRequestsPrIdRouteImport.update({
   path: '/$prId',
   getParentRoute: () => PurchaseRequestsRoute,
 } as any)
+const PpmpDocumentsNewRoute = PpmpDocumentsNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => PpmpDocumentsRoute,
+} as any)
+const PpmpDocumentsDocIdRoute = PpmpDocumentsDocIdRouteImport.update({
+  id: '/$docId',
+  path: '/$docId',
+  getParentRoute: () => PpmpDocumentsRoute,
+} as any)
+const LibNewRoute = LibNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => LibRoute,
+} as any)
+const LibLibIdRoute = LibLibIdRouteImport.update({
+  id: '/$libId',
+  path: '/$libId',
+  getParentRoute: () => LibRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/approval-inbox': typeof ApprovalInboxRoute
   '/audit-logs': typeof AuditLogsRoute
+  '/lib': typeof LibRouteWithChildren
   '/login': typeof LoginRoute
+  '/ppmp-documents': typeof PpmpDocumentsRouteWithChildren
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/lib/$libId': typeof LibLibIdRoute
+  '/lib/new': typeof LibNewRoute
+  '/ppmp-documents/$docId': typeof PpmpDocumentsDocIdRoute
+  '/ppmp-documents/new': typeof PpmpDocumentsNewRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -122,12 +164,18 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/approval-inbox': typeof ApprovalInboxRoute
   '/audit-logs': typeof AuditLogsRoute
+  '/lib': typeof LibRouteWithChildren
   '/login': typeof LoginRoute
+  '/ppmp-documents': typeof PpmpDocumentsRouteWithChildren
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/lib/$libId': typeof LibLibIdRoute
+  '/lib/new': typeof LibNewRoute
+  '/ppmp-documents/$docId': typeof PpmpDocumentsDocIdRoute
+  '/ppmp-documents/new': typeof PpmpDocumentsNewRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -140,12 +188,18 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/approval-inbox': typeof ApprovalInboxRoute
   '/audit-logs': typeof AuditLogsRoute
+  '/lib': typeof LibRouteWithChildren
   '/login': typeof LoginRoute
+  '/ppmp-documents': typeof PpmpDocumentsRouteWithChildren
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/lib/$libId': typeof LibLibIdRoute
+  '/lib/new': typeof LibNewRoute
+  '/ppmp-documents/$docId': typeof PpmpDocumentsDocIdRoute
+  '/ppmp-documents/new': typeof PpmpDocumentsNewRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -159,12 +213,18 @@ export interface FileRouteTypes {
     | '/'
     | '/approval-inbox'
     | '/audit-logs'
+    | '/lib'
     | '/login'
+    | '/ppmp-documents'
     | '/purchase-requests'
     | '/reports'
     | '/settings'
     | '/users'
     | '/validation'
+    | '/lib/$libId'
+    | '/lib/new'
+    | '/ppmp-documents/$docId'
+    | '/ppmp-documents/new'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -176,12 +236,18 @@ export interface FileRouteTypes {
     | '/'
     | '/approval-inbox'
     | '/audit-logs'
+    | '/lib'
     | '/login'
+    | '/ppmp-documents'
     | '/purchase-requests'
     | '/reports'
     | '/settings'
     | '/users'
     | '/validation'
+    | '/lib/$libId'
+    | '/lib/new'
+    | '/ppmp-documents/$docId'
+    | '/ppmp-documents/new'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -193,12 +259,18 @@ export interface FileRouteTypes {
     | '/'
     | '/approval-inbox'
     | '/audit-logs'
+    | '/lib'
     | '/login'
+    | '/ppmp-documents'
     | '/purchase-requests'
     | '/reports'
     | '/settings'
     | '/users'
     | '/validation'
+    | '/lib/$libId'
+    | '/lib/new'
+    | '/ppmp-documents/$docId'
+    | '/ppmp-documents/new'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -211,7 +283,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApprovalInboxRoute: typeof ApprovalInboxRoute
   AuditLogsRoute: typeof AuditLogsRoute
+  LibRoute: typeof LibRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PpmpDocumentsRoute: typeof PpmpDocumentsRouteWithChildren
   PurchaseRequestsRoute: typeof PurchaseRequestsRouteWithChildren
   ReportsRoute: typeof ReportsRoute
   SettingsRoute: typeof SettingsRoute
@@ -260,11 +334,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchaseRequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ppmp-documents': {
+      id: '/ppmp-documents'
+      path: '/ppmp-documents'
+      fullPath: '/ppmp-documents'
+      preLoaderRoute: typeof PpmpDocumentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/lib': {
+      id: '/lib'
+      path: '/lib'
+      fullPath: '/lib'
+      preLoaderRoute: typeof LibRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/audit-logs': {
@@ -330,8 +418,62 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchaseRequestsPrIdRouteImport
       parentRoute: typeof PurchaseRequestsRoute
     }
+    '/ppmp-documents/new': {
+      id: '/ppmp-documents/new'
+      path: '/new'
+      fullPath: '/ppmp-documents/new'
+      preLoaderRoute: typeof PpmpDocumentsNewRouteImport
+      parentRoute: typeof PpmpDocumentsRoute
+    }
+    '/ppmp-documents/$docId': {
+      id: '/ppmp-documents/$docId'
+      path: '/$docId'
+      fullPath: '/ppmp-documents/$docId'
+      preLoaderRoute: typeof PpmpDocumentsDocIdRouteImport
+      parentRoute: typeof PpmpDocumentsRoute
+    }
+    '/lib/new': {
+      id: '/lib/new'
+      path: '/new'
+      fullPath: '/lib/new'
+      preLoaderRoute: typeof LibNewRouteImport
+      parentRoute: typeof LibRoute
+    }
+    '/lib/$libId': {
+      id: '/lib/$libId'
+      path: '/$libId'
+      fullPath: '/lib/$libId'
+      preLoaderRoute: typeof LibLibIdRouteImport
+      parentRoute: typeof LibRoute
+    }
   }
 }
+
+interface LibRouteChildren {
+  LibLibIdRoute: typeof LibLibIdRoute
+  LibNewRoute: typeof LibNewRoute
+}
+
+const LibRouteChildren: LibRouteChildren = {
+  LibLibIdRoute: LibLibIdRoute,
+  LibNewRoute: LibNewRoute,
+}
+
+const LibRouteWithChildren = LibRoute._addFileChildren(LibRouteChildren)
+
+interface PpmpDocumentsRouteChildren {
+  PpmpDocumentsDocIdRoute: typeof PpmpDocumentsDocIdRoute
+  PpmpDocumentsNewRoute: typeof PpmpDocumentsNewRoute
+}
+
+const PpmpDocumentsRouteChildren: PpmpDocumentsRouteChildren = {
+  PpmpDocumentsDocIdRoute: PpmpDocumentsDocIdRoute,
+  PpmpDocumentsNewRoute: PpmpDocumentsNewRoute,
+}
+
+const PpmpDocumentsRouteWithChildren = PpmpDocumentsRoute._addFileChildren(
+  PpmpDocumentsRouteChildren,
+)
 
 interface PurchaseRequestsRouteChildren {
   PurchaseRequestsPrIdRoute: typeof PurchaseRequestsPrIdRoute
@@ -350,7 +492,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApprovalInboxRoute: ApprovalInboxRoute,
   AuditLogsRoute: AuditLogsRoute,
+  LibRoute: LibRouteWithChildren,
   LoginRoute: LoginRoute,
+  PpmpDocumentsRoute: PpmpDocumentsRouteWithChildren,
   PurchaseRequestsRoute: PurchaseRequestsRouteWithChildren,
   ReportsRoute: ReportsRoute,
   SettingsRoute: SettingsRoute,

@@ -4,11 +4,14 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PpmpItem extends Model
 {
     protected $fillable = [
         'ppmp_document_id',
+        'lib_entry_id',
+        'fund_source_id',
         'project_id',
         'procurement_item_id',
         'row_number',
@@ -24,6 +27,7 @@ class PpmpItem extends Model
         'delivery_period',
         'source_of_funds',
         'estimated_budget',
+        'encumbered_amount',
         'supporting_documents',
         'remarks',
         'quantity',
@@ -37,6 +41,7 @@ class PpmpItem extends Model
             'quantity' => 'decimal:2',
             'estimated_unit_cost' => 'decimal:2',
             'estimated_budget' => 'decimal:2',
+            'encumbered_amount' => 'decimal:2',
         ];
     }
 
@@ -53,5 +58,20 @@ class PpmpItem extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    public function libEntry(): BelongsTo
+    {
+        return $this->belongsTo(LibEntry::class);
+    }
+
+    public function fundSource(): BelongsTo
+    {
+        return $this->belongsTo(FundSource::class);
+    }
+
+    public function purchaseRequestItems(): HasMany
+    {
+        return $this->hasMany(PurchaseRequestItem::class, 'ppmp_item_id');
     }
 }

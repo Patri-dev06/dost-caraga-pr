@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PurchaseRequestItem extends Model
 {
-    protected $fillable = ['purchase_request_id', 'procurement_item_id', 'name', 'description', 'uom', 'quantity', 'unit_cost'];
+    protected $fillable = ['purchase_request_id', 'procurement_item_id', 'ppmp_item_id', 'name', 'description', 'uom', 'quantity', 'unit_cost'];
 
     protected function casts(): array
     {
@@ -17,5 +17,15 @@ class PurchaseRequestItem extends Model
     public function item(): BelongsTo
     {
         return $this->belongsTo(ProcurementItem::class, 'procurement_item_id');
+    }
+
+    public function ppmpItem(): BelongsTo
+    {
+        return $this->belongsTo(PpmpItem::class);
+    }
+
+    public function purchaseRequest(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseRequest::class);
     }
 }

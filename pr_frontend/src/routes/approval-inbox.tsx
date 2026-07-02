@@ -1,149 +1,178 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { Filter, Eye } from "lucide-react";
+import { Filter, Eye, CheckCircle, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/app/page-header";
-import { StatusBadge } from "@/components/app/status-badge";
-import { fmtPHP, prTotal, PurchaseRequest } from "@/lib/mock-data";
+import { fmtPHP } from "@/lib/mock-data";
 import { toast } from "sonner";
-import { apiApprovalAction, apiGetApprovals } from "@/lib/api";
+import { apiGetApprovalInbox, apiInboxAction, type ApprovalInboxItem } from "@/lib/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/approval-inbox")({
   head: () => ({
     meta: [
       { title: "Approval Inbox — DOST Caraga" },
-      { name: "description", content: "Review, recommend, approve, return, or reject Purchase Requests awaiting action." },
+      { name: "description", content: "Review, approve, return, or reject documents awaiting your action." },
     ],
   }),
   component: Inbox,
 });
 
+const typeLabels: Record<string, string> = {
+  lib: "LIB",
+  ppmp: "PPMP",
+  purchase_request: "PR",
+};
+
+const typeColors: Record<string, string> = {
+  lib: "bg-purple-100 text-purple-700",
+  ppmp: "bg-blue-100 text-blue-700",
+  purchase_request: "bg-amber-100 text-amber-700",
+};
+
 function Inbox() {
-  const [open, setOpen] = useState<PurchaseRequest | null>(null);
+  const [tab, setTab] = useState("all");
+  const [reviewItem, setReviewItem] = useState<ApprovalInboxItem | null>(null);
+  const [remarks, setRemarks] = useState("");
   const queryClient = useQueryClient();
-  const { data: queue = [], isLoading, error } = useQuery({
-    queryKey: ["approvals"],
-    queryFn: apiGetApprovals,
+
+  const typeFilter = tab === "all" ? undefined : tab;
+
+  const { data: items = [], isLoading } = useQuery({
+    queryKey: ["approval-inbox", typeFilter],
+    queryFn: () => apiGetApprovalInbox(typeFilter),
   });
+
   const actionMutation = useMutation({
-    mutationFn: ({ id, action, reason }: { id: string; action: "recommend" | "approve" | "reject"; reason?: string }) => apiApprovalAction(id, action, reason),
-    onSuccess: async (result) => {
+    mutationFn: ({ type, id, action, payload }: { type: string; id: number; action: "approve" | "return" | "reject"; payload?: { remarks?: string } }) =>
+      apiInboxAction(type, id, action, payload),
+    onSuccess: (result) => {
       toast.success(result.message);
-      setOpen(null);
-      await queryClient.invalidateQueries({ queryKey: ["approvals"] });
-      await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
+      setReviewItem(null);
+      setRemarks("");
+      queryClient.invalidateQueries({ queryKey: ["approval-inbox"] });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to complete approval action."),
+    onError: (err: Error) => toast.error(err.message),
   });
+
+  const handleAction = (action: "approve" | "return" | "reject") => {
+    if (!reviewItem) return;
+    if ((action === "return" || action === "reject") && !remarks.trim()) {
+      toast.error("Remarks are required for return/reject.");
+      return;
+    }
+    actionMutation.mutate({
+      type: reviewItem.type,
+      id: reviewItem.id,
+      action,
+      payload: remarks.trim() ? { remarks: remarks.trim() } : undefined,
+    });
+  };
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         eyebrow="Inbox"
         title="Approval Inbox"
-        subtitle="Purchase Requests awaiting your action."
+        subtitle="Documents awaiting your action — LIB, PPMP, and Purchase Requests."
       />
 
-      <Card className="flex flex-col gap-3 border border-border bg-card p-4 sm:flex-row sm:items-center">
-        <div className="flex flex-1 items-center gap-2">
-          <Filter className="h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search PR No., office…" className="h-9 max-w-xs border-border bg-background" />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Select defaultValue="all"><SelectTrigger className="h-9 w-[160px] border-border"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="all">All Stages</SelectItem><SelectItem value="rec">Recommendation</SelectItem><SelectItem value="app">Approval</SelectItem></SelectContent>
-          </Select>
-          <Select defaultValue="all"><SelectTrigger className="h-9 w-[140px] border-border"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="all">All Funds</SelectItem><SelectItem value="gaa">GAA</SelectItem><SelectItem value="trust">Trust</SelectItem></SelectContent>
-          </Select>
-          <Select defaultValue="all"><SelectTrigger className="h-9 w-[160px] border-border"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="all">All Offices</SelectItem><SelectItem value="ro">Regional Office</SelectItem><SelectItem value="pmd">Planning</SelectItem></SelectContent>
-          </Select>
-        </div>
-      </Card>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="all">All</TabsTrigger>
+          <TabsTrigger value="lib">LIB</TabsTrigger>
+          <TabsTrigger value="ppmp">PPMP</TabsTrigger>
+          <TabsTrigger value="purchase_request">Purchase Requests</TabsTrigger>
+        </TabsList>
 
-      <Card className="overflow-hidden border border-border bg-card">
-        <Table>
-          <TableHeader><TableRow className="bg-secondary/40 hover:bg-secondary/40">
-            <TableHead className="label-eyebrow">PR No.</TableHead>
-            <TableHead className="label-eyebrow">Requesting Office</TableHead>
-            <TableHead className="label-eyebrow">Fund Type</TableHead>
-            <TableHead className="label-eyebrow text-right">Total Amount</TableHead>
-            <TableHead className="label-eyebrow">Date Submitted</TableHead>
-            <TableHead className="label-eyebrow">Current Stage</TableHead>
-            <TableHead className="label-eyebrow">Status</TableHead>
-            <TableHead className="label-eyebrow text-right">Actions</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {isLoading && (
-              <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Fetching data, kindly wait.</TableCell></TableRow>
-            )}
-            {error && (
-              <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">{error instanceof Error ? error.message : "Unable to load approval inbox."}</TableCell></TableRow>
-            )}
-            {queue.map((pr) => (
-              <TableRow key={pr.id}>
-                <TableCell className="font-semibold text-navy">{pr.prNo}</TableCell>
-                <TableCell>{pr.office}</TableCell>
-                <TableCell>{pr.fundType}</TableCell>
-                <TableCell className="text-right font-medium tabular-nums">{fmtPHP(prTotal(pr))}</TableCell>
-                <TableCell className="text-muted-foreground">{pr.dateSubmitted}</TableCell>
-                <TableCell className="text-muted-foreground">{pr.stage}</TableCell>
-                <TableCell><StatusBadge status={pr.status} /></TableCell>
-                <TableCell className="text-right">
-                  <Button size="sm" variant="outline" className="gap-1.5 border-border" onClick={() => setOpen(pr)}>
-                    <Eye className="h-3.5 w-3.5" /> Review
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
+        <TabsContent value={tab} className="mt-4">
+          <Card className="overflow-hidden border border-border bg-card">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-secondary/40 hover:bg-secondary/40">
+                  <TableHead className="label-eyebrow">Type</TableHead>
+                  <TableHead className="label-eyebrow">Document No.</TableHead>
+                  <TableHead className="label-eyebrow">Title / Purpose</TableHead>
+                  <TableHead className="label-eyebrow">Project</TableHead>
+                  <TableHead className="label-eyebrow text-right">Amount</TableHead>
+                  <TableHead className="label-eyebrow">Current Stage</TableHead>
+                  <TableHead className="label-eyebrow">Submitted By</TableHead>
+                  <TableHead className="label-eyebrow text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading && (
+                  <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Loading...</TableCell></TableRow>
+                )}
+                {!isLoading && items.length === 0 && (
+                  <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">No documents awaiting your action.</TableCell></TableRow>
+                )}
+                {items.map((item) => (
+                  <TableRow key={`${item.type}-${item.id}`}>
+                    <TableCell>
+                      <Badge variant="secondary" className={typeColors[item.type] ?? ""}>{typeLabels[item.type] ?? item.type}</Badge>
+                    </TableCell>
+                    <TableCell className="font-semibold text-navy">
+                      <DocumentLink item={item} />
+                    </TableCell>
+                    <TableCell className="max-w-[200px] truncate">{item.title}</TableCell>
+                    <TableCell className="text-sm">{item.projectTitle ?? "—"}</TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">{fmtPHP(item.amount)}</TableCell>
+                    <TableCell className="text-sm">{item.currentStage}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{item.submittedBy}</TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setReviewItem(item); setRemarks(""); }}>
+                        <Eye className="h-3.5 w-3.5" /> Review
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
-      <Dialog open={!!open} onOpenChange={(v) => !v && setOpen(null)}>
-        <DialogContent className="max-w-2xl">
-          {open && (
+      <Dialog open={!!reviewItem} onOpenChange={(v) => { if (!v) { setReviewItem(null); setRemarks(""); } }}>
+        <DialogContent className="max-w-lg">
+          {reviewItem && (
             <>
               <DialogHeader>
-                <p className="label-eyebrow">Review Purchase Request</p>
-                <DialogTitle className="text-xl">{open.prNo} — {open.projectTitle}</DialogTitle>
-                <DialogDescription>{open.office} · {open.fundSource}</DialogDescription>
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">{typeLabels[reviewItem.type]} Review</p>
+                <DialogTitle>{reviewItem.documentNo} — {reviewItem.title}</DialogTitle>
               </DialogHeader>
 
-              <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-secondary/30 p-4 text-sm">
-                <div><p className="label-eyebrow">Total Amount</p><p className="mt-0.5 font-semibold text-navy">{fmtPHP(prTotal(open))}</p></div>
-                <div><p className="label-eyebrow">Mode</p><p className="mt-0.5 font-semibold text-navy">{open.modeOfProcurement}</p></div>
-                <div><p className="label-eyebrow">Items</p><p className="mt-0.5 font-semibold text-navy">{open.items.length} line items</p></div>
-                <div><p className="label-eyebrow">Date Submitted</p><p className="mt-0.5 font-semibold text-navy">{open.dateSubmitted}</p></div>
+              <div className="grid grid-cols-2 gap-3 rounded-lg border bg-secondary/30 p-4 text-sm">
+                <div><p className="text-xs text-muted-foreground">Amount</p><p className="font-semibold">{fmtPHP(reviewItem.amount)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Project</p><p className="font-semibold">{reviewItem.projectTitle ?? "N/A"}</p></div>
+                <div><p className="text-xs text-muted-foreground">Fund Source</p><p className="font-semibold">{reviewItem.fundSource ?? "N/A"}</p></div>
+                <div><p className="text-xs text-muted-foreground">Current Stage</p><p className="font-semibold">{reviewItem.currentStage}</p></div>
               </div>
 
-              <div>
-                <p className="label-eyebrow mb-1">Purpose</p>
-                <p className="text-sm text-foreground">{open.purpose}</p>
-              </div>
-
-              <div>
-                <p className="label-eyebrow mb-1.5">Remarks (required for Return / Reject)</p>
-                <Textarea rows={3} placeholder="Add remarks…" className="border-border" />
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Remarks (required for Return / Reject)</label>
+                <Textarea rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Add remarks..." />
               </div>
 
               <DialogFooter className="flex-wrap gap-2 sm:justify-between">
                 <div className="flex gap-2">
-                  <Button variant="outline" className="border-warning/50 text-warning-foreground hover:bg-warning/10" onClick={() => { toast("Return action is not available yet."); }}>Return</Button>
-                  <Button variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => actionMutation.mutate({ id: open.id, action: "reject", reason: "Rejected from approval inbox." })}>Reject</Button>
+                  <Button variant="outline" size="sm" className="text-yellow-700 border-yellow-300" onClick={() => handleAction("return")} disabled={actionMutation.isPending}>
+                    <RotateCcw className="mr-1 h-3.5 w-3.5" />Return
+                  </Button>
+                  <Button variant="outline" size="sm" className="text-destructive border-destructive/30" onClick={() => handleAction("reject")} disabled={actionMutation.isPending}>
+                    <XCircle className="mr-1 h-3.5 w-3.5" />Reject
+                  </Button>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" className="border-border" onClick={() => actionMutation.mutate({ id: open.id, action: "recommend" })}>Recommend</Button>
-                  <Button onClick={() => actionMutation.mutate({ id: open.id, action: "approve" })}>Approve</Button>
-                </div>
+                <Button size="sm" onClick={() => handleAction("approve")} disabled={actionMutation.isPending}>
+                  <CheckCircle className="mr-1.5 h-4 w-4" />Approve
+                </Button>
               </DialogFooter>
             </>
           )}
@@ -151,4 +180,17 @@ function Inbox() {
       </Dialog>
     </div>
   );
+}
+
+function DocumentLink({ item }: { item: ApprovalInboxItem }) {
+  switch (item.type) {
+    case "lib":
+      return <Link to="/lib/$libId" params={{ libId: String(item.id) }} className="hover:underline">{item.documentNo}</Link>;
+    case "ppmp":
+      return <Link to="/ppmp-documents/$docId" params={{ docId: String(item.id) }} className="hover:underline">{item.documentNo}</Link>;
+    case "purchase_request":
+      return <Link to="/purchase-requests/$prId" params={{ prId: String(item.id) }} className="hover:underline">{item.documentNo}</Link>;
+    default:
+      return <span>{item.documentNo}</span>;
+  }
 }

@@ -844,3 +844,597 @@ function textFromRelation(value: string | number | BackendNamedRecord | null | u
 function dateOnly(value: string | null | undefined) {
   return value?.split("T")[0] ?? null;
 }
+
+// ============================================================
+// LIB (Line Item Budget) Types & API
+// ============================================================
+
+export type LibEntryRecord = {
+  id: number;
+  projectId: number;
+  projectTitle: string | null;
+  fundSourceId: number;
+  fundSourceName: string | null;
+  budgetYear: number;
+  papCode: string | null;
+  programTitle: string | null;
+  implementingAgency: string | null;
+  totalDuration: string | null;
+  cooperatingAgency: string | null;
+  projectLeader: string | null;
+  monitoringAgency: string | null;
+  objectOfExpenditure: string;
+  accountCode: string;
+  allocatedAmount: number;
+  availableAmount: number;
+  status: "Draft" | "Submitted" | "Approved" | "Amended" | "Cancelled" | "Returned" | "Rejected";
+  version: number;
+  parentId: number | null;
+  createdBy: string | null;
+  approvedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+  createdAt: string | null;
+};
+
+export type LibLineItemPayload = {
+  main_category: string;
+  sub_category: string;
+  specific_item?: string | null;
+  custom_item_name?: string | null;
+  approved_lib_amount?: number;
+  jan?: number;
+  feb?: number;
+  mar?: number;
+  apr?: number;
+  may?: number;
+  jun?: number;
+  jul?: number;
+  aug?: number;
+  sep?: number;
+  oct?: number;
+  nov?: number;
+  dec_amount?: number;
+};
+
+export type LibLineItemRecord = {
+  id: number;
+  libEntryId: number;
+  mainCategory: string;
+  subCategory: string;
+  specificItem: string | null;
+  customItemName: string | null;
+  approvedLibAmount: number;
+  jan: number;
+  feb: number;
+  mar: number;
+  apr: number;
+  may: number;
+  jun: number;
+  jul: number;
+  aug: number;
+  sep: number;
+  oct: number;
+  nov: number;
+  decAmount: number;
+  total: number;
+  sortOrder: number;
+};
+
+export type LibEntryCreatePayload = {
+  project_id: number;
+  fund_source_id: number;
+  budget_year: number;
+  pap_code?: string;
+  program_title?: string;
+  implementing_agency?: string;
+  total_duration?: string;
+  cooperating_agency?: string;
+  project_leader?: string;
+  monitoring_agency?: string;
+  object_of_expenditure: string;
+  account_code: string;
+  allocated_amount: number;
+  line_items?: LibLineItemPayload[];
+};
+
+export type LibBalanceRecord = {
+  allocated: number;
+  committed: number;
+  available: number;
+};
+
+export type ApprovalStepRecord = {
+  id: number;
+  stageName: string | null;
+  approverName: string;
+  approverDesignation: string | null;
+  action: string;
+  remarks: string | null;
+  actedAt: string | null;
+};
+
+export type ApprovalInboxItem = {
+  id: number;
+  type: "lib" | "ppmp" | "purchase_request";
+  documentNo: string;
+  title: string;
+  amount: number;
+  currentStage: string;
+  submittedAt: string | null;
+  submittedBy: string;
+  projectTitle: string | null;
+  fundSource: string | null;
+};
+
+type BackendLibEntry = {
+  id: number;
+  project_id: number;
+  project_title: string | null;
+  fund_source_id: number;
+  fund_source_name: string | null;
+  budget_year: number;
+  pap_code: string | null;
+  program_title: string | null;
+  implementing_agency: string | null;
+  total_duration: string | null;
+  cooperating_agency: string | null;
+  project_leader: string | null;
+  monitoring_agency: string | null;
+  object_of_expenditure: string;
+  account_code: string;
+  allocated_amount: number;
+  available_amount: number;
+  status: string;
+  version: number;
+  parent_id: number | null;
+  created_by: string | null;
+  approved_at: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  created_at: string | null;
+};
+
+type BackendLibLineItem = {
+  id: number;
+  lib_entry_id: number;
+  main_category: string;
+  sub_category: string;
+  specific_item: string | null;
+  custom_item_name: string | null;
+  approved_lib_amount: number;
+  jan: number;
+  feb: number;
+  mar: number;
+  apr: number;
+  may: number;
+  jun: number;
+  jul: number;
+  aug: number;
+  sep: number;
+  oct: number;
+  nov: number;
+  dec_amount: number;
+  total: number;
+  sort_order: number;
+};
+
+type BackendApprovalStep = {
+  id: number;
+  stage_name: string | null;
+  approver_name: string;
+  approver_designation: string | null;
+  action: string;
+  remarks: string | null;
+  acted_at: string | null;
+};
+
+type BackendApprovalInboxItem = {
+  id: number;
+  type: "lib" | "ppmp" | "purchase_request";
+  document_no: string;
+  title: string;
+  amount: number;
+  current_stage: string;
+  submitted_at: string | null;
+  submitted_by: string;
+  project_title: string | null;
+  fund_source: string | null;
+};
+
+type BackendPpmpAvailableItem = {
+  id: number;
+  item_name: string | null;
+  code: string | null;
+  quantity: number;
+  estimated_budget: number;
+  encumbered_amount: number;
+  available_amount: number;
+  ppmp_no: string | null;
+  fund_source_id: number | null;
+  lib_entry_id: number | null;
+};
+
+export type PpmpAvailableItem = {
+  id: number;
+  itemName: string | null;
+  code: string | null;
+  quantity: number;
+  estimatedBudget: number;
+  encumberedAmount: number;
+  availableAmount: number;
+  ppmpNo: string | null;
+  fundSourceId: number | null;
+  libEntryId: number | null;
+};
+
+export type PpmpDocumentManaged = {
+  id: number;
+  projectId: number;
+  projectTitle: string | null;
+  fundSourceId: number | null;
+  fundSourceName: string | null;
+  ppmpNo: string | null;
+  fiscalYear: number;
+  endUserUnit: string | null;
+  documentType: string;
+  status: string;
+  version: number;
+  parentId: number | null;
+  totalEstimatedBudget: number;
+  rowCount: number;
+  approvedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+  createdAt: string | null;
+};
+
+type BackendPpmpDocumentManaged = {
+  id: number;
+  project_id: number;
+  project_title: string | null;
+  fund_source_id: number | null;
+  fund_source_name: string | null;
+  ppmp_no: string | null;
+  fiscal_year: number;
+  end_user_unit: string | null;
+  document_type: string;
+  status: string;
+  version: number;
+  parent_id: number | null;
+  total_estimated_budget: number;
+  row_count: number;
+  approved_at: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  created_at: string | null;
+};
+
+export type PpmpItemManaged = {
+  id: number;
+  ppmpDocumentId: number;
+  libEntryId: number | null;
+  libAccountCode: string | null;
+  libFundSource: string | null;
+  fundSourceId: number | null;
+  itemName: string | null;
+  code: string | null;
+  expenseCategory: string | null;
+  quantity: number;
+  estimatedUnitCost: number;
+  estimatedBudget: number;
+  encumberedAmount: number;
+  availableAmount: number;
+  recommendedMode: string | null;
+  schedule: string | null;
+  remarks: string | null;
+};
+
+type BackendPpmpItemManaged = {
+  id: number;
+  ppmp_document_id: number;
+  lib_entry_id: number | null;
+  lib_account_code: string | null;
+  lib_fund_source: string | null;
+  fund_source_id: number | null;
+  item_name: string | null;
+  code: string | null;
+  expense_category: string | null;
+  quantity: number;
+  estimated_unit_cost: number;
+  estimated_budget: number;
+  encumbered_amount: number;
+  available_amount: number;
+  recommended_mode: string | null;
+  schedule: string | null;
+  remarks: string | null;
+};
+
+// --- LIB API Functions ---
+
+export async function apiGetLibEntries(filters?: { project_id?: number; budget_year?: number; status?: string; fund_source_id?: number }) {
+  const params = new URLSearchParams();
+  if (filters?.project_id) params.set("project_id", String(filters.project_id));
+  if (filters?.budget_year) params.set("budget_year", String(filters.budget_year));
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.fund_source_id) params.set("fund_source_id", String(filters.fund_source_id));
+  const qs = params.toString();
+  const result = await request<{ data: BackendLibEntry[] }>(`/lib${qs ? `?${qs}` : ""}`);
+  return result.data.map(mapLibEntry);
+}
+
+export async function apiGetLibEntry(id: number) {
+  const result = await request<{ data: BackendLibEntry; line_items?: BackendLibLineItem[]; approval_trail: BackendApprovalStep[] }>(`/lib/${id}`);
+  return {
+    entry: mapLibEntry(result.data),
+    lineItems: (result.line_items ?? []).map(mapLibLineItem),
+    approvalTrail: result.approval_trail.map(mapApprovalStep),
+  };
+}
+
+export async function apiExportLibEntry(id: number) {
+  const result = await request<{ data: BackendLibEntry; line_items: BackendLibLineItem[]; summary: { mooe_subtotal: number; capital_subtotal: number; grand_total: number; approved_lib_total: number } }>(`/lib/${id}/export`);
+  return {
+    entry: mapLibEntry(result.data),
+    lineItems: result.line_items.map(mapLibLineItem),
+    summary: result.summary,
+  };
+}
+
+export async function apiCreateLibEntry(payload: LibEntryCreatePayload) {
+  const result = await request<{ data: BackendLibEntry }>("/lib", { method: "POST", body: payload });
+  return mapLibEntry(result.data);
+}
+
+export async function apiUpdateLibEntry(id: number, payload: Partial<LibEntryCreatePayload>) {
+  const result = await request<{ data: BackendLibEntry }>(`/lib/${id}`, { method: "PUT", body: payload });
+  return mapLibEntry(result.data);
+}
+
+export async function apiLibAction(id: number, action: "submit" | "approve" | "return" | "reject" | "amend" | "cancel", payload?: { remarks?: string; reason?: string }) {
+  const result = await request<{ data: BackendLibEntry; message: string }>(`/lib/${id}/${action}`, { method: "POST", body: payload });
+  return { entry: mapLibEntry(result.data), message: result.message };
+}
+
+export async function apiGetLibBalance(id: number) {
+  return request<LibBalanceRecord>(`/lib/${id}/balance`);
+}
+
+// --- PPMP Document Managed API Functions ---
+
+export async function apiGetPpmpDocuments(filters?: { project_id?: number; fiscal_year?: number; status?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.project_id) params.set("project_id", String(filters.project_id));
+  if (filters?.fiscal_year) params.set("fiscal_year", String(filters.fiscal_year));
+  if (filters?.status) params.set("status", filters.status);
+  const qs = params.toString();
+  const result = await request<{ data: BackendPpmpDocumentManaged[] }>(`/ppmp-documents${qs ? `?${qs}` : ""}`);
+  return result.data.map(mapPpmpDocumentManaged);
+}
+
+export async function apiGetPpmpDocumentDetail(id: number) {
+  const result = await request<{ data: BackendPpmpDocumentManaged; items: BackendPpmpItemManaged[]; approval_trail: BackendApprovalStep[] }>(`/ppmp-documents/${id}`);
+  return {
+    document: mapPpmpDocumentManaged(result.data),
+    items: result.items.map(mapPpmpItemManaged),
+    approvalTrail: result.approval_trail.map(mapApprovalStep),
+  };
+}
+
+export async function apiCreatePpmpDocumentManaged(payload: { project_id: number; fund_source_id?: number; ppmp_no?: string; fiscal_year: number; end_user_unit?: string; document_type: "Indicative" | "Final" }) {
+  const result = await request<{ data: BackendPpmpDocumentManaged }>("/ppmp-documents", { method: "POST", body: payload });
+  return mapPpmpDocumentManaged(result.data);
+}
+
+export async function apiPpmpDocAction(id: number, action: string, payload?: Record<string, unknown>) {
+  const result = await request<{ data: BackendPpmpDocumentManaged; message: string }>(`/ppmp-documents/${id}/${action}`, { method: "POST", body: payload });
+  return { document: mapPpmpDocumentManaged(result.data), message: result.message };
+}
+
+export async function apiAddPpmpItemManaged(docId: number, payload: Record<string, unknown>) {
+  const result = await request<{ data: BackendPpmpItemManaged }>(`/ppmp-documents/${docId}/items`, { method: "POST", body: payload });
+  return mapPpmpItemManaged(result.data);
+}
+
+export async function apiUpdatePpmpItemManaged(docId: number, itemId: number, payload: Record<string, unknown>) {
+  const result = await request<{ data: BackendPpmpItemManaged }>(`/ppmp-documents/${docId}/items/${itemId}`, { method: "PUT", body: payload });
+  return mapPpmpItemManaged(result.data);
+}
+
+export async function apiRemovePpmpItemManaged(docId: number, itemId: number) {
+  await request(`/ppmp-documents/${docId}/items/${itemId}`, { method: "DELETE" });
+}
+
+export async function apiGetAvailablePpmpItems(filters?: { fund_source_id?: number; project_id?: number }) {
+  const params = new URLSearchParams();
+  if (filters?.fund_source_id) params.set("fund_source_id", String(filters.fund_source_id));
+  if (filters?.project_id) params.set("project_id", String(filters.project_id));
+  const qs = params.toString();
+  const result = await request<{ data: BackendPpmpAvailableItem[] }>(`/ppmp-items/available${qs ? `?${qs}` : ""}`);
+  return result.data.map(mapPpmpAvailableItem);
+}
+
+// --- Approval Inbox API Functions ---
+
+export async function apiGetApprovalInbox(type?: string) {
+  const qs = type ? `?type=${type}` : "";
+  const result = await request<{ data: BackendApprovalInboxItem[] }>(`/approval-inbox${qs}`);
+  return result.data.map(mapApprovalInboxItem);
+}
+
+export async function apiGetApprovalInboxCount() {
+  return request<{ count: number }>("/approval-inbox/count");
+}
+
+export async function apiInboxAction(type: string, id: number, action: "approve" | "return" | "reject", payload?: { remarks?: string }) {
+  return request<{ message: string; status: string }>(`/approval-inbox/${type}/${id}/${action}`, { method: "POST", body: payload });
+}
+
+// --- PR Cancel ---
+
+export async function apiCancelPurchaseRequest(id: number | string, reason: string) {
+  return request<{ data: unknown; message: string }>(`/purchase-requests/${id}/cancel`, { method: "POST", body: { reason } });
+}
+
+// --- Workflow Config ---
+
+export async function apiGetWorkflowConfig() {
+  return request<{ data: Record<string, Array<{ id: number; document_type: string; stage_order: number; stage_name: string; required_role: string; is_final: boolean }>> }>("/workflow-config");
+}
+
+// --- Fund Sources (already exists in generic resource, adding convenience) ---
+
+export async function apiGetFundSources() {
+  const result = await request<{ data: Array<{ id: number; name: string; fund_type: string; description: string | null; active: boolean }> }>("/fund-sources");
+  return result.data;
+}
+
+export async function apiGetProjects() {
+  const result = await request<{ data: Array<{ id: number; code: string; title: string; fiscal_year: number; status: string; office?: { name: string } | null; fund_source_id?: number | null }> }>("/projects");
+  return result.data;
+}
+
+// --- Mappers ---
+
+function mapLibEntry(entry: BackendLibEntry): LibEntryRecord {
+  return {
+    id: entry.id,
+    projectId: entry.project_id,
+    projectTitle: entry.project_title,
+    fundSourceId: entry.fund_source_id,
+    fundSourceName: entry.fund_source_name,
+    budgetYear: entry.budget_year,
+    papCode: entry.pap_code,
+    programTitle: entry.program_title,
+    implementingAgency: entry.implementing_agency,
+    totalDuration: entry.total_duration,
+    cooperatingAgency: entry.cooperating_agency,
+    projectLeader: entry.project_leader,
+    monitoringAgency: entry.monitoring_agency,
+    objectOfExpenditure: entry.object_of_expenditure,
+    accountCode: entry.account_code,
+    allocatedAmount: Number(entry.allocated_amount),
+    availableAmount: Number(entry.available_amount),
+    status: entry.status as LibEntryRecord["status"],
+    version: entry.version,
+    parentId: entry.parent_id,
+    createdBy: entry.created_by,
+    approvedAt: entry.approved_at,
+    cancelledAt: entry.cancelled_at,
+    cancellationReason: entry.cancellation_reason,
+    createdAt: entry.created_at,
+  };
+}
+
+function mapLibLineItem(item: BackendLibLineItem): LibLineItemRecord {
+  return {
+    id: item.id,
+    libEntryId: item.lib_entry_id,
+    mainCategory: item.main_category,
+    subCategory: item.sub_category,
+    specificItem: item.specific_item,
+    customItemName: item.custom_item_name,
+    approvedLibAmount: Number(item.approved_lib_amount),
+    jan: Number(item.jan),
+    feb: Number(item.feb),
+    mar: Number(item.mar),
+    apr: Number(item.apr),
+    may: Number(item.may),
+    jun: Number(item.jun),
+    jul: Number(item.jul),
+    aug: Number(item.aug),
+    sep: Number(item.sep),
+    oct: Number(item.oct),
+    nov: Number(item.nov),
+    decAmount: Number(item.dec_amount),
+    total: Number(item.total),
+    sortOrder: item.sort_order,
+  };
+}
+
+function mapApprovalStep(step: BackendApprovalStep): ApprovalStepRecord {
+  return {
+    id: step.id,
+    stageName: step.stage_name,
+    approverName: step.approver_name,
+    approverDesignation: step.approver_designation,
+    action: step.action,
+    remarks: step.remarks,
+    actedAt: step.acted_at,
+  };
+}
+
+function mapApprovalInboxItem(item: BackendApprovalInboxItem): ApprovalInboxItem {
+  return {
+    id: item.id,
+    type: item.type,
+    documentNo: item.document_no,
+    title: item.title,
+    amount: Number(item.amount),
+    currentStage: item.current_stage,
+    submittedAt: item.submitted_at,
+    submittedBy: item.submitted_by,
+    projectTitle: item.project_title,
+    fundSource: item.fund_source,
+  };
+}
+
+function mapPpmpDocumentManaged(doc: BackendPpmpDocumentManaged): PpmpDocumentManaged {
+  return {
+    id: doc.id,
+    projectId: doc.project_id,
+    projectTitle: doc.project_title,
+    fundSourceId: doc.fund_source_id,
+    fundSourceName: doc.fund_source_name,
+    ppmpNo: doc.ppmp_no,
+    fiscalYear: doc.fiscal_year,
+    endUserUnit: doc.end_user_unit,
+    documentType: doc.document_type,
+    status: doc.status,
+    version: doc.version,
+    parentId: doc.parent_id,
+    totalEstimatedBudget: Number(doc.total_estimated_budget),
+    rowCount: doc.row_count,
+    approvedAt: doc.approved_at,
+    cancelledAt: doc.cancelled_at,
+    cancellationReason: doc.cancellation_reason,
+    createdAt: doc.created_at,
+  };
+}
+
+function mapPpmpItemManaged(item: BackendPpmpItemManaged): PpmpItemManaged {
+  return {
+    id: item.id,
+    ppmpDocumentId: item.ppmp_document_id,
+    libEntryId: item.lib_entry_id,
+    libAccountCode: item.lib_account_code,
+    libFundSource: item.lib_fund_source,
+    fundSourceId: item.fund_source_id,
+    itemName: item.item_name,
+    code: item.code,
+    expenseCategory: item.expense_category,
+    quantity: Number(item.quantity),
+    estimatedUnitCost: Number(item.estimated_unit_cost),
+    estimatedBudget: Number(item.estimated_budget),
+    encumberedAmount: Number(item.encumbered_amount),
+    availableAmount: Number(item.available_amount),
+    recommendedMode: item.recommended_mode,
+    schedule: item.schedule,
+    remarks: item.remarks,
+  };
+}
+
+function mapPpmpAvailableItem(item: BackendPpmpAvailableItem): PpmpAvailableItem {
+  return {
+    id: item.id,
+    itemName: item.item_name,
+    code: item.code,
+    quantity: Number(item.quantity),
+    estimatedBudget: Number(item.estimated_budget),
+    encumberedAmount: Number(item.encumbered_amount),
+    availableAmount: Number(item.available_amount),
+    ppmpNo: item.ppmp_no,
+    fundSourceId: item.fund_source_id,
+    libEntryId: item.lib_entry_id,
+  };
+}

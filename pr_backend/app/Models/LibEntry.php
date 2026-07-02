@@ -7,29 +7,27 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
-class PpmpDocument extends Model
+class LibEntry extends Model
 {
     protected $fillable = [
         'project_id',
         'fund_source_id',
-        'ppmp_no',
-        'fiscal_year',
-        'end_user_unit',
-        'document_type',
+        'budget_year',
+        'pap_code',
+        'program_title',
+        'implementing_agency',
+        'total_duration',
+        'cooperating_agency',
+        'project_leader',
+        'monitoring_agency',
+        'object_of_expenditure',
+        'account_code',
+        'allocated_amount',
+        'available_amount',
         'status',
         'version',
         'parent_id',
-        'source_filename',
-        'prepared_submitted_by_name',
-        'prepared_submitted_by_position',
-        'prepared_submitted_by_date',
-        'budget_officer_name',
-        'budget_officer_position',
-        'budget_certified_date',
-        'total_estimated_budget',
-        'row_count',
-        'imported_by',
-        'imported_at',
+        'created_by',
         'approved_at',
         'cancelled_at',
         'cancellation_reason',
@@ -38,13 +36,10 @@ class PpmpDocument extends Model
     protected function casts(): array
     {
         return [
-            'fiscal_year' => 'integer',
-            'total_estimated_budget' => 'decimal:2',
-            'row_count' => 'integer',
+            'allocated_amount' => 'decimal:2',
+            'available_amount' => 'decimal:2',
+            'budget_year' => 'integer',
             'version' => 'integer',
-            'prepared_submitted_by_date' => 'date',
-            'budget_certified_date' => 'date',
-            'imported_at' => 'datetime',
             'approved_at' => 'datetime',
             'cancelled_at' => 'datetime',
         ];
@@ -60,9 +55,9 @@ class PpmpDocument extends Model
         return $this->belongsTo(FundSource::class);
     }
 
-    public function importer(): BelongsTo
+    public function creator(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'imported_by');
+        return $this->belongsTo(User::class, 'created_by');
     }
 
     public function parent(): BelongsTo
@@ -75,9 +70,14 @@ class PpmpDocument extends Model
         return $this->hasMany(self::class, 'parent_id');
     }
 
-    public function items(): HasMany
+    public function lineItems(): HasMany
     {
-        return $this->hasMany(PpmpItem::class);
+        return $this->hasMany(LibLineItem::class)->orderBy('sort_order');
+    }
+
+    public function ppmpItems(): HasMany
+    {
+        return $this->hasMany(PpmpItem::class, 'lib_entry_id');
     }
 
     public function approvalSteps(): MorphMany

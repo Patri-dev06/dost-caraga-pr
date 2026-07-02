@@ -18,6 +18,8 @@ use App\Models\PurchaseRequest;
 use App\Models\Role;
 use App\Models\SystemPreference;
 use App\Models\User;
+use App\Services\BudgetEnforcementService;
+use App\Services\DocumentAmendmentService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -607,6 +609,24 @@ class ProcurementController extends Controller
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Rejected', $data['reason']);
 
         return response()->json(['message' => 'Purchase Request rejected.', 'data' => $this->format($purchaseRequest->fresh())]);
+    }
+
+    public function cancelPurchaseRequest(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string']]);
+
+        $amendmentService = app(DocumentAmendmentService::class);
+
+        if (! $amendmentService->canCancel($purchaseRequest)) {
+            return response()->json(['message' => 'This Purchase Request cannot be cancelled in its current state.'], 422);
+        }
+
+        $amendmentService->cancel($purchaseRequest, $data['reason']);
+        $purchaseRequest->forceFill(['stage' => 'Cancelled'])->save();
+        $this->recordAction($request, $purchaseRequest, 'Requester', 'Cancelled', $data['reason']);
+        $this->audit($request, 'Purchase Requests', 'Cancelled PR', $purchaseRequest->pr_no);
+
+        return response()->json(['message' => 'Purchase Request cancelled.', 'data' => $this->format($purchaseRequest->fresh())]);
     }
 
     public function auditLogs(Request $request): JsonResponse

@@ -2,6 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard, FileText, ShieldCheck, Inbox,
   BookOpen, ClipboardList, Boxes, Wallet, BarChart3, Users, ScrollText, Settings,
+  Landmark, FileStack,
 } from "lucide-react";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
@@ -14,6 +15,13 @@ const groups = [
     items: [{ title: "Dashboard", url: "/", icon: LayoutDashboard }],
   },
   {
+    label: "Budget & Planning",
+    items: [
+      { title: "LIB (Budget)", url: "/lib", icon: Landmark },
+      { title: "PPMP (Plans)", url: "/ppmp-documents", icon: FileStack },
+    ],
+  },
+  {
     label: "Procurement",
     items: [
       { title: "Purchase Requests", url: "/purchase-requests", icon: FileText },
@@ -24,7 +32,7 @@ const groups = [
   {
     label: "References",
     items: [
-      { title: "PPMP", url: "/references/ppmp", icon: BookOpen },
+      { title: "PPMP (Import)", url: "/references/ppmp", icon: BookOpen },
       { title: "APP-CSE", url: "/references/app-cse", icon: ClipboardList },
       { title: "APP-Non-CSE", url: "/references/app-non-cse", icon: Boxes },
       { title: "Budget Allocations", url: "/references/budget", icon: Wallet },
