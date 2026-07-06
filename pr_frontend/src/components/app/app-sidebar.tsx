@@ -1,7 +1,7 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   LayoutDashboard, CalendarRange, ShoppingCart, BarChart3, ShieldCheck,
-  FileText, FilePlus2, ShieldCheck as ValidateIcon, Inbox, BookOpen, ClipboardList,
+  FileText, ShieldCheck as ValidateIcon, Inbox, BookOpen, ClipboardList,
   Boxes, Wallet, Users, ScrollText, Settings, HelpCircle, Headset, ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -22,7 +22,6 @@ const NAV: Item[] = [
   {
     type: "group", title: "Planning", icon: CalendarRange, children: [
       { title: "Line Item Budget", url: "/planning/lib", icon: FileText, badge: "NEW" },
-      { title: "Create LIB", url: "/planning/lib/new", icon: FilePlus2 },
       { title: "Create PPMP", url: "/references/ppmp", icon: BookOpen },
       { title: "APP-CSE", url: "/references/app-cse", icon: ClipboardList },
       { title: "APP-Non-CSE", url: "/references/app-non-cse", icon: Boxes },
@@ -58,7 +57,6 @@ export function AppSidebar() {
     if (url === "/") return pathname === "/";
     if (url === "/purchase-requests")
       return pathname === "/purchase-requests" || /^\/purchase-requests\/(?!new$)[^/]+$/.test(pathname);
-    if (url === "/planning/lib") return pathname === "/planning/lib";
 
     return pathname === url || pathname.startsWith(url + "/");
   };

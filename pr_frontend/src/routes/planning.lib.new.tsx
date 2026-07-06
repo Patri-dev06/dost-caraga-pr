@@ -64,7 +64,7 @@ function TextField({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className={cn(shared, "rounded-sm border border-black/15 px-0.5 outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:border-amber-300 focus:bg-amber-100")}
+      className={cn(shared, "rounded-sm px-0.5 outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100")}
     />
   );
 }
@@ -85,7 +85,7 @@ function AmountField({
       inputMode="decimal"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={cn(shared, "rounded-sm border border-black/15 px-0.5 outline-none hover:bg-amber-50 focus:border-amber-300 focus:bg-amber-100")}
+      className={cn(shared, "rounded-sm px-0.5 outline-none hover:bg-amber-50 focus:bg-amber-100")}
     />
   );
 }
@@ -115,7 +115,7 @@ function AutoTextarea({
       rows={1}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={cn("w-full resize-none overflow-hidden rounded-sm border border-black/15 bg-transparent px-0.5 leading-snug outline-none hover:bg-amber-50 focus:border-amber-300 focus:bg-amber-100", className)}
+      className={cn("w-full resize-none overflow-hidden rounded-sm bg-transparent px-0.5 leading-snug outline-none hover:bg-amber-50 focus:bg-amber-100", className)}
     />
   );
 }
@@ -154,6 +154,8 @@ function LibForm() {
   const removeRow = (id: string) => setDoc((d) => ({ ...d, rows: d.rows.filter((r) => r.id !== id) }));
 
   const totals = libTotals(doc.rows);
+  // Excel-style guide grid: faint cell lines while editing, invisible in preview.
+  const gl = editing ? "border border-black/20" : "";
 
   function persist(status: LibStatus) {
     setAction(status === "Draft" ? "draft" : status);
@@ -269,7 +271,7 @@ function LibForm() {
                 <div key={key} className="flex items-start gap-2">
                   <span className="w-36 shrink-0 font-bold">{label}</span>
                   <span className="shrink-0 font-bold">:</span>
-                  <div className="min-w-0 flex-1">
+                  <div className={cn("min-w-0 flex-1", editing && "border-b border-black/20")}>
                     {key === "cooperatingAgency" || key === "projectTitle" ? (
                       <AutoTextarea value={String(doc[key])} onChange={(v) => set(key, v as LibDoc[typeof key])} editing={editing} className={key === "projectTitle" ? "underline" : ""} />
                     ) : (
@@ -290,10 +292,10 @@ function LibForm() {
               </colgroup>
               <thead>
                 <tr className="align-bottom">
-                  <th />
-                  <th />
-                  <th className="pb-1 text-right font-bold">Approved LIB</th>
-                  <th className="pb-1 text-right font-bold">First Reprogramming</th>
+                  <th className={gl} />
+                  <th className={gl} />
+                  <th className={cn(gl, "px-1 pb-1 text-right font-bold")}>Approved LIB</th>
+                  <th className={cn(gl, "px-1 pb-1 text-right font-bold")}>First Reprogramming</th>
                 </tr>
               </thead>
               <tbody>
@@ -307,7 +309,7 @@ function LibForm() {
                   );
                   return (
                     <tr key={r.id} className="group align-top">
-                      <td className="relative py-0.5 pr-2">
+                      <td className={cn(gl, "relative py-0.5 pr-2")}>
                         {editing && (
                           <button
                             type="button"
@@ -322,13 +324,13 @@ function LibForm() {
                           <TextField value={r.label} onChange={(v) => setRow(r.id, { label: v })} editing={editing} bold={r.header && r.indent === 0} />
                         </div>
                       </td>
-                      <td className="py-0.5 pr-2 text-[11px] italic text-black/80">
+                      <td className={cn(gl, "py-0.5 pr-2 text-[11px] italic text-black/80")}>
                         <AutoTextarea value={r.note} onChange={(v) => setRow(r.id, { note: v })} editing={editing} />
                       </td>
-                      <td className="py-0.5 pl-2">
+                      <td className={cn(gl, "px-1 py-0.5")}>
                         {!r.header && <AmountField value={r.approved} onChange={(v) => setRow(r.id, { approved: v })} editing={editing} />}
                       </td>
-                      <td className="py-0.5 pl-2">
+                      <td className={cn(gl, "px-1 py-0.5")}>
                         {!r.header && <AmountField value={r.reprogramming} onChange={(v) => setRow(r.id, { reprogramming: v })} editing={editing} />}
                       </td>
                     </tr>
@@ -337,16 +339,16 @@ function LibForm() {
 
                 {/* Totals */}
                 <tr className="align-top font-bold">
-                  <td className="pt-3 pl-9">Sub-Total for MOOE</td>
-                  <td />
-                  <td className="pt-3 text-right tabular-nums">P&nbsp;&nbsp;{fmtAmount(totals.approved)}</td>
-                  <td className="pt-3 text-right tabular-nums">{fmtAmount(totals.reprogramming)}</td>
+                  <td className={cn(gl, "pt-3 pl-9")}>Sub-Total for MOOE</td>
+                  <td className={gl} />
+                  <td className={cn(gl, "px-1 pt-3 text-right tabular-nums")}>P&nbsp;&nbsp;{fmtAmount(totals.approved)}</td>
+                  <td className={cn(gl, "px-1 pt-3 text-right tabular-nums")}>{fmtAmount(totals.reprogramming)}</td>
                 </tr>
                 <tr className="align-top font-bold">
-                  <td className="pt-2 pl-9">GRAND TOTAL:</td>
-                  <td />
-                  <td className="border-t border-black pt-2 text-right tabular-nums">P&nbsp;&nbsp;{fmtAmount(totals.approved)}</td>
-                  <td className="border-t border-black pt-2 text-right tabular-nums">{fmtAmount(totals.reprogramming)}</td>
+                  <td className={cn(gl, "pt-2 pl-9")}>GRAND TOTAL:</td>
+                  <td className={gl} />
+                  <td className={cn("px-1 pt-2 text-right tabular-nums", editing ? "border border-black/20 border-t-black" : "border-t border-black")}>P&nbsp;&nbsp;{fmtAmount(totals.approved)}</td>
+                  <td className={cn("px-1 pt-2 text-right tabular-nums", editing ? "border border-black/20 border-t-black" : "border-t border-black")}>{fmtAmount(totals.reprogramming)}</td>
                 </tr>
               </tbody>
             </table>
@@ -407,11 +409,11 @@ function Signatory({
   return (
     <div>
       <p className="text-[11px]">{label}</p>
-      <div className="mt-8 border-black">
-        <div className="font-bold">
+      <div className="mt-8">
+        <div className={cn("font-bold", editing && "border-b border-black/20")}>
           <TextField value={name} onChange={onName} editing={editing} bold />
         </div>
-        <div className="text-[11px]">
+        <div className={cn("text-[11px]", editing && "border-b border-black/20")}>
           <TextField value={position} onChange={onPosition} editing={editing} className="text-[11px]" />
         </div>
       </div>
