@@ -396,7 +396,7 @@ function NewPR() {
   const cell = "border border-black align-top";
 
   return (
-    <div className="min-h-full bg-background">
+    <div className="min-h-full bg-background print:bg-white">
       {/* Toolbar */}
       <div className="no-print sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-2 px-3 py-3 sm:px-6">

@@ -165,16 +165,35 @@
   }
 }
 
-/* Print isolation — used by the Purchase Request document view */
+/* Print isolation — used by the Purchase Request and LIB document views.
+   App chrome (sidebar/topbar) is hidden via `print:hidden` in the root layout,
+   so the document stays in normal flow and paginates across sheets. */
 @media print {
-  body { background: #fff !important; }
-  body * { visibility: hidden; }
+  @page { margin: 12mm; }
+  html, body { background: #fff !important; overflow: visible !important; height: auto !important; }
+
+  /* Non-printable UI: toolbars, action buttons, editing guides, etc. */
   .no-print { display: none !important; }
-  .pr-print-root, .pr-print-root * { visibility: visible; }
+
+  /* The printable document flows from the top and breaks cleanly across pages. */
   .pr-print-root {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+  }
+  .pr-print-root > div {
+    box-shadow: none !important;
+  }
+  .pr-print-root table {
+    width: 100% !important;
+  }
+  /* Repeat column headers on every page; never split a row across pages. */
+  .pr-print-root thead {
+    display: table-header-group;
+  }
+  .pr-print-root tr,
+  .pr-print-root img {
+    break-inside: avoid;
   }
 }

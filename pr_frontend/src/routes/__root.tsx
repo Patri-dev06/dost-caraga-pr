@@ -159,11 +159,15 @@ function RootComponent() {
   return (
     <AppQueryProvider>
       <SidebarProvider>
-        <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden bg-background">
-          <AppSidebar />
-          <SidebarInset className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
-            <AppTopbar />
-            <main className="min-w-0 flex-1 overflow-x-hidden">
+        <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden bg-background print:block print:min-h-0 print:overflow-visible print:bg-white">
+          <div className="contents print:hidden">
+            <AppSidebar />
+          </div>
+          <SidebarInset className="flex min-w-0 flex-1 flex-col overflow-x-hidden print:overflow-visible print:bg-white">
+            <div className="contents print:hidden">
+              <AppTopbar />
+            </div>
+            <main className="min-w-0 flex-1 overflow-x-hidden print:overflow-visible print:bg-white">
               <Outlet />
             </main>
           </SidebarInset>

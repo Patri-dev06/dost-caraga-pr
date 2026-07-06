@@ -11,7 +11,7 @@ export async function exportLibExcel(doc: LibDoc) {
     views: [{ showGridLines: false }],
     pageSetup: { fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } },
   });
-  ws.columns = [{ width: 46 }, { width: 30 }, { width: 16 }, { width: 18 }];
+  ws.columns = [{ width: 40 }, { width: 22 }, { width: 15 }, { width: 16 }, { width: 34 }];
 
   const font = (opts: { bold?: boolean; italic?: boolean; size?: number } = {}) => ({
     name: "Times New Roman",
@@ -24,7 +24,7 @@ export async function exportLibExcel(doc: LibDoc) {
   const merge = (range: string) => ws.mergeCells(range);
 
   const center = (text: string, opts: { bold?: boolean; size?: number } = {}) => {
-    merge(`A${r}:D${r}`);
+    merge(`A${r}:E${r}`);
     const c = ws.getCell(`A${r}`);
     c.value = text;
     c.font = font(opts);
@@ -32,19 +32,18 @@ export async function exportLibExcel(doc: LibDoc) {
     r++;
   };
 
+  center("DOST Form 4", { bold: true });
+  r++;
   center("DEPARTMENT OF SCIENCE AND TECHNOLOGY", { bold: true, size: 11 });
   center("Project Line-Item Budget", { bold: true, size: 11 });
   center(`CY ${doc.fiscalYear}`, { bold: true, size: 11 });
-  ws.getCell("D1").value = "DOST Form 4";
-  ws.getCell("D1").font = font({ bold: true });
-  ws.getCell("D1").alignment = { horizontal: "right" };
   r++;
 
   const field = (label: string, value: string) => {
     const c = ws.getCell(`A${r}`);
     c.value = { richText: [{ font: font({ bold: true }), text: `${label} :  ` }, { font: font(), text: value.replace(/\n/g, "; ") }] };
     c.alignment = { horizontal: "left", wrapText: true, vertical: "top" };
-    merge(`A${r}:D${r}`);
+    merge(`A${r}:E${r}`);
     r++;
   };
   field("Program Title", doc.programTitle);
@@ -63,6 +62,9 @@ export async function exportLibExcel(doc: LibDoc) {
   ws.getCell(`D${r}`).value = "First Reprogramming";
   ws.getCell(`D${r}`).font = font({ bold: true });
   ws.getCell(`D${r}`).alignment = { horizontal: "right" };
+  ws.getCell(`E${r}`).value = "Justification";
+  ws.getCell(`E${r}`).font = font({ bold: true });
+  ws.getCell(`E${r}`).alignment = { horizontal: "center" };
   r++;
 
   for (const row of doc.rows) {
@@ -88,6 +90,12 @@ export async function exportLibExcel(doc: LibDoc) {
       b.numFmt = "#,##0.00";
       b.font = font();
       b.alignment = { horizontal: "right" };
+      if (row.justification) {
+        const j = ws.getCell(`E${r}`);
+        j.value = row.justification;
+        j.font = font({ size: 9 });
+        j.alignment = { horizontal: "left", wrapText: true, vertical: "top" };
+      }
     }
     r++;
   }
