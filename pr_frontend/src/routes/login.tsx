@@ -1,12 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ShieldCheck, Mail, Lock, Eye, EyeOff, User, Building2, FileCheck2, ClipboardList } from "lucide-react";
+import { User, Lock, Eye, EyeOff, Mail, Building2, ClipboardList, ClipboardCheck, Wallet } from "lucide-react";
 import { login } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -14,130 +13,88 @@ export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
       { title: "Sign In — DOST Caraga Procurement System" },
-      { name: "description", content: "Sign in or register for the DOST Caraga Procurement Management Platform." },
+      { name: "description", content: "Sign in to the DOST Caraga Procurement Management Platform." },
     ],
   }),
   component: AuthPage,
 });
 
 function AuthPage() {
-  const [authMode, setAuthMode] = useState("login");
-  const [authPanelHeight, setAuthPanelHeight] = useState<number>();
-  const loginPanelRef = useRef<HTMLDivElement>(null);
-  const registerPanelRef = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const panel = authMode === "login" ? loginPanelRef.current : registerPanelRef.current;
-    if (!panel) return;
-
-    const updateHeight = () => setAuthPanelHeight(panel.offsetHeight);
-    updateHeight();
-
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(panel);
-
-    return () => observer.disconnect();
-  }, [authMode]);
+  const [mode, setMode] = useState<"login" | "register">("login");
 
   return (
-    <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-2">
-      {/* LEFT — brand panel */}
-      <aside className="relative hidden overflow-hidden bg-gradient-to-br from-soft-blue/60 via-secondary to-background px-10 py-14 lg:flex lg:flex-col lg:justify-center xl:px-20">
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-        <div className="max-w-xl">
-          <div className="flex items-start gap-4">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-card p-1.5 shadow-lg shadow-primary/20">
+    <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-[1.1fr_1fr]">
+      {/* LEFT — brand hero panel */}
+      <aside className="relative hidden overflow-hidden bg-[#0b2545] px-10 py-14 text-white lg:flex lg:flex-col lg:justify-center xl:px-20">
+        <div className="absolute inset-0 bg-[url('/login-bg.jpg')] bg-cover bg-center" aria-hidden="true" />
+        <div className="absolute inset-0 bg-gradient-to-br from-[#0e2c56]/80 via-[#0b2545]/85 to-[#071a34]/92" aria-hidden="true" />
+        <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 rounded-full bg-[#1b62b8]/25 blur-3xl" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+
+        <div className="relative max-w-xl">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/95 p-1.5 shadow-lg">
               <img src="/dost-seal.svg" alt="DOST logo" className="h-full w-full object-contain" />
             </div>
-            <div>
-              <p className="label-eyebrow text-primary">Department of Science and Technology</p>
-              <h2 className="mt-1 text-2xl font-bold text-navy">DOST Caraga — Procurement System</h2>
-            </div>
+            <p className="label-eyebrow text-white/70">DOST Caraga · nnDOST4U: Solutions and Us</p>
           </div>
 
-          <h1 className="mt-8 text-4xl font-bold leading-[1.1] text-navy xl:text-5xl">
-            Streamline procurement, validation, and approvals in one platform.
+          <h1 className="mt-10 text-4xl font-bold leading-[1.1] text-white xl:text-5xl">
+            DOST Caraga Procurement Management System
           </h1>
-          <p className="mt-5 max-w-lg text-base leading-relaxed text-muted-foreground">
-            A pre-validation and monitoring system for DOST Caraga that supports purchase requests,
-            PPMP &amp; APP reference checks, budget validation, and routed approvals.
+          <p className="mt-4 text-lg font-semibold text-[#7db8f0]">
+            Department of Science and Technology — Caraga
+          </p>
+          <p className="mt-4 max-w-lg text-sm italic leading-relaxed text-white/70">
+            &ldquo;Digitizing Procurement. Connecting Planning, Budgeting, and Purchasing.&rdquo;
           </p>
 
-          <div className="mt-8 grid grid-cols-1 gap-3 xl:grid-cols-2">
+          <div className="mt-8 flex flex-wrap gap-3">
             {[
-              { icon: ClipboardList, k: "Purchase Requests", v: "Create, route, and track PRs" },
-              { icon: FileCheck2, k: "Pre-Validation", v: "PPMP, APP-CSE, Budget checks" },
-              { icon: Building2, k: "Approval Routing", v: "Multi-level office workflow" },
-              { icon: ShieldCheck, k: "Audit Trail", v: "Full transparency &amp; logs" },
-            ].map(({ icon: Icon, k, v }) => (
-              <div key={k} className="rounded-xl border border-border bg-card/80 p-3.5 shadow-card backdrop-blur-sm">
-                <div className="flex items-center gap-2">
-                  <Icon className="h-4 w-4 text-primary" />
-                  <p className="label-eyebrow text-primary">{k}</p>
-                </div>
-                <p className="mt-1.5 text-sm font-medium text-navy" dangerouslySetInnerHTML={{ __html: v }} />
+              { icon: Wallet, k: "Budget" },
+              { icon: ClipboardList, k: "Procurement" },
+              { icon: ClipboardCheck, k: "Planning" },
+              { icon: Building2, k: "Government" },
+            ].map(({ icon: Icon, k }) => (
+              <div
+                key={k}
+                className="flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium backdrop-blur-sm"
+              >
+                <Icon className="h-4 w-4 text-[#7db8f0]" strokeWidth={1.75} />
+                {k}
               </div>
             ))}
           </div>
 
-          <p className="mt-10 text-xs text-muted-foreground">
-            © 2026 DOST Caraga · Government of the Philippines
+          <p className="mt-8 max-w-lg text-sm leading-relaxed text-white/60">
+            A unified procurement platform that seamlessly integrates the LIB, PPMP, and Purchase
+            Request into one intelligent workflow.
           </p>
+
+          <div className="mt-12 flex flex-wrap items-center gap-4 text-xs text-white/45">
+            <span>© 2026 DOST Caraga</span>
+            <a href="#" className="hover:text-white/80">Privacy Policy</a>
+            <a href="#" className="hover:text-white/80">Terms of Service</a>
+            <a href="#" className="hover:text-white/80">Security</a>
+          </div>
         </div>
       </aside>
 
       {/* RIGHT — auth panel */}
       <section className="flex items-center justify-center bg-card px-4 py-10 sm:px-8">
-        <div className="w-full max-w-md">
-          {/* Mobile brand */}
-          <div className="mb-8 text-center lg:hidden">
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-card p-1 shadow-sm">
+        <div className="w-full max-w-sm">
+          <div className="mb-6 flex flex-col items-center text-center">
+            <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary p-1.5">
               <img src="/dost-seal.svg" alt="DOST logo" className="h-full w-full object-contain" />
             </div>
             <p className="label-eyebrow">Department of Science and Technology</p>
-            <h1 className="mt-1 text-lg font-bold text-navy">DOST Caraga — Procurement System</h1>
           </div>
 
-          <Tabs value={authMode} onValueChange={setAuthMode} className="w-full">
-            <TabsList className="relative mb-6 grid h-11 w-full grid-cols-2 overflow-hidden rounded-full bg-secondary p-1">
-              <span
-                className={`absolute inset-y-1 left-1 w-[calc((100%-0.5rem)/2)] rounded-full bg-card shadow-sm transition-transform duration-300 ease-out ${
-                  authMode === "register" ? "translate-x-full" : "translate-x-0"
-                }`}
-                aria-hidden="true"
-              />
-              <TabsTrigger value="login" className="relative z-10 rounded-full bg-transparent text-muted-foreground shadow-none transition-colors duration-200 data-[state=active]:bg-transparent data-[state=active]:text-navy data-[state=active]:shadow-none">
-                Sign In
-              </TabsTrigger>
-              <TabsTrigger value="register" className="relative z-10 rounded-full bg-transparent text-muted-foreground shadow-none transition-colors duration-200 data-[state=active]:bg-transparent data-[state=active]:text-navy data-[state=active]:shadow-none">
-                Register
-              </TabsTrigger>
-            </TabsList>
-
-            <div
-              className="relative overflow-hidden transition-[height] duration-500 ease-out"
-              style={authPanelHeight ? { height: authPanelHeight } : undefined}
-            >
-              <div
-                ref={loginPanelRef}
-                className={`absolute inset-x-0 top-0 transition-all duration-500 ease-out ${
-                  authMode === "login" ? "translate-x-0 opacity-100" : "pointer-events-none -translate-x-8 opacity-0"
-                }`}
-                aria-hidden={authMode !== "login"}
-              >
-                <SignInCard />
-              </div>
-              <div
-                ref={registerPanelRef}
-                className={`absolute inset-x-0 top-0 transition-all duration-500 ease-out ${
-                  authMode === "register" ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-8 opacity-0"
-                }`}
-                aria-hidden={authMode !== "register"}
-              >
-                <RegisterCard />
-              </div>
-            </div>
-          </Tabs>
+          {mode === "login" ? (
+            <SignInCard onRegister={() => setMode("register")} />
+          ) : (
+            <RegisterCard onBack={() => setMode("login")} />
+          )}
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
             For authorized DOST Caraga personnel only. All activities are logged.
@@ -148,17 +105,17 @@ function AuthPage() {
   );
 }
 
-function SignInCard() {
+function SignInCard({ onRegister }: { onRegister: () => void }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
-  const [email, setEmail] = useState("admin@dost.gov.ph");
+  const [username, setUsername] = useState("admin@dost.gov.ph");
   const [password, setPassword] = useState("password123");
   return (
-    <Card className="border border-border bg-card p-6 shadow-card sm:p-8">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-navy">Sign in</h2>
-        <p className="mt-1 text-sm text-primary">Use your approved DOST account to access the dashboard.</p>
+    <Card className="border border-border bg-card p-6 shadow-card sm:p-7">
+      <div className="mb-5 text-center">
+        <h2 className="text-2xl font-bold text-[var(--brand-blue)]">DPMS Login</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Use your approved DOST account to continue.</p>
       </div>
       <form
         className="space-y-4"
@@ -166,7 +123,7 @@ function SignInCard() {
           e.preventDefault();
           setLoading(true);
           try {
-            await login(email, password);
+            await login(username, password);
             toast.success("Signed in successfully.");
             navigate({ to: "/" });
           } catch (error) {
@@ -177,17 +134,21 @@ function SignInCard() {
         }}
       >
         <div className="space-y-2">
-          <Label htmlFor="email" className="text-sm font-semibold text-navy">Email</Label>
+          <Label htmlFor="username" className="text-sm font-semibold text-navy">
+            Username <span className="text-destructive">*</span>
+          </Label>
           <div className="relative">
-            <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
-            <Input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="firstname.lastname@dost.gov.ph" required className="h-11 border-border bg-background pl-9" />
+            <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
+            <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Enter your username" required className="h-11 border-border bg-background pl-9" />
           </div>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="password" className="text-sm font-semibold text-navy">Password</Label>
+          <Label htmlFor="password" className="text-sm font-semibold text-navy">
+            Password <span className="text-destructive">*</span>
+          </Label>
           <div className="relative">
             <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
-            <Input id="password" type={show ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter password" required className="h-11 border-border bg-background pl-9 pr-10" />
+            <Input id="password" type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" required className="h-11 border-border bg-background pl-9 pr-10" />
             <button
               type="button"
               onClick={() => setShow((s) => !s)}
@@ -201,28 +162,52 @@ function SignInCard() {
         <div className="flex items-center justify-between text-xs">
           <label className="flex items-center gap-2 text-muted-foreground">
             <input type="checkbox" defaultChecked className="h-3.5 w-3.5 rounded border-border" />
-            Keep me signed in
+            Remember Me
           </label>
-          <a href="#" className="font-medium text-primary hover:underline">Forgot password?</a>
+          <a href="#" className="font-medium text-primary hover:underline">Forgot Password?</a>
         </div>
         <Button type="submit" className="h-11 w-full rounded-md text-sm font-semibold" disabled={loading}>
-          {loading ? "Signing in…" : "Login"}
+          {loading ? "Signing in…" : "Sign In"}
         </Button>
-        <Button type="button" variant="outline" className="h-11 w-full rounded-md text-sm font-medium">
-          Request password reset
+        <Button type="button" variant="outline" className="h-11 w-full gap-2 rounded-md text-sm font-medium">
+          <GoogleIcon className="h-4 w-4" />
+          Sign in with Gmail
         </Button>
+        <div className="pt-1 text-center text-xs text-muted-foreground">
+          <p>Need Help? <a href="#" className="font-medium text-[var(--brand-blue)] hover:underline">Contact MIS Unit</a></p>
+          <p className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+            <Lock className="h-3 w-3" /> Government Secure Login
+          </p>
+        </div>
       </form>
+      <p className="mt-5 border-t border-border pt-4 text-center text-xs text-muted-foreground">
+        No account yet?{" "}
+        <button type="button" onClick={onRegister} className="font-semibold text-primary hover:underline">
+          Register here
+        </button>
+      </p>
     </Card>
   );
 }
 
-function RegisterCard() {
+function GoogleIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.56c2.08-1.92 3.28-4.74 3.28-8.09Z" />
+      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.56-2.76c-.98.66-2.23 1.06-3.72 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z" />
+      <path fill="#FBBC05" d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84Z" />
+      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.05l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38Z" />
+    </svg>
+  );
+}
+
+function RegisterCard({ onBack }: { onBack: () => void }) {
   const [loading, setLoading] = useState(false);
   return (
-    <Card className="border border-border bg-card p-6 shadow-card sm:p-8">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-navy">Create account</h2>
-        <p className="mt-1 text-sm text-primary">Register your DOST Caraga account. Access requires admin approval.</p>
+    <Card className="border border-border bg-card p-6 shadow-card sm:p-7">
+      <div className="mb-5 text-center">
+        <h2 className="text-2xl font-bold text-[var(--brand-blue)]">Create account</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Registration requires admin approval.</p>
       </div>
       <form
         className="space-y-4"
@@ -254,35 +239,18 @@ function RegisterCard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label className="text-sm font-semibold text-navy">Office / Division</Label>
-            <Select>
-              <SelectTrigger className="h-11 border-border bg-background"><SelectValue placeholder="Select office" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ord">Office of the Regional Director</SelectItem>
-                <SelectItem value="fad">Finance &amp; Admin Division</SelectItem>
-                <SelectItem value="tsd">Technical Services Division</SelectItem>
-                <SelectItem value="psto-ads">PSTO Agusan del Sur</SelectItem>
-                <SelectItem value="psto-adn">PSTO Agusan del Norte</SelectItem>
-                <SelectItem value="psto-sds">PSTO Surigao del Sur</SelectItem>
-                <SelectItem value="psto-sdn">PSTO Surigao del Norte</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label className="text-sm font-semibold text-navy">Requested role</Label>
-            <Select>
-              <SelectTrigger className="h-11 border-border bg-background"><SelectValue placeholder="Select role" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="requester">Requester</SelectItem>
-                <SelectItem value="validator">Validator</SelectItem>
-                <SelectItem value="approver">Approver</SelectItem>
-                <SelectItem value="budget">Budget Officer</SelectItem>
-                <SelectItem value="procurement">Procurement Officer</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold text-navy">Office / Division</Label>
+          <Select>
+            <SelectTrigger className="h-11 border-border bg-background"><SelectValue placeholder="Select office" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ord">Office of the Regional Director</SelectItem>
+              <SelectItem value="fad">Finance &amp; Admin Division</SelectItem>
+              <SelectItem value="tsd">Technical Services Division</SelectItem>
+              <SelectItem value="psto-ads">PSTO Agusan del Sur</SelectItem>
+              <SelectItem value="psto-adn">PSTO Agusan del Norte</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="space-y-2">
@@ -291,18 +259,18 @@ function RegisterCard() {
             <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
             <Input id="r-pass" type="password" required placeholder="At least 8 characters" className="h-11 border-border bg-background pl-9" />
           </div>
-          <p className="text-xs text-muted-foreground">Must include uppercase, number, and symbol.</p>
         </div>
-
-        <label className="flex items-start gap-2 text-xs text-muted-foreground">
-          <input type="checkbox" required className="mt-0.5 h-3.5 w-3.5 rounded border-border" />
-          I confirm I am authorized DOST Caraga personnel and agree to the system's data privacy and acceptable use policy.
-        </label>
 
         <Button type="submit" className="h-11 w-full rounded-md text-sm font-semibold" disabled={loading}>
           {loading ? "Submitting…" : "Create account"}
         </Button>
       </form>
+      <p className="mt-5 border-t border-border pt-4 text-center text-xs text-muted-foreground">
+        Already registered?{" "}
+        <button type="button" onClick={onBack} className="font-semibold text-primary hover:underline">
+          Back to sign in
+        </button>
+      </p>
     </Card>
   );
 }

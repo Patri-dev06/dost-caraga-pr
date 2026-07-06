@@ -24,6 +24,7 @@ import { Route as ReferencesAppNonCseRouteImport } from './routes/references.app
 import { Route as ReferencesAppCseRouteImport } from './routes/references.app-cse'
 import { Route as PurchaseRequestsNewRouteImport } from './routes/purchase-requests.new'
 import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requests.$prId'
+import { Route as PlanningLibRouteImport } from './routes/planning.lib'
 
 const ValidationRoute = ValidationRouteImport.update({
   id: '/validation',
@@ -100,6 +101,11 @@ const PurchaseRequestsPrIdRoute = PurchaseRequestsPrIdRouteImport.update({
   path: '/$prId',
   getParentRoute: () => PurchaseRequestsRoute,
 } as any)
+const PlanningLibRoute = PlanningLibRouteImport.update({
+  id: '/planning/lib',
+  path: '/planning/lib',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/planning/lib': typeof PlanningLibRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/planning/lib': typeof PlanningLibRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -146,6 +154,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/planning/lib': typeof PlanningLibRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/validation'
+    | '/planning/lib'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -182,6 +192,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/validation'
+    | '/planning/lib'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -199,6 +210,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/validation'
+    | '/planning/lib'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -217,6 +229,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
   ValidationRoute: typeof ValidationRoute
+  PlanningLibRoute: typeof PlanningLibRoute
   ReferencesAppCseRoute: typeof ReferencesAppCseRoute
   ReferencesAppNonCseRoute: typeof ReferencesAppNonCseRoute
   ReferencesBudgetRoute: typeof ReferencesBudgetRoute
@@ -330,6 +343,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchaseRequestsPrIdRouteImport
       parentRoute: typeof PurchaseRequestsRoute
     }
+    '/planning/lib': {
+      id: '/planning/lib'
+      path: '/planning/lib'
+      fullPath: '/planning/lib'
+      preLoaderRoute: typeof PlanningLibRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -356,6 +376,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,
   ValidationRoute: ValidationRoute,
+  PlanningLibRoute: PlanningLibRoute,
   ReferencesAppCseRoute: ReferencesAppCseRoute,
   ReferencesAppNonCseRoute: ReferencesAppNonCseRoute,
   ReferencesBudgetRoute: ReferencesBudgetRoute,

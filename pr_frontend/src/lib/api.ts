@@ -312,6 +312,21 @@ export async function apiCreatePurchaseRequest(payload: PurchaseRequestCreatePay
   return mapPurchaseRequest(result.data);
 }
 
+export async function apiUpdatePurchaseRequest(id: string | number, payload: PurchaseRequestCreatePayload) {
+  const result = await request<ApiRecord<BackendPurchaseRequest>>(`/purchase-requests/${id}`, {
+    method: "PUT",
+    body: payload,
+  });
+  return mapPurchaseRequest(result.data);
+}
+
+export async function apiSubmitPurchaseRequest(id: string | number) {
+  const result = await request<ApiRecord<BackendPurchaseRequest> & { message: string }>(`/purchase-requests/${id}/submit`, {
+    method: "POST",
+  });
+  return mapPurchaseRequest(result.data);
+}
+
 export async function apiValidatePurchaseRequest(id: string | number) {
   const result = await request<{ data: BackendValidation[] }>(`/purchase-requests/${id}/validate`, {
     method: "POST",

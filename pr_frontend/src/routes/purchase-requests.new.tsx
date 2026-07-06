@@ -1,315 +1,693 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Check, ChevronsUpDown, Loader2, Plus, Trash2, ShieldCheck, Save, Send } from "lucide-react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowLeft, Eye, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PageHeader } from "@/components/app/page-header";
-import { ValidationResultPanel } from "@/components/app/validation-result-panel";
-import { fmtPHP, PRItem } from "@/lib/mock-data";
 import { toast } from "sonner";
-import { apiCreatePurchaseRequest, apiGetUsers, type PurchaseRequestCreatePayload } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import {
+  apiCreatePurchaseRequest,
+  apiGetPurchaseRequest,
+  apiSubmitPurchaseRequest,
+  apiUpdatePurchaseRequest,
+  type PurchaseRequestCreatePayload,
+} from "@/lib/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/purchase-requests/new")({
+  validateSearch: (search: Record<string, unknown>): { edit?: string } => ({
+    edit: typeof search.edit === "string" ? search.edit : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Create Purchase Request — DOST Caraga" },
-      { name: "description", content: "Create and submit a new Purchase Request with multi-section form and pre-validation." },
+      { name: "description", content: "Fill out the official DOST Purchase Request form and preview it before submitting." },
     ],
   }),
   component: NewPR,
 });
 
-function Section({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) {
+const SERIF = '"Times New Roman", Times, serif';
+
+const OFFICES = [
+  { code: "RO", name: "Regional Office" },
+  { code: "PMD", name: "Planning & Management Division" },
+  { code: "STSD", name: "S&T Services Division" },
+  { code: "FAD", name: "Finance & Admin" },
+  { code: "ORD", name: "Office of the Director" },
+  { code: "ICTU", name: "ICTU" },
+];
+const FUND_SOURCES = ["GAA 2026 - MOOE", "Trust Fund - SETUP"];
+const MODES = ["Shopping", "Small Value Procurement", "Public Bidding", "Negotiated Procurement"];
+
+type FormItem = { id: string; stockNo: string; unit: string; description: string; qty: string; unitCost: string };
+
+const parseNum = (v: string) => {
+  const n = Number(String(v).replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : 0;
+};
+const money = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function newItem(): FormItem {
+  return { id: String(Date.now() + Math.random()), stockNo: "", unit: "", description: "", qty: "", unitCost: "" };
+}
+
+/* ---- Inline field primitives: render an input while editing, plain text in preview ---- */
+
+type Align = "left" | "center" | "right";
+const alignClass: Record<Align, string> = { left: "text-left", center: "text-center", right: "text-right" };
+
+function TextField({
+  value,
+  onChange,
+  editing,
+  align = "left",
+  bold = false,
+  italic = false,
+  placeholder,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  editing: boolean;
+  align?: Align;
+  bold?: boolean;
+  italic?: boolean;
+  placeholder?: string;
+  className?: string;
+}) {
+  const shared = cn(
+    "w-full bg-transparent px-1 py-0.5 leading-snug",
+    alignClass[align],
+    bold && "font-bold",
+    italic && "italic",
+    className,
+  );
+  if (!editing) {
+    return <div className={cn(shared, "min-h-[1.4em] whitespace-pre-wrap break-words")}>{value || " "}</div>;
+  }
   return (
-    <Card className="border border-border bg-card p-4 sm:p-6">
-      <div className="mb-4 sm:mb-5">
-        <p className="label-eyebrow">{eyebrow}</p>
-        <h3 className="mt-1 text-base font-bold text-navy">{title}</h3>
-      </div>
-      {children}
-    </Card>
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={cn(
+        shared,
+        "rounded-sm outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100 print:hover:bg-transparent",
+      )}
+    />
   );
 }
+
+function NumField({
+  value,
+  onChange,
+  editing,
+  align = "right",
+  format = false,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  editing: boolean;
+  align?: Align;
+  format?: boolean;
+  placeholder?: string;
+}) {
+  const shared = cn("w-full bg-transparent px-1 py-0.5 leading-snug tabular-nums", alignClass[align]);
+  if (!editing) {
+    return (
+      <div className={cn(shared, "min-h-[1.4em]")}>{value === "" ? " " : format ? money(parseNum(value)) : value}</div>
+    );
+  }
+  return (
+    <input
+      inputMode="decimal"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={cn(
+        shared,
+        "rounded-sm outline-none placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100 print:hover:bg-transparent",
+      )}
+    />
+  );
+}
+
+function AutoTextarea({
+  value,
+  onChange,
+  editing,
+  bold = false,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  editing: boolean;
+  bold?: boolean;
+  className?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value, editing]);
+
+  const shared = cn("w-full bg-transparent px-1 py-0.5 leading-snug", bold && "font-bold", className);
+  if (!editing) {
+    return <div className={cn(shared, "min-h-[1.4em] whitespace-pre-wrap break-words")}>{value || " "}</div>;
+  }
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn(
+        shared,
+        "resize-none overflow-hidden rounded-sm outline-none hover:bg-amber-50 focus:bg-amber-100 print:hover:bg-transparent",
+      )}
+    />
+  );
+}
+
+function BlendSelect({
+  value,
+  onChange,
+  editing,
+  options,
+  align = "left",
+  render,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  editing: boolean;
+  options: { value: string; label: string }[];
+  align?: Align;
+  render?: (v: string) => string;
+}) {
+  if (!editing) {
+    return <div className={cn("min-h-[1.4em] px-1 py-0.5 leading-snug", alignClass[align])}>{render ? render(value) : value || " "}</div>;
+  }
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn(
+        "w-full cursor-pointer bg-transparent px-1 py-0.5 leading-snug outline-none hover:bg-amber-50 focus:bg-amber-100",
+        alignClass[align],
+      )}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/* ---------------------------------- Page ---------------------------------- */
 
 function NewPR() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { edit: editId } = Route.useSearch();
+  const isEditing = Boolean(editId);
   const today = new Date().toISOString().slice(0, 10);
-  const [office, setOffice] = useState("RO");
-  const [requestedBy, setRequestedBy] = useState<number | null>(null);
-  const [requesterOpen, setRequesterOpen] = useState(false);
-  const [fundSource, setFundSource] = useState("GAA 2026 - MOOE");
-  const [modeOfProcurement, setModeOfProcurement] = useState("Shopping");
-  const [projectTitle, setProjectTitle] = useState("Office Productivity Upgrade");
-  const [purpose, setPurpose] = useState("Replacement of unserviceable office equipment for the Administrative Division to improve daily operations and productivity.");
-  const [items, setItems] = useState<PRItem[]>([
-    { id: "1", name: "Laptop, Business Class", description: "i7, 16GB RAM, 512GB SSD", uom: "unit", qty: 2, unitCost: 52000 },
-    { id: "2", name: "Wireless Mouse", description: "Ergonomic, optical", uom: "pc", qty: 4, unitCost: 850 },
-  ]);
-  const [validated, setValidated] = useState(false);
-  const [action, setAction] = useState<"draft" | "submit" | null>(null);
-  const { data: users = [], isLoading: usersLoading } = useQuery({ queryKey: ["users"], queryFn: apiGetUsers });
 
-  const total = items.reduce((s, i) => s + i.qty * i.unitCost, 0);
-  const selectedRequester = useMemo(() => users.find((user) => user.id === requestedBy), [requestedBy, users]);
-  const createMutation = useMutation({
-    mutationFn: apiCreatePurchaseRequest,
-    onSuccess: async (created) => {
-      await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
-      toast.success(created.status === "For Recommendation" ? "Purchase request submitted." : "Purchase request saved as draft.");
-      navigate({ to: "/purchase-requests/$prId", params: { prId: created.id } });
+  const { data: existing } = useQuery({
+    queryKey: ["purchase-request", editId],
+    queryFn: () => apiGetPurchaseRequest(editId!),
+    enabled: isEditing,
+  });
+
+  const [mode, setMode] = useState<"edit" | "preview">("edit");
+  const editing = mode === "edit";
+
+  const [entityName, setEntityName] = useState("DEPARTMENT OF SCIENCE AND TECHNOLOGY - CARAGA");
+  const [fundCluster, setFundCluster] = useState("01");
+  const [office, setOffice] = useState("RO");
+  const [prNo, setPrNo] = useState("");
+  const [date, setDate] = useState(today);
+  const [rcc, setRcc] = useState("");
+  const [fundSource, setFundSource] = useState(FUND_SOURCES[0]);
+  const [modeOfProcurement, setModeOfProcurement] = useState(MODES[0]);
+  const [purpose, setPurpose] = useState("Subscription to productivity tools for day-to-day use of PSTOs.");
+
+  const [items, setItems] = useState<FormItem[]>(() => [
+    {
+      id: "seed-1",
+      stockNo: "",
+      unit: "License",
+      description:
+        "Office Productivity Tool\nTechnical Specifications:\nFamily license (6 users per license; suitable for non-commercial user)\n1-year subscription per license\nCompatible with Windows 11 or later, macOS, and other standard operating systems\nVAT inclusive",
+      qty: "4",
+      unitCost: "8500",
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to create purchase request."),
+    newItem(),
+    newItem(),
+  ]);
+
+  const [reqName, setReqName] = useState("JENIFER T. VILLAPLAZA");
+  const [reqDesig, setReqDesig] = useState("SRS II");
+  const [recName, setRecName] = useState("IMELDA S. MEZO");
+  const [recDesig, setRecDesig] = useState("ARD-FAS");
+  const [appName, setAppName] = useState("ENGR. NOEL M. AJOC");
+  const [appDesig, setAppDesig] = useState("Regional Director");
+
+  const [action, setAction] = useState<"draft" | "submit" | null>(null);
+
+  // Prefill the form once when editing an existing draft/returned PR.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (!existing || prefilled.current) return;
+    prefilled.current = true;
+    setOffice(OFFICES.find((o) => o.name === existing.office)?.code ?? office);
+    setFundSource(existing.fundSource);
+    setModeOfProcurement(existing.modeOfProcurement);
+    setPurpose(existing.purpose);
+    setPrNo(existing.prNo);
+    setItems(
+      existing.items.length
+        ? existing.items.map((it) => ({
+            id: it.id,
+            stockNo: "",
+            unit: it.uom,
+            description: it.description ? `${it.name}\n${it.description}` : it.name,
+            qty: String(it.qty),
+            unitCost: String(it.unitCost),
+          }))
+        : [newItem()],
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existing]);
+
+  const grandTotal = items.reduce((s, it) => s + parseNum(it.qty) * parseNum(it.unitCost), 0);
+
+  const mutation = useMutation({
+    mutationFn: async ({ payload, submit }: { payload: PurchaseRequestCreatePayload; submit: boolean }) => {
+      if (editId) {
+        const updated = await apiUpdatePurchaseRequest(editId, payload);
+        return submit ? apiSubmitPurchaseRequest(editId) : updated;
+      }
+      return apiCreatePurchaseRequest({ ...payload, submit });
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
+      if (editId) await queryClient.invalidateQueries({ queryKey: ["purchase-request", editId] });
+      toast.success(
+        result.status === "For Recommendation"
+          ? "Purchase Request submitted."
+          : isEditing
+            ? "Purchase Request updated."
+            : "Purchase Request saved as draft.",
+      );
+      navigate({ to: "/purchase-requests/$prId", params: { prId: result.id } });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to save Purchase Request."),
     onSettled: () => setAction(null),
   });
 
-  function update(id: string, patch: Partial<PRItem>) {
-    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...patch } : i)));
-    setValidated(false);
+  function updateItem(id: string, patch: Partial<FormItem>) {
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   }
-  function add() {
-    setItems((p) => [...p, { id: String(Date.now()), name: "", description: "", uom: "pc", qty: 1, unitCost: 0 }]);
-    setValidated(false);
+  function addItem() {
+    setItems((prev) => [...prev, newItem()]);
   }
-  function remove(id: string) {
-    setItems((p) => p.filter((i) => i.id !== id));
-    setValidated(false);
+  function removeItem(id: string) {
+    setItems((prev) => (prev.length > 1 ? prev.filter((it) => it.id !== id) : prev));
   }
-  function payload(submit: boolean): PurchaseRequestCreatePayload {
-    return {
-      office,
-      requestedBy,
-      fundSource,
-      projectTitle,
-      modeOfProcurement,
-      purpose,
-      submit,
-      items: items.map((item) => ({
-        name: item.name,
-        description: item.description,
-        uom: item.uom,
-        qty: item.qty,
-        unitCost: item.unitCost,
-      })),
-    };
+
+  function buildPayload(): PurchaseRequestCreatePayload | null {
+    const mapped = items
+      .map((it) => {
+        const lines = it.description.split("\n").map((s) => s.trim()).filter(Boolean);
+        const name = lines[0] ?? "";
+        const description = lines.slice(1).join("\n");
+        return { name, description, uom: it.unit.trim() || "unit", qty: parseNum(it.qty), unitCost: parseNum(it.unitCost) };
+      })
+      .filter((it) => it.name && it.qty > 0);
+
+    if (mapped.length === 0) {
+      toast.error("Add at least one item with a description and quantity.");
+      return null;
+    }
+    if (!purpose.trim()) {
+      toast.error("Purpose is required.");
+      return null;
+    }
+    return { office, fundSource, modeOfProcurement, purpose: purpose.trim(), items: mapped };
   }
+
   function saveDraft() {
+    const payload = buildPayload();
+    if (!payload) return;
     setAction("draft");
-    createMutation.mutate(payload(false));
+    mutation.mutate({ payload, submit: false });
   }
   function submitRequest() {
+    const payload = buildPayload();
+    if (!payload) return;
     setAction("submit");
-    createMutation.mutate(payload(true));
+    mutation.mutate({ payload, submit: true });
   }
 
+  const officeName = OFFICES.find((o) => o.code === office)?.name ?? office;
+
+  const cell = "border border-black align-top";
+
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
-      <PageHeader
-        eyebrow="New Request"
-        title="Create Purchase Request"
-        subtitle="Complete each section, validate items, then submit for recommendation."
-        actions={
-          <>
-            <Button variant="outline" className="gap-2 border-border" onClick={saveDraft} disabled={createMutation.isPending}>
-              {action === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save Draft
-            </Button>
-            <Button variant="outline" className="gap-2 border-primary/50 text-primary hover:bg-secondary" onClick={() => { setValidated(true); toast.success("Pre-validation complete."); }}>
-              <ShieldCheck className="h-4 w-4" /> Validate Items
-            </Button>
-            <Button className="gap-2" disabled={!validated || createMutation.isPending} onClick={submitRequest}>
-              {action === "submit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Submit for Recommendation
-            </Button>
-          </>
-        }
-      />
+    <div className="min-h-full bg-background">
+      {/* Toolbar */}
+      <div className="no-print sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-2 px-3 py-3 sm:px-6">
+          <Button variant="ghost" size="sm" asChild className="gap-1.5 text-muted-foreground">
+            <Link to="/purchase-requests">
+              <ArrowLeft className="h-4 w-4" /> Back
+            </Link>
+          </Button>
 
-      <Section eyebrow="Step 1" title="Request Information">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div><Label className="label-eyebrow">PR No.</Label><Input defaultValue="PR-2026-0143" readOnly className="mt-1 h-10 border-border bg-secondary/40 font-semibold text-navy" /></div>
-          <div><Label className="label-eyebrow">Date</Label><Input defaultValue={today} type="date" className="mt-1 h-10 border-border" /></div>
-          <div><Label className="label-eyebrow">Requesting Office</Label>
-            <Select value={office} onValueChange={setOffice}><SelectTrigger className="mt-1 h-10 border-border"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="RO">Regional Office</SelectItem><SelectItem value="PMD">Planning & Mgmt Division</SelectItem><SelectItem value="STSD">S&T Services Division</SelectItem><SelectItem value="FAD">Finance & Admin</SelectItem></SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className="label-eyebrow">Requested By</Label>
-            <Popover open={requesterOpen} onOpenChange={setRequesterOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={requesterOpen}
-                  className="mt-1 h-10 w-full justify-between border-border px-3 font-normal"
-                >
-                  <span className="truncate">
-                    {selectedRequester ? `${selectedRequester.name} — ${selectedRequester.email}` : usersLoading ? "Fetching data, kindly wait." : "Select requester"}
-                  </span>
-                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-[min(calc(100vw-2rem),28rem)] p-0">
-                <Command>
-                  <CommandInput placeholder="Search user name or email..." />
-                  <CommandList>
-                    <CommandEmpty>No user found.</CommandEmpty>
-                    <CommandGroup>
-                      {users.map((user) => (
-                        <CommandItem
-                          key={user.id}
-                          value={`${user.name} ${user.email} ${user.office}`}
-                          onSelect={() => {
-                            setRequestedBy(user.id);
-                            setRequesterOpen(false);
-                          }}
-                        >
-                          <Check className={cn("h-4 w-4", requestedBy === user.id ? "opacity-100" : "opacity-0")} />
-                          <span className="flex min-w-0 flex-col">
-                            <span className="truncate font-medium">{user.name}</span>
-                            <span className="truncate text-xs text-muted-foreground">{user.email} · {user.office}</span>
-                          </span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          </div>
-          <div className="md:col-span-2"><Label className="label-eyebrow">Mode of Procurement</Label>
-            <Select value={modeOfProcurement} onValueChange={setModeOfProcurement}><SelectTrigger className="mt-1 h-10 border-border"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="Shopping">Shopping</SelectItem><SelectItem value="Small Value Procurement">Small Value Procurement</SelectItem><SelectItem value="Public Bidding">Public Bidding</SelectItem><SelectItem value="Negotiated Procurement">Negotiated Procurement</SelectItem></SelectContent>
-            </Select>
-          </div>
-        </div>
-      </Section>
+          {isEditing && (
+            <span className="hidden rounded-md bg-secondary px-2 py-1 text-xs font-semibold text-secondary-foreground sm:inline">
+              Editing {prNo || "draft"}
+            </span>
+          )}
 
-      <Section eyebrow="Step 2" title="Fund Source">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div><Label className="label-eyebrow">Fund Cluster</Label>
-            <Select defaultValue="01"><SelectTrigger className="mt-1 h-10 border-border"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="01">01 - Regular Agency Fund</SelectItem><SelectItem value="06">06 - Trust Receipts</SelectItem></SelectContent>
-            </Select>
+          <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
+            <button
+              type="button"
+              onClick={() => setMode("edit")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                editing ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Pencil className="h-3.5 w-3.5" /> Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("preview")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                !editing ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Eye className="h-3.5 w-3.5" /> Preview
+            </button>
           </div>
-          <div><Label className="label-eyebrow">Source of Funds</Label>
-            <Select value={fundSource} onValueChange={setFundSource}><SelectTrigger className="mt-1 h-10 border-border"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="GAA 2026 - MOOE">GAA 2026 - MOOE</SelectItem><SelectItem value="GAA">GAA 2026 - CO</SelectItem><SelectItem value="Trust Fund - SETUP">Trust Fund - SETUP</SelectItem></SelectContent>
-            </Select>
-          </div>
-          <div><Label className="label-eyebrow">Account Code</Label><Input defaultValue="5021201000 — ICT Equipment" className="mt-1 h-10 border-border" /></div>
-          <div><Label className="label-eyebrow">Available Balance</Label>
-            <div className="mt-1 flex h-10 items-center justify-between rounded-md border border-border bg-secondary/40 px-3">
-              <span className="text-sm font-semibold text-navy tabular-nums">{fmtPHP(1660000)}</span>
-              <span className="label-eyebrow">Sufficient</span>
-            </div>
-          </div>
-        </div>
-      </Section>
 
-      <Section eyebrow="Step 3" title="Project Information">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="md:col-span-2"><Label className="label-eyebrow">Project Title</Label><Input value={projectTitle} onChange={(e) => setProjectTitle(e.target.value)} className="mt-1 h-10 border-border" /></div>
-          <div><Label className="label-eyebrow">PAP Code</Label><Input defaultValue="100000100001000" className="mt-1 h-10 border-border" /></div>
-          <div><Label className="label-eyebrow">Location</Label><Input defaultValue="Regional Office, Butuan City" className="mt-1 h-10 border-border" /></div>
-          <div className="md:col-span-2"><Label className="label-eyebrow">Beneficiary / End-User</Label><Input defaultValue="Administrative Division" className="mt-1 h-10 border-border" /></div>
-        </div>
-      </Section>
-
-      <Section eyebrow="Step 4" title="Item Details">
-        <div className="space-y-3 md:hidden">
-          {items.map((it) => (
-            <div key={it.id} className="rounded-lg border border-border bg-background p-3">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-navy">Line Item</p>
-                <Button variant="ghost" size="icon" onClick={() => remove(it.id)} className="h-8 w-8 text-muted-foreground hover:text-destructive">
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 gap-3">
-                <div><Label className="label-eyebrow">Item Name</Label><Input value={it.name} onChange={(e) => update(it.id, { name: e.target.value })} className="mt-1 h-9 border-border" /></div>
-                <div><Label className="label-eyebrow">Description</Label><Input value={it.description} onChange={(e) => update(it.id, { description: e.target.value })} className="mt-1 h-9 border-border" /></div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div><Label className="label-eyebrow">UoM</Label><Input value={it.uom} onChange={(e) => update(it.id, { uom: e.target.value })} className="mt-1 h-9 border-border" /></div>
-                  <div><Label className="label-eyebrow">Qty</Label><Input type="number" value={it.qty} onChange={(e) => update(it.id, { qty: Number(e.target.value) })} className="mt-1 h-9 border-border" /></div>
-                  <div><Label className="label-eyebrow">Unit Cost</Label><Input type="number" value={it.unitCost} onChange={(e) => update(it.id, { unitCost: Number(e.target.value) })} className="mt-1 h-9 border-border" /></div>
-                </div>
-                <div className="rounded-md bg-secondary/40 px-3 py-2 text-right">
-                  <p className="label-eyebrow">Total</p>
-                  <p className="font-semibold tabular-nums text-navy">{fmtPHP(it.qty * it.unitCost)}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-secondary/40 hover:bg-secondary/40">
-                <TableHead className="label-eyebrow w-[20%]">Item Name</TableHead>
-                <TableHead className="label-eyebrow w-[26%]">Description</TableHead>
-                <TableHead className="label-eyebrow w-[8%]">UoM</TableHead>
-                <TableHead className="label-eyebrow w-[8%]">Qty</TableHead>
-                <TableHead className="label-eyebrow w-[14%]">Unit Cost</TableHead>
-                <TableHead className="label-eyebrow w-[14%] text-right">Total</TableHead>
-                <TableHead className="w-[40px]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((it) => (
-                <TableRow key={it.id}>
-                  <TableCell><Input value={it.name} onChange={(e) => update(it.id, { name: e.target.value })} className="h-9 border-border" /></TableCell>
-                  <TableCell><Input value={it.description} onChange={(e) => update(it.id, { description: e.target.value })} className="h-9 border-border" /></TableCell>
-                  <TableCell><Input value={it.uom} onChange={(e) => update(it.id, { uom: e.target.value })} className="h-9 border-border" /></TableCell>
-                  <TableCell><Input type="number" value={it.qty} onChange={(e) => update(it.id, { qty: Number(e.target.value) })} className="h-9 border-border" /></TableCell>
-                  <TableCell><Input type="number" value={it.unitCost} onChange={(e) => update(it.id, { unitCost: Number(e.target.value) })} className="h-9 border-border" /></TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">{fmtPHP(it.qty * it.unitCost)}</TableCell>
-                  <TableCell><Button variant="ghost" size="icon" onClick={() => remove(it.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></Button></TableCell>
-                </TableRow>
+          <div className="hidden items-center gap-2 sm:flex">
+            <span className="label-eyebrow">Mode of Procurement</span>
+            <select
+              value={modeOfProcurement}
+              onChange={(e) => setModeOfProcurement(e.target.value)}
+              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+            >
+              {MODES.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
               ))}
-            </TableBody>
-          </Table>
-        </div>
-        <div className="mt-4 flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
-          <Button variant="outline" size="sm" onClick={add} className="gap-2 border-border"><Plus className="h-4 w-4" /> Add Item</Button>
-          <div className="text-left min-[420px]:text-right">
-            <p className="label-eyebrow">Grand Total</p>
-            <p className="text-xl font-bold tabular-nums text-navy sm:text-2xl">{fmtPHP(total)}</p>
+            </select>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            {!editing && (
+              <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
+                <Printer className="h-4 w-4" /> Print
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={saveDraft} disabled={mutation.isPending}>
+              {action === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {isEditing ? "Save Changes" : "Save Draft"}
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={submitRequest} disabled={mutation.isPending}>
+              {action === "submit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Submit
+            </Button>
           </div>
         </div>
-      </Section>
+      </div>
 
-      <Section eyebrow="Step 5" title="Purpose">
-        <Textarea
-          rows={4}
-          value={purpose}
-          onChange={(e) => setPurpose(e.target.value)}
-          className="border-border"
-        />
-      </Section>
+      {/* Document */}
+      <div className="w-full overflow-x-auto px-3 py-6 sm:px-6 print:overflow-visible print:p-0">
+        <div className="pr-print-root mx-auto w-[816px] max-w-full">
+          <div
+            className="bg-white text-[12px] text-black shadow-card ring-1 ring-black/5 print:shadow-none print:ring-0"
+            style={{ fontFamily: SERIF }}
+          >
+            {/* Title */}
+            <div className="py-2 text-center">
+              <h2 className="text-[15px] font-bold uppercase tracking-wide text-black">Purchase Request</h2>
+            </div>
 
-      <Section eyebrow="Step 6" title="Validation Results">
-        {validated ? (
-          <ValidationResultPanel items={items} />
-        ) : (
-          <div className="rounded-lg border border-dashed border-border bg-secondary/30 p-8 text-center">
-            <ShieldCheck className="mx-auto mb-2 h-8 w-8 text-primary/60" strokeWidth={1.5} />
-            <p className="text-sm font-semibold text-navy">No validation run yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">Click "Validate Items" to check items against PPMP, Budget, APP-CSE, and APP-Non-CSE.</p>
+            {/* Header block */}
+            <table className="w-full border-collapse">
+              <colgroup>
+                <col className="w-[46%]" />
+                <col className="w-[30%]" />
+                <col className="w-[24%]" />
+              </colgroup>
+              <tbody>
+                <tr>
+                  <td className="align-top" colSpan={2}>
+                    <div className="flex items-baseline gap-1">
+                      <span className="shrink-0 pl-1 font-semibold">Entity Name:</span>
+                      <div className="min-w-0 flex-1">
+                        <TextField value={entityName} onChange={setEntityName} editing={editing} />
+                      </div>
+                    </div>
+                  </td>
+                  <td className="align-top" colSpan={1}>
+                    <div className="flex items-baseline gap-1">
+                      <span className="shrink-0 pl-1 font-semibold">Fund Cluster:</span>
+                      <div className="min-w-0 flex-1">
+                        <TextField value={fundCluster} onChange={setFundCluster} editing={editing} />
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td className={cell}>
+                    <div className="flex items-baseline gap-1">
+                      <span className="shrink-0 pl-1 font-semibold">Office/Section :</span>
+                      <div className="min-w-0 flex-1">
+                        <BlendSelect
+                          value={office}
+                          onChange={setOffice}
+                          editing={editing}
+                          options={OFFICES.map((o) => ({ value: o.code, label: o.name }))}
+                          render={() => officeName}
+                        />
+                      </div>
+                    </div>
+                  </td>
+                  <td className={cell}>
+                    <div className="flex items-baseline gap-1">
+                      <span className="shrink-0 pl-1 font-semibold">PR No.:</span>
+                      <div className="min-w-0 flex-1">
+                        <TextField value={prNo} onChange={setPrNo} editing={editing} placeholder="Auto-generated on save" />
+                      </div>
+                    </div>
+                  </td>
+                  <td className={cell} rowSpan={2}>
+                    <div className="flex items-baseline gap-1">
+                      <span className="shrink-0 pl-1 font-semibold">Date:</span>
+                      <div className="min-w-0 flex-1">
+                        {editing ? (
+                          <input
+                            type="date"
+                            value={date}
+                            onChange={(e) => setDate(e.target.value)}
+                            className="w-full rounded-sm bg-transparent px-1 py-0.5 outline-none hover:bg-amber-50 focus:bg-amber-100"
+                            style={{ fontFamily: SERIF }}
+                          />
+                        ) : (
+                          <div className="min-h-[1.4em] px-1 py-0.5">{date || " "}</div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td className={cell}>
+                    <div className="min-h-[1.4em] px-1 py-0.5">{" "}</div>
+                  </td>
+                  <td className={cell}>
+                    <div className="flex items-baseline gap-1">
+                      <span className="shrink-0 pl-1 font-semibold">Responsibility Center Code :</span>
+                      <div className="min-w-0 flex-1">
+                        <TextField value={rcc} onChange={setRcc} editing={editing} />
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            {/* Item table */}
+            <table className="w-full table-fixed border-collapse">
+              <colgroup>
+                <col className="w-[13%]" />
+                <col className="w-[9%]" />
+                <col className="w-[44%]" />
+                <col className="w-[10%]" />
+                <col className="w-[12%]" />
+                <col className="w-[12%]" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th className="border border-black px-1 py-1 text-center font-bold">Stock/ Property No.</th>
+                  <th className="border border-black px-1 py-1 text-center font-bold">Unit</th>
+                  <th className="border border-black px-1 py-1 text-center font-bold">Item Description</th>
+                  <th className="border border-black px-1 py-1 text-center font-bold">Quantity</th>
+                  <th className="border border-black px-1 py-1 text-center font-bold">Unit Cost</th>
+                  <th className="border border-black px-1 py-1 text-center font-bold">Total Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((it) => (
+                  <tr key={it.id}>
+                    <td className={cell}>
+                      <TextField value={it.stockNo} onChange={(v) => updateItem(it.id, { stockNo: v })} editing={editing} align="center" />
+                    </td>
+                    <td className={cell}>
+                      <TextField value={it.unit} onChange={(v) => updateItem(it.id, { unit: v })} editing={editing} align="center" />
+                    </td>
+                    <td className={cell}>
+                      <AutoTextarea value={it.description} onChange={(v) => updateItem(it.id, { description: v })} editing={editing} />
+                    </td>
+                    <td className={cell}>
+                      <NumField value={it.qty} onChange={(v) => updateItem(it.id, { qty: v })} editing={editing} align="center" />
+                    </td>
+                    <td className={cell}>
+                      <NumField value={it.unitCost} onChange={(v) => updateItem(it.id, { unitCost: v })} editing={editing} format />
+                    </td>
+                    <td className={cn(cell, "relative")}>
+                      <div className="min-h-[1.4em] px-1 py-0.5 text-right tabular-nums">
+                        {parseNum(it.qty) * parseNum(it.unitCost) ? money(parseNum(it.qty) * parseNum(it.unitCost)) : " "}
+                      </div>
+                      {editing && items.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeItem(it.id)}
+                          title="Remove item"
+                          className="no-print absolute right-[-1.9rem] top-1 text-red-500 hover:text-red-700"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                <tr>
+                  <td className="border border-black" colSpan={4}>
+                    {" "}
+                  </td>
+                  <td className="border border-black px-1 py-0.5 text-center font-bold">TOTAL</td>
+                  <td className="border border-black px-1 py-0.5 text-right font-bold tabular-nums">
+                    {grandTotal ? money(grandTotal) : " "}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            {editing && (
+              <div className="no-print border-x border-b border-black bg-secondary/30 px-2 py-1.5">
+                <Button variant="outline" size="sm" onClick={addItem} className="h-7 gap-1.5 border-border" style={{ fontFamily: "var(--font-sans)" }}>
+                  <Plus className="h-3.5 w-3.5" /> Add Item Row
+                </Button>
+              </div>
+            )}
+
+            {/* Purpose */}
+            <table className="w-full border-collapse">
+              <tbody>
+                <tr>
+                  <td className="border border-black px-1 py-1 align-top">
+                    <div className="flex items-baseline gap-1">
+                      <span className="shrink-0 font-semibold">Purpose:</span>
+                    </div>
+                    <div className="mt-1 min-h-[3rem]">
+                      <AutoTextarea value={purpose} onChange={setPurpose} editing={editing} />
+                    </div>
+                    <div className="mt-2 flex items-baseline gap-1">
+                      <span className="shrink-0 font-semibold italic">Charged to:</span>
+                      <div className="min-w-0 flex-1 italic">
+                        <BlendSelect
+                          value={fundSource}
+                          onChange={setFundSource}
+                          editing={editing}
+                          options={FUND_SOURCES.map((f) => ({ value: f, label: f }))}
+                        />
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            {/* Signatures — faint guide lines on screen, only the outer box prints */}
+            <div className="border-x border-b border-black">
+              <table className="w-full border-collapse">
+                <colgroup>
+                  <col className="w-[16%]" />
+                  <col className="w-[28%]" />
+                  <col className="w-[28%]" />
+                  <col className="w-[28%]" />
+                </colgroup>
+                <tbody>
+                  <tr>
+                    <td className="border border-black/20 print:border-transparent">&nbsp;</td>
+                    <td className="border border-black/20 print:border-transparent px-1 py-0.5">Requested by:</td>
+                    <td className="border border-black/20 print:border-transparent px-1 py-0.5">Recommending Approval:</td>
+                    <td className="border border-black/20 print:border-transparent px-1 py-0.5">Approved by:</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-black/20 print:border-transparent px-1 py-0.5 align-top">Signature :</td>
+                    <td className="h-12 border border-black/20 print:border-transparent">&nbsp;</td>
+                    <td className="h-12 border border-black/20 print:border-transparent">&nbsp;</td>
+                    <td className="h-12 border border-black/20 print:border-transparent">&nbsp;</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-black/20 print:border-transparent px-1 py-0.5 align-bottom">Printed Name :</td>
+                    <td className="border border-black/20 print:border-transparent align-bottom">
+                      <TextField value={reqName} onChange={setReqName} editing={editing} align="center" bold />
+                    </td>
+                    <td className="border border-black/20 print:border-transparent align-bottom">
+                      <TextField value={recName} onChange={setRecName} editing={editing} align="center" bold />
+                    </td>
+                    <td className="border border-black/20 print:border-transparent align-bottom">
+                      <TextField value={appName} onChange={setAppName} editing={editing} align="center" bold />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="border border-black/20 print:border-transparent px-1 py-0.5 align-top">Designation :</td>
+                    <td className="border border-black/20 print:border-transparent align-top">
+                      <TextField value={reqDesig} onChange={setReqDesig} editing={editing} align="center" />
+                    </td>
+                    <td className="border border-black/20 print:border-transparent align-top">
+                      <TextField value={recDesig} onChange={setRecDesig} editing={editing} align="center" />
+                    </td>
+                    <td className="border border-black/20 print:border-transparent align-top">
+                      <TextField value={appDesig} onChange={setAppDesig} editing={editing} align="center" />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
-        )}
-      </Section>
+
+          {editing && (
+            <p className="no-print mx-auto mt-3 max-w-xl text-center text-xs text-muted-foreground">
+              Type directly on the form. Highlighted fields are editable — switch to{" "}
+              <span className="font-semibold text-foreground">Preview</span> to see the clean, printable version.
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

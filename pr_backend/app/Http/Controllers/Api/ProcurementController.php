@@ -829,7 +829,7 @@ class ProcurementController extends Controller
         $purchaseRequest = PurchaseRequest::findOrFail($id);
         abort_if(! in_array($purchaseRequest->status, ['Draft', 'Returned'], true), 422, 'Only draft or returned purchase requests may be edited.');
 
-        $data = $request->validate([
+        $data = validator($this->normalizedPurchaseRequestPayload($request), [
             'office_id' => ['sometimes', 'exists:offices,id'],
             'fund_source_id' => ['sometimes', 'exists:fund_sources,id'],
             'project_id' => ['nullable', 'exists:projects,id'],
@@ -842,7 +842,7 @@ class ProcurementController extends Controller
             'items.*.uom' => ['required_with:items', 'string'],
             'items.*.quantity' => ['required_with:items', 'numeric', 'min:0.01'],
             'items.*.unit_cost' => ['required_with:items', 'numeric', 'min:0'],
-        ]);
+        ])->validate();
 
         DB::transaction(function () use ($data, $purchaseRequest): void {
             $items = $data['items'] ?? null;
@@ -854,6 +854,8 @@ class ProcurementController extends Controller
                 $purchaseRequest->items()->createMany($items);
             }
         });
+
+        $this->audit($request, 'Purchase Requests', 'Updated PR', $purchaseRequest->pr_no);
 
         return response()->json(['data' => $this->format($purchaseRequest->fresh())]);
     }

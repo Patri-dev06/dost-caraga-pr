@@ -1,6 +1,6 @@
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Bell, LogOut, Moon, Search, Sun } from "lucide-react";
+import { Bell, Mail, Settings, LogOut, Moon, Search, Sun } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,28 +12,10 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { logout } from "@/lib/api";
 import { toast } from "sonner";
 
-const titles: Record<string, string> = {
-  "/": "Dashboard",
-  "/purchase-requests": "Purchase Requests",
-  "/purchase-requests/new": "Create Purchase Request",
-  "/validation": "Item Pre-Validation",
-  "/approval-inbox": "Approval Inbox",
-  "/references/ppmp": "PPMP",
-  "/references/app-cse": "APP-CSE",
-  "/references/app-non-cse": "APP-Non-CSE",
-  "/references/budget": "Budget Allocations",
-  "/reports": "Reports",
-  "/users": "User Management",
-  "/audit-logs": "Audit Logs",
-  "/settings": "Settings",
-};
-
 export function AppTopbar() {
   const navigate = useNavigate();
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [signingOut, setSigningOut] = useState(false);
   const [isDark, setIsDark] = useState(false);
-  const title = titles[pathname] ?? (pathname.startsWith("/purchase-requests/") ? "Purchase Request Detail" : "DOST Procurement");
 
   useEffect(() => {
     setIsDark(document.documentElement.classList.contains("dark"));
@@ -65,41 +47,49 @@ export function AppTopbar() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 min-w-0 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur sm:gap-3 sm:px-4">
+    <header className="sticky top-0 z-30 flex h-16 min-w-0 items-center gap-2 border-b border-border bg-card/95 px-3 backdrop-blur sm:gap-3 sm:px-4">
       <SidebarTrigger className="text-navy" />
-      <div className="flex min-w-0 items-center gap-2 text-sm">
-        <span className="text-muted-foreground">DOST Caraga</span>
-        <span className="hidden text-muted-foreground sm:inline">/</span>
-        <span className="hidden truncate font-semibold text-navy sm:inline">{title}</span>
+      <Link to="/" className="flex min-w-0 flex-col leading-tight">
+        <span className="truncate text-sm font-bold text-[var(--brand-blue)] sm:text-[15px]">Procurement</span>
+        <span className="truncate text-sm font-bold text-[var(--brand-blue)] sm:text-[15px]">Management System</span>
+      </Link>
+
+      {/* Search */}
+      <div className="relative mx-auto hidden w-full max-w-md md:block">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder="Search…" className="h-10 w-full rounded-lg border-border bg-background pl-9" />
       </div>
-      <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
-        <div className="relative hidden xl:block">
-          <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Search PRs, items, references…" className="h-9 w-64 border-border bg-background pl-8 2xl:w-72" />
-        </div>
-        <Button variant="ghost" size="icon" className="rounded-full text-navy" aria-label="Notifications" title="Notifications">
-          <Bell className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="rounded-full border border-border bg-background/70 text-navy shadow-sm hover:bg-accent"
+
+      <div className="ml-auto flex min-w-0 items-center gap-0.5 sm:gap-1">
+        <IconButton label="Notifications" badge>
+          <Bell className="h-[18px] w-[18px]" />
+        </IconButton>
+        <IconButton label="Messages">
+          <Mail className="h-[18px] w-[18px]" />
+        </IconButton>
+        <IconButton label="Settings" onClick={() => navigate({ to: "/settings" })}>
+          <Settings className="h-[18px] w-[18px]" />
+        </IconButton>
+        <IconButton
+          label={isDark ? "Light mode" : "Night mode"}
           onClick={toggleTheme}
-          aria-label={isDark ? "Switch to light mode" : "Switch to night mode"}
-          title={isDark ? "Light mode" : "Night mode"}
         >
-          {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
+          {isDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+        </IconButton>
+        <IconButton
+          label="Sign out"
+          onClick={() => void handleLogout()}
+          disabled={signingOut}
+        >
+          <LogOut className="h-[18px] w-[18px]" />
+        </IconButton>
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2 px-2">
+            <Button variant="ghost" className="ml-1 flex items-center gap-2 px-1.5">
               <Avatar className="h-8 w-8 border border-border">
                 <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">MD</AvatarFallback>
               </Avatar>
-              <div className="hidden text-left md:block">
-                <p className="text-xs font-semibold text-navy leading-tight">M. Dela Cruz</p>
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Requester</p>
-              </div>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
@@ -124,5 +114,32 @@ export function AppTopbar() {
         </DropdownMenu>
       </div>
     </header>
+  );
+}
+
+function IconButton({
+  children, label, badge, onClick, disabled,
+}: {
+  children: React.ReactNode;
+  label: string;
+  badge?: boolean;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={onClick}
+      disabled={disabled}
+      className="relative rounded-full text-navy hover:bg-secondary"
+      aria-label={label}
+      title={label}
+    >
+      {children}
+      {badge && (
+        <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-card" />
+      )}
+    </Button>
   );
 }

@@ -55,82 +55,89 @@
 }
 
 :root {
-  --radius: 0.75rem;
+  --radius: 0.625rem;
   /* DOST palette */
-  --background: oklch(0.985 0.012 235);          /* #F8FCFF */
-  --foreground: oklch(0.28 0.08 245);            /* #003B66 navy */
+  --background: oklch(0.968 0.004 250);          /* neutral light gray #F2F4F7 */
+  --foreground: oklch(0.26 0.055 258);           /* #16233B navy ink */
   --card: oklch(1 0 0);                          /* #FFFFFF */
-  --card-foreground: oklch(0.28 0.08 245);
+  --card-foreground: oklch(0.26 0.055 258);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.28 0.08 245);
-  --primary: oklch(0.55 0.165 245);              /* #0072BC */
+  --popover-foreground: oklch(0.26 0.055 258);
+  --primary: oklch(0.37 0.095 258);              /* deep navy #1E3A6B */
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.945 0.04 235);            /* #DDF3FF muted */
-  --secondary-foreground: oklch(0.28 0.08 245);
-  --muted: oklch(0.96 0.025 235);
-  --muted-foreground: oklch(0.48 0.06 245);
-  --accent: oklch(0.945 0.04 235);
-  --accent-foreground: oklch(0.28 0.08 245);
+  --secondary: oklch(0.95 0.022 255);            /* light blue pill */
+  --secondary-foreground: oklch(0.37 0.095 258);
+  --muted: oklch(0.965 0.006 255);
+  --muted-foreground: oklch(0.50 0.02 258);
+  --accent: oklch(0.95 0.022 255);
+  --accent-foreground: oklch(0.37 0.095 258);
   --destructive: oklch(0.55 0.20 27);
   --destructive-foreground: oklch(1 0 0);
   --success: oklch(0.58 0.14 155);
   --success-foreground: oklch(1 0 0);
   --warning: oklch(0.72 0.15 75);
   --warning-foreground: oklch(0.22 0.05 60);
-  --navy: oklch(0.28 0.08 245);
+  --navy: oklch(0.30 0.075 258);                 /* headings */
+  --brand-blue: oklch(0.50 0.15 255);            /* medium blue titles/links */
   --soft-blue: oklch(0.86 0.07 235);             /* #9AD8FF */
-  --border: oklch(0.86 0.07 235);                /* #9AD8FF */
-  --input: oklch(0.88 0.05 235);
-  --ring: oklch(0.55 0.165 245);
-  --chart-1: oklch(0.55 0.165 245);
-  --chart-2: oklch(0.70 0.12 230);
-  --chart-3: oklch(0.40 0.10 250);
-  --chart-4: oklch(0.80 0.08 220);
-  --chart-5: oklch(0.28 0.08 245);
+  --border: oklch(0.905 0.006 255);              /* neutral gray border */
+  --input: oklch(0.885 0.008 255);
+  --ring: oklch(0.37 0.095 258);
+  --chart-1: #3b5bdb;                            /* LIB — blue (dataviz-validated) */
+  --chart-2: #b8860b;                            /* PPMP — gold (dataviz-validated) */
+  --chart-3: #dc4444;                            /* PR — red (dataviz-validated) */
+  --chart-4: oklch(0.62 0.10 250);               /* steel blue */
+  --chart-5: oklch(0.28 0.08 245);               /* dark navy */
   --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.28 0.08 245);
-  --sidebar-primary: oklch(0.55 0.165 245);
+  --sidebar-foreground: oklch(0.30 0.075 258);
+  --sidebar-primary: oklch(0.37 0.095 258);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.945 0.04 235);
-  --sidebar-accent-foreground: oklch(0.28 0.08 245);
-  --sidebar-border: oklch(0.92 0.03 235);
-  --sidebar-ring: oklch(0.55 0.165 245);
+  --sidebar-accent: oklch(0.95 0.022 255);
+  --sidebar-accent-foreground: oklch(0.37 0.095 258);
+  --sidebar-border: oklch(0.92 0.005 255);
+  --sidebar-ring: oklch(0.37 0.095 258);
 }
 
 .dark {
-  --background: oklch(0.18 0.04 245);
-  --foreground: oklch(0.98 0.01 235);
-  --card: oklch(0.22 0.05 245);
-  --card-foreground: oklch(0.98 0.01 235);
-  --popover: oklch(0.22 0.05 245);
-  --popover-foreground: oklch(0.98 0.01 235);
-  --primary: oklch(0.62 0.16 245);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.28 0.06 245);
-  --secondary-foreground: oklch(0.98 0.01 235);
-  --muted: oklch(0.28 0.06 245);
-  --muted-foreground: oklch(0.72 0.04 235);
-  --accent: oklch(0.28 0.06 245);
-  --accent-foreground: oklch(0.98 0.01 235);
+  --background: oklch(0.19 0.028 258);
+  --foreground: oklch(0.98 0.006 255);
+  --card: oklch(0.235 0.032 258);
+  --card-foreground: oklch(0.98 0.006 255);
+  --popover: oklch(0.235 0.032 258);
+  --popover-foreground: oklch(0.98 0.006 255);
+  --primary: oklch(0.62 0.14 255);
+  --primary-foreground: oklch(0.14 0.03 258);
+  --secondary: oklch(0.30 0.04 258);
+  --secondary-foreground: oklch(0.98 0.006 255);
+  --muted: oklch(0.30 0.04 258);
+  --muted-foreground: oklch(0.72 0.03 255);
+  --accent: oklch(0.30 0.04 258);
+  --accent-foreground: oklch(0.98 0.006 255);
   --destructive: oklch(0.65 0.20 27);
   --destructive-foreground: oklch(1 0 0);
   --success: oklch(0.65 0.14 155);
   --success-foreground: oklch(1 0 0);
   --warning: oklch(0.78 0.15 75);
   --warning-foreground: oklch(0.18 0.04 60);
-  --navy: oklch(0.98 0.01 235);
+  --navy: oklch(0.98 0.006 255);
+  --brand-blue: oklch(0.72 0.13 255);
   --soft-blue: oklch(0.42 0.08 235);
   --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 16%);
-  --ring: oklch(0.62 0.16 245);
-  --sidebar: oklch(0.22 0.05 245);
-  --sidebar-foreground: oklch(0.98 0.01 235);
-  --sidebar-primary: oklch(0.62 0.16 245);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.28 0.06 245);
-  --sidebar-accent-foreground: oklch(0.98 0.01 235);
+  --ring: oklch(0.62 0.14 255);
+  --chart-1: #3b5bdb;                            /* LIB — blue (dataviz-validated, both modes) */
+  --chart-2: #b8860b;                            /* PPMP — gold */
+  --chart-3: #dc4444;                            /* PR — red */
+  --chart-4: oklch(0.68 0.10 250);
+  --chart-5: oklch(0.85 0.05 255);
+  --sidebar: oklch(0.235 0.032 258);
+  --sidebar-foreground: oklch(0.98 0.006 255);
+  --sidebar-primary: oklch(0.62 0.14 255);
+  --sidebar-primary-foreground: oklch(0.14 0.03 258);
+  --sidebar-accent: oklch(0.30 0.04 258);
+  --sidebar-accent-foreground: oklch(0.98 0.006 255);
   --sidebar-border: oklch(1 0 0 / 12%);
-  --sidebar-ring: oklch(0.62 0.16 245);
+  --sidebar-ring: oklch(0.62 0.14 255);
 }
 
 @layer base {
@@ -155,5 +162,19 @@
     font-size: 0.6875rem;
     font-weight: 600;
     color: var(--color-muted-foreground);
+  }
+}
+
+/* Print isolation — used by the Purchase Request document view */
+@media print {
+  body { background: #fff !important; }
+  body * { visibility: hidden; }
+  .no-print { display: none !important; }
+  .pr-print-root, .pr-print-root * { visibility: visible; }
+  .pr-print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
   }
 }

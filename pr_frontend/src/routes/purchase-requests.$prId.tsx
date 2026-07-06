@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { ArrowLeft, Download, Printer } from "lucide-react";
+import { ArrowLeft, Download, Pencil, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -55,6 +55,13 @@ function PRDetail() {
         actions={
           <>
             <StatusBadge status={pr.status} />
+            {(pr.status === "Draft" || pr.status === "Returned") && (
+              <Button asChild className="gap-2">
+                <Link to="/purchase-requests/new" search={{ edit: pr.id }}>
+                  <Pencil className="h-4 w-4" /> Edit
+                </Link>
+              </Button>
+            )}
             <Button variant="outline" className="gap-2 border-border"><Printer className="h-4 w-4" /> Print</Button>
             <Button variant="outline" className="gap-2 border-border"><Download className="h-4 w-4" /> Export PDF</Button>
           </>
