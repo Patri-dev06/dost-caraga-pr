@@ -25,6 +25,7 @@ import { Route as ReferencesAppCseRouteImport } from './routes/references.app-cs
 import { Route as PurchaseRequestsNewRouteImport } from './routes/purchase-requests.new'
 import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requests.$prId'
 import { Route as PlanningLibRouteImport } from './routes/planning.lib'
+import { Route as PlanningLibNewRouteImport } from './routes/planning.lib.new'
 
 const ValidationRoute = ValidationRouteImport.update({
   id: '/validation',
@@ -106,6 +107,11 @@ const PlanningLibRoute = PlanningLibRouteImport.update({
   path: '/planning/lib',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PlanningLibNewRoute = PlanningLibNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => PlanningLibRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -117,13 +123,14 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
-  '/planning/lib': typeof PlanningLibRoute
+  '/planning/lib': typeof PlanningLibRouteWithChildren
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
   '/references/budget': typeof ReferencesBudgetRoute
   '/references/ppmp': typeof ReferencesPpmpRoute
+  '/planning/lib/new': typeof PlanningLibNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -135,13 +142,14 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
-  '/planning/lib': typeof PlanningLibRoute
+  '/planning/lib': typeof PlanningLibRouteWithChildren
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
   '/references/budget': typeof ReferencesBudgetRoute
   '/references/ppmp': typeof ReferencesPpmpRoute
+  '/planning/lib/new': typeof PlanningLibNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -154,13 +162,14 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
-  '/planning/lib': typeof PlanningLibRoute
+  '/planning/lib': typeof PlanningLibRouteWithChildren
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
   '/references/budget': typeof ReferencesBudgetRoute
   '/references/ppmp': typeof ReferencesPpmpRoute
+  '/planning/lib/new': typeof PlanningLibNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -181,6 +190,7 @@ export interface FileRouteTypes {
     | '/references/app-non-cse'
     | '/references/budget'
     | '/references/ppmp'
+    | '/planning/lib/new'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -199,6 +209,7 @@ export interface FileRouteTypes {
     | '/references/app-non-cse'
     | '/references/budget'
     | '/references/ppmp'
+    | '/planning/lib/new'
   id:
     | '__root__'
     | '/'
@@ -217,6 +228,7 @@ export interface FileRouteTypes {
     | '/references/app-non-cse'
     | '/references/budget'
     | '/references/ppmp'
+    | '/planning/lib/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -229,7 +241,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
   ValidationRoute: typeof ValidationRoute
-  PlanningLibRoute: typeof PlanningLibRoute
+  PlanningLibRoute: typeof PlanningLibRouteWithChildren
   ReferencesAppCseRoute: typeof ReferencesAppCseRoute
   ReferencesAppNonCseRoute: typeof ReferencesAppNonCseRoute
   ReferencesBudgetRoute: typeof ReferencesBudgetRoute
@@ -350,6 +362,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlanningLibRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/planning/lib/new': {
+      id: '/planning/lib/new'
+      path: '/new'
+      fullPath: '/planning/lib/new'
+      preLoaderRoute: typeof PlanningLibNewRouteImport
+      parentRoute: typeof PlanningLibRoute
+    }
   }
 }
 
@@ -366,6 +385,18 @@ const PurchaseRequestsRouteChildren: PurchaseRequestsRouteChildren = {
 const PurchaseRequestsRouteWithChildren =
   PurchaseRequestsRoute._addFileChildren(PurchaseRequestsRouteChildren)
 
+interface PlanningLibRouteChildren {
+  PlanningLibNewRoute: typeof PlanningLibNewRoute
+}
+
+const PlanningLibRouteChildren: PlanningLibRouteChildren = {
+  PlanningLibNewRoute: PlanningLibNewRoute,
+}
+
+const PlanningLibRouteWithChildren = PlanningLibRoute._addFileChildren(
+  PlanningLibRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApprovalInboxRoute: ApprovalInboxRoute,
@@ -376,7 +407,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,
   ValidationRoute: ValidationRoute,
-  PlanningLibRoute: PlanningLibRoute,
+  PlanningLibRoute: PlanningLibRouteWithChildren,
   ReferencesAppCseRoute: ReferencesAppCseRoute,
   ReferencesAppNonCseRoute: ReferencesAppNonCseRoute,
   ReferencesBudgetRoute: ReferencesBudgetRoute,
