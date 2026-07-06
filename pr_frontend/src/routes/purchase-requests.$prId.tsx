@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { ArrowLeft, Download, Pencil, Printer } from "lucide-react";
+import { ArrowLeft, Download, FileSpreadsheet, Pencil } from "lucide-react";
+import { exportPurchaseRequestExcel, PR_FORM_DEFAULTS } from "@/lib/pr-excel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -42,6 +43,29 @@ function PRDetail() {
     return <div className="mx-auto w-full max-w-6xl px-4 py-8 text-sm text-muted-foreground">{error instanceof Error ? error.message : "Purchase request not found."}</div>;
   }
 
+  function exportExcel() {
+    if (!pr) return;
+    const submitted = pr.dateSubmitted && pr.dateSubmitted !== "Not submitted";
+    exportPurchaseRequestExcel(
+      {
+        ...PR_FORM_DEFAULTS,
+        officeName: pr.office,
+        prNo: pr.prNo,
+        date: submitted ? pr.dateSubmitted : new Date().toISOString().slice(0, 10),
+        fundSource: pr.fundSource,
+        purpose: pr.purpose,
+        items: pr.items.map((it) => ({
+          stockNo: "",
+          unit: it.uom,
+          description: it.description ? `${it.name}\n${it.description}` : it.name,
+          qty: it.qty,
+          unitCost: it.unitCost,
+        })),
+      },
+      pr.prNo,
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
       <Button asChild variant="ghost" size="sm" className="gap-1 -ml-2 text-muted-foreground hover:text-navy">
@@ -62,7 +86,7 @@ function PRDetail() {
                 </Link>
               </Button>
             )}
-            <Button variant="outline" className="gap-2 border-border"><Printer className="h-4 w-4" /> Print</Button>
+            <Button variant="outline" className="gap-2 border-border" onClick={exportExcel}><FileSpreadsheet className="h-4 w-4" /> Export Excel</Button>
             <Button variant="outline" className="gap-2 border-border"><Download className="h-4 w-4" /> Export PDF</Button>
           </>
         }

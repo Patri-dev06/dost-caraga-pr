@@ -1,8 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Eye, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
+import { ArrowLeft, Eye, FileSpreadsheet, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { exportPurchaseRequestExcel } from "@/lib/pr-excel";
 import {
   apiCreatePurchaseRequest,
   apiGetPurchaseRequest,
@@ -354,6 +355,42 @@ function NewPR() {
     mutation.mutate({ payload, submit: true });
   }
 
+  function exportExcel() {
+    const rows = items
+      .map((it) => ({
+        stockNo: it.stockNo,
+        unit: it.unit,
+        description: it.description,
+        qty: parseNum(it.qty),
+        unitCost: parseNum(it.unitCost),
+      }))
+      .filter((it) => it.description.trim());
+    if (rows.length === 0) {
+      toast.error("Add at least one item before exporting.");
+      return;
+    }
+    exportPurchaseRequestExcel(
+      {
+        entityName,
+        fundCluster,
+        officeName,
+        prNo,
+        date,
+        rcc,
+        fundSource,
+        purpose,
+        items: rows,
+        requestedByName: reqName,
+        requestedByDesignation: reqDesig,
+        recommendingName: recName,
+        recommendingDesignation: recDesig,
+        approvedByName: appName,
+        approvedByDesignation: appDesig,
+      },
+      prNo || "Purchase-Request",
+    ).catch(() => toast.error("Unable to export to Excel."));
+  }
+
   const officeName = OFFICES.find((o) => o.code === office)?.name ?? office;
 
   const cell = "border border-black align-top";
@@ -414,6 +451,9 @@ function NewPR() {
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={exportExcel}>
+              <FileSpreadsheet className="h-4 w-4" /> Export Excel
+            </Button>
             {!editing && (
               <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
                 <Printer className="h-4 w-4" /> Print
