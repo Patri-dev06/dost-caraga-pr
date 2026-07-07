@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { Eye } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StatusBadge } from "./status-badge";
 import { fmtPHP, PurchaseRequest, prTotal } from "@/lib/mock-data";
@@ -51,6 +52,7 @@ export function PRTable({ rows }: { rows: PurchaseRequest[] }) {
             <TableHead className="label-eyebrow text-right">Amount</TableHead>
             <TableHead className="label-eyebrow">Status</TableHead>
             <TableHead className="label-eyebrow">Date Submitted</TableHead>
+            <TableHead className="label-eyebrow"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -73,6 +75,17 @@ export function PRTable({ rows }: { rows: PurchaseRequest[] }) {
               <TableCell className="text-right font-medium tabular-nums">{fmtPHP(prTotal(pr))}</TableCell>
               <TableCell><StatusBadge status={pr.status} /></TableCell>
               <TableCell className="text-muted-foreground">{pr.dateSubmitted}</TableCell>
+              <TableCell>
+                {pr.status === "Approved" && (
+                  <Link
+                    to="/purchase-requests/new"
+                    search={{ view: pr.id }}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
+                  >
+                    <Eye className="h-3.5 w-3.5" /> Preview
+                  </Link>
+                )}
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { ArrowLeft, Download, FileSpreadsheet, Pencil } from "lucide-react";
+import { ArrowLeft, Download, Eye, FileSpreadsheet, Pencil } from "lucide-react";
 import { exportPurchaseRequestExcel, PR_FORM_DEFAULTS } from "@/lib/pr-excel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -32,7 +32,7 @@ function PRDetail() {
   const { data: validationResults } = useQuery({
     queryKey: ["purchase-request-validation", prId],
     queryFn: () => apiValidatePurchaseRequest(prId),
-    enabled: !!pr,
+    enabled: !!pr && pr.status !== "Approved",
   });
 
   if (isLoading) {
@@ -83,6 +83,13 @@ function PRDetail() {
               <Button asChild className="gap-2">
                 <Link to="/purchase-requests/new" search={{ edit: pr.id }}>
                   <Pencil className="h-4 w-4" /> Edit
+                </Link>
+              </Button>
+            )}
+            {pr.status === "Approved" && (
+              <Button asChild variant="outline" className="gap-2 border-border">
+                <Link to="/purchase-requests/new" search={{ view: pr.id }}>
+                  <Eye className="h-4 w-4" /> Preview
                 </Link>
               </Button>
             )}

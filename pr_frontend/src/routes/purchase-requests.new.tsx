@@ -15,8 +15,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/purchase-requests/new")({
-  validateSearch: (search: Record<string, unknown>): { edit?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { edit?: string; view?: string } => ({
     edit: typeof search.edit === "string" ? search.edit : undefined,
+    view: typeof search.view === "string" ? search.view : undefined,
   }),
   head: () => ({
     meta: [
@@ -214,18 +215,20 @@ function BlendSelect({
 function NewPR() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { edit: editId } = Route.useSearch();
+  const { edit: editId, view: viewId } = Route.useSearch();
   const isEditing = Boolean(editId);
+  const isViewOnly = Boolean(viewId);
+  const loadId = editId || viewId;
   const today = new Date().toISOString().slice(0, 10);
 
   const { data: existing } = useQuery({
-    queryKey: ["purchase-request", editId],
-    queryFn: () => apiGetPurchaseRequest(editId!),
-    enabled: isEditing,
+    queryKey: ["purchase-request", loadId],
+    queryFn: () => apiGetPurchaseRequest(loadId!),
+    enabled: Boolean(loadId),
   });
 
-  const [mode, setMode] = useState<"edit" | "preview">("edit");
-  const editing = mode === "edit";
+  const [mode, setMode] = useState<"edit" | "preview">(isViewOnly ? "preview" : "edit");
+  const editing = mode === "edit" && !isViewOnly;
 
   const [entityName, setEntityName] = useState("DEPARTMENT OF SCIENCE AND TECHNOLOGY - CARAGA");
   const [fundCluster, setFundCluster] = useState("01");
@@ -406,67 +409,79 @@ function NewPR() {
             </Link>
           </Button>
 
-          {isEditing && (
+          {isViewOnly && (
+            <span className="hidden rounded-md bg-success/10 px-2 py-1 text-xs font-semibold text-success sm:inline">
+              Approved PR · View Only
+            </span>
+          )}
+
+          {isEditing && !isViewOnly && (
             <span className="hidden rounded-md bg-secondary px-2 py-1 text-xs font-semibold text-secondary-foreground sm:inline">
               Editing {prNo || "draft"}
             </span>
           )}
 
-          <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
-            <button
-              type="button"
-              onClick={() => setMode("edit")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                editing ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Pencil className="h-3.5 w-3.5" /> Edit
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("preview")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                !editing ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Eye className="h-3.5 w-3.5" /> Preview
-            </button>
-          </div>
+          {!isViewOnly && (
+            <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
+              <button
+                type="button"
+                onClick={() => setMode("edit")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  editing ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("preview")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  !editing ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Eye className="h-3.5 w-3.5" /> Preview
+              </button>
+            </div>
+          )}
 
-          <div className="hidden items-center gap-2 sm:flex">
-            <span className="label-eyebrow">Mode of Procurement</span>
-            <select
-              value={modeOfProcurement}
-              onChange={(e) => setModeOfProcurement(e.target.value)}
-              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-            >
-              {MODES.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!isViewOnly && (
+            <div className="hidden items-center gap-2 sm:flex">
+              <span className="label-eyebrow">Mode of Procurement</span>
+              <select
+                value={modeOfProcurement}
+                onChange={(e) => setModeOfProcurement(e.target.value)}
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              >
+                {MODES.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="ml-auto flex items-center gap-2">
             <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={exportExcel}>
               <FileSpreadsheet className="h-4 w-4" /> Export Excel
             </Button>
-            {!editing && (
-              <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
-                <Printer className="h-4 w-4" /> Print
-              </Button>
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
+              <Printer className="h-4 w-4" /> Print
+            </Button>
+            {!isViewOnly && (
+              <>
+                <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={saveDraft} disabled={mutation.isPending}>
+                  {action === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {isEditing ? "Save Changes" : "Save Draft"}
+                </Button>
+                <Button size="sm" className="gap-1.5" onClick={submitRequest} disabled={mutation.isPending}>
+                  {action === "submit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Submit
+                </Button>
+              </>
             )}
-            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={saveDraft} disabled={mutation.isPending}>
-              {action === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              {isEditing ? "Save Changes" : "Save Draft"}
-            </Button>
-            <Button size="sm" className="gap-1.5" onClick={submitRequest} disabled={mutation.isPending}>
-              {action === "submit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Submit
-            </Button>
           </div>
         </div>
       </div>

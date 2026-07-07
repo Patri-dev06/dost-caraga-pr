@@ -12,19 +12,24 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as ValidationRouteImport } from './routes/validation'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as RfqRouteImport } from './routes/rfq'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as PurchaseRequestsRouteImport } from './routes/purchase-requests'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuditLogsRouteImport } from './routes/audit-logs'
 import { Route as ApprovalInboxRouteImport } from './routes/approval-inbox'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as RfqNewRouteImport } from './routes/rfq.new'
+import { Route as RfqRfqIdRouteImport } from './routes/rfq.$rfqId'
 import { Route as ReferencesPpmpRouteImport } from './routes/references.ppmp'
 import { Route as ReferencesBudgetRouteImport } from './routes/references.budget'
 import { Route as ReferencesAppNonCseRouteImport } from './routes/references.app-non-cse'
 import { Route as ReferencesAppCseRouteImport } from './routes/references.app-cse'
 import { Route as PurchaseRequestsNewRouteImport } from './routes/purchase-requests.new'
 import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requests.$prId'
+import { Route as PlanningPpmpRouteImport } from './routes/planning.ppmp'
 import { Route as PlanningLibRouteImport } from './routes/planning.lib'
+import { Route as PlanningPpmpNewRouteImport } from './routes/planning.ppmp.new'
 import { Route as PlanningLibNewRouteImport } from './routes/planning.lib.new'
 
 const ValidationRoute = ValidationRouteImport.update({
@@ -40,6 +45,11 @@ const UsersRoute = UsersRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RfqRoute = RfqRouteImport.update({
+  id: '/rfq',
+  path: '/rfq',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReportsRoute = ReportsRouteImport.update({
@@ -72,6 +82,16 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RfqNewRoute = RfqNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => RfqRoute,
+} as any)
+const RfqRfqIdRoute = RfqRfqIdRouteImport.update({
+  id: '/$rfqId',
+  path: '/$rfqId',
+  getParentRoute: () => RfqRoute,
+} as any)
 const ReferencesPpmpRoute = ReferencesPpmpRouteImport.update({
   id: '/references/ppmp',
   path: '/references/ppmp',
@@ -102,10 +122,20 @@ const PurchaseRequestsPrIdRoute = PurchaseRequestsPrIdRouteImport.update({
   path: '/$prId',
   getParentRoute: () => PurchaseRequestsRoute,
 } as any)
+const PlanningPpmpRoute = PlanningPpmpRouteImport.update({
+  id: '/planning/ppmp',
+  path: '/planning/ppmp',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlanningLibRoute = PlanningLibRouteImport.update({
   id: '/planning/lib',
   path: '/planning/lib',
   getParentRoute: () => rootRouteImport,
+} as any)
+const PlanningPpmpNewRoute = PlanningPpmpNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => PlanningPpmpRoute,
 } as any)
 const PlanningLibNewRoute = PlanningLibNewRouteImport.update({
   id: '/new',
@@ -120,17 +150,22 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
+  '/rfq': typeof RfqRouteWithChildren
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
+  '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
   '/references/budget': typeof ReferencesBudgetRoute
   '/references/ppmp': typeof ReferencesPpmpRoute
+  '/rfq/$rfqId': typeof RfqRfqIdRoute
+  '/rfq/new': typeof RfqNewRoute
   '/planning/lib/new': typeof PlanningLibNewRoute
+  '/planning/ppmp/new': typeof PlanningPpmpNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -139,17 +174,22 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
+  '/rfq': typeof RfqRouteWithChildren
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
+  '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
   '/references/budget': typeof ReferencesBudgetRoute
   '/references/ppmp': typeof ReferencesPpmpRoute
+  '/rfq/$rfqId': typeof RfqRfqIdRoute
+  '/rfq/new': typeof RfqNewRoute
   '/planning/lib/new': typeof PlanningLibNewRoute
+  '/planning/ppmp/new': typeof PlanningPpmpNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -159,17 +199,22 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
+  '/rfq': typeof RfqRouteWithChildren
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
+  '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
   '/references/budget': typeof ReferencesBudgetRoute
   '/references/ppmp': typeof ReferencesPpmpRoute
+  '/rfq/$rfqId': typeof RfqRfqIdRoute
+  '/rfq/new': typeof RfqNewRoute
   '/planning/lib/new': typeof PlanningLibNewRoute
+  '/planning/ppmp/new': typeof PlanningPpmpNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -180,17 +225,22 @@ export interface FileRouteTypes {
     | '/login'
     | '/purchase-requests'
     | '/reports'
+    | '/rfq'
     | '/settings'
     | '/users'
     | '/validation'
     | '/planning/lib'
+    | '/planning/ppmp'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
     | '/references/app-non-cse'
     | '/references/budget'
     | '/references/ppmp'
+    | '/rfq/$rfqId'
+    | '/rfq/new'
     | '/planning/lib/new'
+    | '/planning/ppmp/new'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -199,17 +249,22 @@ export interface FileRouteTypes {
     | '/login'
     | '/purchase-requests'
     | '/reports'
+    | '/rfq'
     | '/settings'
     | '/users'
     | '/validation'
     | '/planning/lib'
+    | '/planning/ppmp'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
     | '/references/app-non-cse'
     | '/references/budget'
     | '/references/ppmp'
+    | '/rfq/$rfqId'
+    | '/rfq/new'
     | '/planning/lib/new'
+    | '/planning/ppmp/new'
   id:
     | '__root__'
     | '/'
@@ -218,17 +273,22 @@ export interface FileRouteTypes {
     | '/login'
     | '/purchase-requests'
     | '/reports'
+    | '/rfq'
     | '/settings'
     | '/users'
     | '/validation'
     | '/planning/lib'
+    | '/planning/ppmp'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
     | '/references/app-non-cse'
     | '/references/budget'
     | '/references/ppmp'
+    | '/rfq/$rfqId'
+    | '/rfq/new'
     | '/planning/lib/new'
+    | '/planning/ppmp/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -238,10 +298,12 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PurchaseRequestsRoute: typeof PurchaseRequestsRouteWithChildren
   ReportsRoute: typeof ReportsRoute
+  RfqRoute: typeof RfqRouteWithChildren
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
   ValidationRoute: typeof ValidationRoute
   PlanningLibRoute: typeof PlanningLibRouteWithChildren
+  PlanningPpmpRoute: typeof PlanningPpmpRouteWithChildren
   ReferencesAppCseRoute: typeof ReferencesAppCseRoute
   ReferencesAppNonCseRoute: typeof ReferencesAppNonCseRoute
   ReferencesBudgetRoute: typeof ReferencesBudgetRoute
@@ -269,6 +331,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rfq': {
+      id: '/rfq'
+      path: '/rfq'
+      fullPath: '/rfq'
+      preLoaderRoute: typeof RfqRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reports': {
@@ -313,6 +382,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/rfq/new': {
+      id: '/rfq/new'
+      path: '/new'
+      fullPath: '/rfq/new'
+      preLoaderRoute: typeof RfqNewRouteImport
+      parentRoute: typeof RfqRoute
+    }
+    '/rfq/$rfqId': {
+      id: '/rfq/$rfqId'
+      path: '/$rfqId'
+      fullPath: '/rfq/$rfqId'
+      preLoaderRoute: typeof RfqRfqIdRouteImport
+      parentRoute: typeof RfqRoute
+    }
     '/references/ppmp': {
       id: '/references/ppmp'
       path: '/references/ppmp'
@@ -355,12 +438,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchaseRequestsPrIdRouteImport
       parentRoute: typeof PurchaseRequestsRoute
     }
+    '/planning/ppmp': {
+      id: '/planning/ppmp'
+      path: '/planning/ppmp'
+      fullPath: '/planning/ppmp'
+      preLoaderRoute: typeof PlanningPpmpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/planning/lib': {
       id: '/planning/lib'
       path: '/planning/lib'
       fullPath: '/planning/lib'
       preLoaderRoute: typeof PlanningLibRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/planning/ppmp/new': {
+      id: '/planning/ppmp/new'
+      path: '/new'
+      fullPath: '/planning/ppmp/new'
+      preLoaderRoute: typeof PlanningPpmpNewRouteImport
+      parentRoute: typeof PlanningPpmpRoute
     }
     '/planning/lib/new': {
       id: '/planning/lib/new'
@@ -385,6 +482,18 @@ const PurchaseRequestsRouteChildren: PurchaseRequestsRouteChildren = {
 const PurchaseRequestsRouteWithChildren =
   PurchaseRequestsRoute._addFileChildren(PurchaseRequestsRouteChildren)
 
+interface RfqRouteChildren {
+  RfqRfqIdRoute: typeof RfqRfqIdRoute
+  RfqNewRoute: typeof RfqNewRoute
+}
+
+const RfqRouteChildren: RfqRouteChildren = {
+  RfqRfqIdRoute: RfqRfqIdRoute,
+  RfqNewRoute: RfqNewRoute,
+}
+
+const RfqRouteWithChildren = RfqRoute._addFileChildren(RfqRouteChildren)
+
 interface PlanningLibRouteChildren {
   PlanningLibNewRoute: typeof PlanningLibNewRoute
 }
@@ -397,6 +506,18 @@ const PlanningLibRouteWithChildren = PlanningLibRoute._addFileChildren(
   PlanningLibRouteChildren,
 )
 
+interface PlanningPpmpRouteChildren {
+  PlanningPpmpNewRoute: typeof PlanningPpmpNewRoute
+}
+
+const PlanningPpmpRouteChildren: PlanningPpmpRouteChildren = {
+  PlanningPpmpNewRoute: PlanningPpmpNewRoute,
+}
+
+const PlanningPpmpRouteWithChildren = PlanningPpmpRoute._addFileChildren(
+  PlanningPpmpRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApprovalInboxRoute: ApprovalInboxRoute,
@@ -404,10 +525,12 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   PurchaseRequestsRoute: PurchaseRequestsRouteWithChildren,
   ReportsRoute: ReportsRoute,
+  RfqRoute: RfqRouteWithChildren,
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,
   ValidationRoute: ValidationRoute,
   PlanningLibRoute: PlanningLibRouteWithChildren,
+  PlanningPpmpRoute: PlanningPpmpRouteWithChildren,
   ReferencesAppCseRoute: ReferencesAppCseRoute,
   ReferencesAppNonCseRoute: ReferencesAppNonCseRoute,
   ReferencesBudgetRoute: ReferencesBudgetRoute,

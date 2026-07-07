@@ -22,7 +22,7 @@ const NAV: Item[] = [
   {
     type: "group", title: "Planning", icon: CalendarRange, children: [
       { title: "Line Item Budget", url: "/planning/lib", icon: FileText, badge: "NEW" },
-      { title: "Create PPMP", url: "/references/ppmp", icon: BookOpen },
+      { title: "PPMP", url: "/planning/ppmp", icon: BookOpen, badge: "NEW" },
       { title: "APP-CSE", url: "/references/app-cse", icon: ClipboardList },
       { title: "APP-Non-CSE", url: "/references/app-non-cse", icon: Boxes },
       { title: "Budget Allocations", url: "/references/budget", icon: Wallet },
@@ -31,6 +31,7 @@ const NAV: Item[] = [
   {
     type: "group", title: "Procurement", icon: ShoppingCart, children: [
       { title: "Purchase Requests", url: "/purchase-requests", icon: FileText },
+      { title: "RFQ", url: "/rfq", icon: ClipboardList, badge: "NEW" },
       { title: "Validation", url: "/validation", icon: ValidateIcon },
       { title: "Approval Inbox", url: "/approval-inbox", icon: Inbox },
     ],
