@@ -1,9 +1,9 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { FilePlus2, FileText, Trash2 } from "lucide-react";
+import { CheckCircle2, FilePlus2, FileText, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
-import { deleteLib, fmtAmount, libTotals, listLibs, type LibDoc } from "@/lib/lib-store";
+import { currentLibBudgetTotal, deleteLib, fmtAmount, isApprovedReprogrammedLib, listLibs, saveLib, syncLibsFromDatabase, type LibDoc } from "@/lib/lib-store";
 
 export const Route = createFileRoute("/planning/lib")({
   head: () => ({
@@ -28,7 +28,10 @@ function LibListPage() {
   const [libs, setLibs] = useState<LibDoc[]>([]);
 
   useEffect(() => {
-    if (pathname === "/planning/lib") setLibs(listLibs());
+    if (pathname !== "/planning/lib") return;
+
+    setLibs(listLibs());
+    syncLibsFromDatabase().then(setLibs).catch(() => undefined);
   }, [pathname]);
 
   if (pathname !== "/planning/lib") return <Outlet />;
@@ -37,6 +40,13 @@ function LibListPage() {
     e.preventDefault();
     e.stopPropagation();
     deleteLib(id);
+    setLibs(listLibs());
+  }
+
+  function onApprove(lib: LibDoc, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    saveLib({ ...lib, status: "Approved" });
     setLibs(listLibs());
   }
 
@@ -65,7 +75,8 @@ function LibListPage() {
         ) : (
           <div className="divide-y divide-border">
             {libs.map((lib) => {
-              const total = libTotals(lib.rows).approved;
+              const currentTotal = currentLibBudgetTotal(lib);
+              const reprogrammed = isApprovedReprogrammedLib(lib);
               return (
                 <Link
                   key={lib.id}
@@ -81,8 +92,22 @@ function LibListPage() {
                   </div>
                   <div className="hidden text-right sm:block">
                     <p className="label-eyebrow">Approved LIB</p>
-                    <p className="mt-0.5 text-sm font-semibold tabular-nums text-navy">₱ {fmtAmount(total)}</p>
+                    <p className="mt-0.5 text-sm font-semibold tabular-nums text-navy">₱ {fmtAmount(currentTotal)}</p>
+                    {reprogrammed && (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        Total unchanged; items reallocated
+                      </p>
+                    )}
                   </div>
+                  {lib.status === "Approved" && (
+                    <span
+                      className={`hidden shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold sm:inline-flex ${
+                        reprogrammed ? "bg-primary/15 text-primary" : "bg-success/10 text-success"
+                      }`}
+                    >
+                      {reprogrammed ? `Reprogrammed · Rev ${lib.revision}` : "Original Approved LIB"}
+                    </span>
+                  )}
                   <span
                     className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_STYLES[lib.status] ?? "bg-secondary text-secondary-foreground"}`}
                   >
@@ -91,6 +116,17 @@ function LibListPage() {
                   <span className="hidden w-28 shrink-0 text-right text-xs text-muted-foreground md:block">
                     {new Date(lib.updatedAt).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" })}
                   </span>
+                  {lib.status !== "Approved" && (
+                    <button
+                      type="button"
+                      onClick={(e) => onApprove(lib, e)}
+                      title="Manually approve LIB"
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-1 text-xs font-semibold text-success hover:bg-success/15"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Approve
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => onDelete(lib.id, e)}

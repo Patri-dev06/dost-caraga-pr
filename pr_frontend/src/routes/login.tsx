@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { User, Lock, Eye, EyeOff, Mail, Building2, ClipboardList, ClipboardCheck, Wallet } from "lucide-react";
-import { login } from "@/lib/api";
+import { User, Lock, Eye, EyeOff, Mail, Briefcase } from "lucide-react";
+import { apiPublicOffices, login, register, type PublicOffice } from "@/lib/api";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
@@ -45,26 +45,6 @@ function AuthPage() {
           <p className="mt-4 text-lg font-semibold text-[#7db8f0]">
             Department of Science and Technology — Caraga
           </p>
-          <p className="mt-4 max-w-lg text-sm italic leading-relaxed text-white/70">
-            &ldquo;Digitizing Procurement. Connecting Planning, Budgeting, and Purchasing.&rdquo;
-          </p>
-
-          <div className="mt-8 flex flex-wrap gap-3">
-            {[
-              { icon: Wallet, k: "Budget" },
-              { icon: ClipboardList, k: "Procurement" },
-              { icon: ClipboardCheck, k: "Planning" },
-              { icon: Building2, k: "Government" },
-            ].map(({ icon: Icon, k }) => (
-              <div
-                key={k}
-                className="flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-4 py-2.5 text-sm font-medium backdrop-blur-sm"
-              >
-                <Icon className="h-4 w-4 text-[#7db8f0]" strokeWidth={1.75} />
-                {k}
-              </div>
-            ))}
-          </div>
 
           <p className="mt-8 max-w-lg text-sm leading-relaxed text-white/60">
             A unified procurement platform that seamlessly integrates the LIB, PPMP, and Purchase
@@ -166,6 +146,28 @@ function SignInCard({ onRegister }: { onRegister: () => void }) {
           </label>
           <a href="#" className="font-medium text-primary hover:underline">Forgot Password?</a>
         </div>
+        <div className="rounded-lg border border-dashed border-border bg-secondary/30 p-2.5">
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Demo accounts (password: password123)</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {[
+              { label: "Superadmin", email: "superadmin@dost.gov.ph" },
+              { label: "Admin", email: "admin@dost.gov.ph" },
+              { label: "Regular", email: "mdelacruz@dost.gov.ph" },
+            ].map((a) => (
+              <button
+                key={a.email}
+                type="button"
+                onClick={() => {
+                  setUsername(a.email);
+                  setPassword("password123");
+                }}
+                className="rounded-md border border-border bg-background px-2 py-1.5 text-[11px] font-medium text-navy transition-colors hover:border-primary/40 hover:bg-secondary"
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <Button type="submit" className="h-11 w-full rounded-md text-sm font-semibold" disabled={loading}>
           {loading ? "Signing in…" : "Sign In"}
         </Button>
@@ -203,6 +205,21 @@ function GoogleIcon({ className }: { className?: string }) {
 
 function RegisterCard({ onBack }: { onBack: () => void }) {
   const [loading, setLoading] = useState(false);
+  const [show, setShow] = useState(false);
+  const [offices, setOffices] = useState<PublicOffice[]>([]);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [position, setPosition] = useState("");
+  const [officeId, setOfficeId] = useState<string>("");
+  const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    apiPublicOffices()
+      .then(setOffices)
+      .catch(() => {});
+  }, []);
+
   return (
     <Card className="border border-border bg-card p-6 shadow-card sm:p-7">
       <div className="mb-5 text-center">
@@ -211,10 +228,28 @@ function RegisterCard({ onBack }: { onBack: () => void }) {
       </div>
       <form
         className="space-y-4"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
+          if (!officeId) {
+            toast.error("Please select your office / division.");
+            return;
+          }
           setLoading(true);
-          setTimeout(() => setLoading(false), 600);
+          try {
+            const result = await register({
+              name: `${firstName.trim()} ${lastName.trim()}`.trim(),
+              email: email.trim(),
+              password,
+              position: position.trim(),
+              office_id: Number(officeId),
+            });
+            toast.success(result.message ?? "Registration submitted for admin approval.");
+            onBack();
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Unable to create account.");
+          } finally {
+            setLoading(false);
+          }
         }}
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -222,12 +257,12 @@ function RegisterCard({ onBack }: { onBack: () => void }) {
             <Label htmlFor="fname" className="text-sm font-semibold text-navy">First name</Label>
             <div className="relative">
               <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
-              <Input id="fname" required placeholder="Maria" className="h-11 border-border bg-background pl-9" />
+              <Input id="fname" required value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Maria" className="h-11 border-border bg-background pl-9" />
             </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="lname" className="text-sm font-semibold text-navy">Last name</Label>
-            <Input id="lname" required placeholder="Dela Cruz" className="h-11 border-border bg-background" />
+            <Input id="lname" required value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Dela Cruz" className="h-11 border-border bg-background" />
           </div>
         </div>
 
@@ -235,20 +270,28 @@ function RegisterCard({ onBack }: { onBack: () => void }) {
           <Label htmlFor="r-email" className="text-sm font-semibold text-navy">Official email</Label>
           <div className="relative">
             <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
-            <Input id="r-email" type="email" required placeholder="firstname.lastname@dost.gov.ph" className="h-11 border-border bg-background pl-9" />
+            <Input id="r-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="firstname.lastname@dost.gov.ph" className="h-11 border-border bg-background pl-9" />
           </div>
         </div>
 
         <div className="space-y-2">
-          <Label className="text-sm font-semibold text-navy">Office / Division</Label>
-          <Select>
+          <Label htmlFor="r-position" className="text-sm font-semibold text-navy">Position / Designation</Label>
+          <div className="relative">
+            <Briefcase className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
+            <Input id="r-position" required value={position} onChange={(e) => setPosition(e.target.value)} placeholder="e.g. Science Research Specialist II" className="h-11 border-border bg-background pl-9" />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-sm font-semibold text-navy">Office / Division <span className="text-destructive">*</span></Label>
+          <Select value={officeId} onValueChange={setOfficeId} required>
             <SelectTrigger className="h-11 border-border bg-background"><SelectValue placeholder="Select office" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="ord">Office of the Regional Director</SelectItem>
-              <SelectItem value="fad">Finance &amp; Admin Division</SelectItem>
-              <SelectItem value="tsd">Technical Services Division</SelectItem>
-              <SelectItem value="psto-ads">PSTO Agusan del Sur</SelectItem>
-              <SelectItem value="psto-adn">PSTO Agusan del Norte</SelectItem>
+              {offices.map((office) => (
+                <SelectItem key={office.id} value={String(office.id)}>
+                  {office.name}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -257,7 +300,15 @@ function RegisterCard({ onBack }: { onBack: () => void }) {
           <Label htmlFor="r-pass" className="text-sm font-semibold text-navy">Password</Label>
           <div className="relative">
             <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
-            <Input id="r-pass" type="password" required placeholder="At least 8 characters" className="h-11 border-border bg-background pl-9" />
+            <Input id="r-pass" type={show ? "text" : "password"} required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" className="h-11 border-border bg-background pl-9 pr-10" />
+            <button
+              type="button"
+              onClick={() => setShow((s) => !s)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-primary"
+              aria-label={show ? "Hide password" : "Show password"}
+            >
+              {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
           </div>
         </div>
 

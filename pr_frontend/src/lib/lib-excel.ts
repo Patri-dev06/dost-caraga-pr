@@ -1,8 +1,8 @@
 // Builds a clean .xlsx of the DOST Form 4 Project Line-Item Budget matching the
 // on-screen preview: centered header, label/value fields, an indented budget
-// table with Approved LIB / First Reprogramming columns, totals, and signatories.
+// table with Approved LIB / (First…Third) Reprogramming columns, totals, and signatories.
 
-import { fmtAmount, libTotals, parseAmount, type LibDoc } from "@/lib/lib-store";
+import { fmtAmount, libTotals, maxRounds, parseAmount, reprogLabel, type LibDoc } from "@/lib/lib-store";
 
 export async function exportLibExcel(doc: LibDoc) {
   const ExcelJS = (await import("exceljs")).default;
@@ -11,7 +11,22 @@ export async function exportLibExcel(doc: LibDoc) {
     views: [{ showGridLines: false }],
     pageSetup: { fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } },
   });
-  ws.columns = [{ width: 40 }, { width: 22 }, { width: 15 }, { width: 16 }, { width: 34 }];
+
+  // Column layout: 1 label, 2 note, 3 approved, then one column per reprogramming
+  // round, then (when there is at least one round) a justification column.
+  const rounds = maxRounds(doc.rows);
+  const approvedCol = 3;
+  const roundCols = Array.from({ length: rounds }, (_, i) => approvedCol + 1 + i);
+  const justCol = rounds > 0 ? approvedCol + 1 + rounds : 0;
+  const lastCol = rounds > 0 ? justCol : approvedCol;
+
+  ws.columns = [
+    { width: 40 },
+    { width: 22 },
+    { width: 15 },
+    ...roundCols.map(() => ({ width: 16 })),
+    ...(rounds > 0 ? [{ width: 34 }] : []),
+  ];
 
   const font = (opts: { bold?: boolean; italic?: boolean; size?: number } = {}) => ({
     name: "Times New Roman",
@@ -21,11 +36,10 @@ export async function exportLibExcel(doc: LibDoc) {
   });
 
   let r = 1;
-  const merge = (range: string) => ws.mergeCells(range);
 
   const center = (text: string, opts: { bold?: boolean; size?: number } = {}) => {
-    merge(`A${r}:E${r}`);
-    const c = ws.getCell(`A${r}`);
+    ws.mergeCells(r, 1, r, lastCol);
+    const c = ws.getCell(r, 1);
     c.value = text;
     c.font = font(opts);
     c.alignment = { horizontal: "center" };
@@ -40,10 +54,10 @@ export async function exportLibExcel(doc: LibDoc) {
   r++;
 
   const field = (label: string, value: string) => {
-    const c = ws.getCell(`A${r}`);
+    const c = ws.getCell(r, 1);
     c.value = { richText: [{ font: font({ bold: true }), text: `${label} :  ` }, { font: font(), text: value.replace(/\n/g, "; ") }] };
     c.alignment = { horizontal: "left", wrapText: true, vertical: "top" };
-    merge(`A${r}:E${r}`);
+    ws.mergeCells(r, 1, r, lastCol);
     r++;
   };
   field("Program Title", doc.programTitle);
@@ -56,69 +70,78 @@ export async function exportLibExcel(doc: LibDoc) {
   r++;
 
   // Column headers for the amount columns
-  ws.getCell(`C${r}`).value = "Approved LIB";
-  ws.getCell(`C${r}`).font = font({ bold: true });
-  ws.getCell(`C${r}`).alignment = { horizontal: "right" };
-  ws.getCell(`D${r}`).value = "First Reprogramming";
-  ws.getCell(`D${r}`).font = font({ bold: true });
-  ws.getCell(`D${r}`).alignment = { horizontal: "right" };
-  ws.getCell(`E${r}`).value = "Justification";
-  ws.getCell(`E${r}`).font = font({ bold: true });
-  ws.getCell(`E${r}`).alignment = { horizontal: "center" };
+  const approvedHeader = ws.getCell(r, approvedCol);
+  approvedHeader.value = "Approved LIB";
+  approvedHeader.font = font({ bold: true });
+  approvedHeader.alignment = { horizontal: "right" };
+  roundCols.forEach((col, i) => {
+    const c = ws.getCell(r, col);
+    c.value = reprogLabel(i);
+    c.font = font({ bold: true });
+    c.alignment = { horizontal: "center", wrapText: true };
+  });
+  if (rounds > 0) {
+    const c = ws.getCell(r, justCol);
+    c.value = "Justification";
+    c.font = font({ bold: true });
+    c.alignment = { horizontal: "left" };
+  }
   r++;
 
   for (const row of doc.rows) {
-    const label = ws.getCell(`A${r}`);
+    const label = ws.getCell(r, 1);
     label.value = row.label;
     label.font = font({ bold: row.header && row.indent === 0, italic: !row.header && row.indent === 2 });
     label.alignment = { horizontal: "left", indent: row.indent * 2, wrapText: true, vertical: "top" };
 
     if (row.note) {
-      const note = ws.getCell(`B${r}`);
+      const note = ws.getCell(r, 2);
       note.value = row.note;
       note.font = font({ italic: true, size: 9 });
       note.alignment = { horizontal: "left", wrapText: true, vertical: "top" };
     }
-    if (!row.header) {
-      const a = ws.getCell(`C${r}`);
-      a.value = parseAmount(row.approved) || null;
-      a.numFmt = "#,##0.00";
-      a.font = font();
-      a.alignment = { horizontal: "right" };
-      const b = ws.getCell(`D${r}`);
-      b.value = parseAmount(row.reprogramming) || null;
+    // Any row may carry an amount now (categories/titles included), so export them all.
+    const a = ws.getCell(r, approvedCol);
+    a.value = parseAmount(row.approved) || null;
+    a.numFmt = "#,##0.00";
+    a.font = font();
+    a.alignment = { horizontal: "right" };
+    roundCols.forEach((col, i) => {
+      const b = ws.getCell(r, col);
+      b.value = parseAmount(row.reprogrammings[i]?.amount ?? "") || null;
       b.numFmt = "#,##0.00";
       b.font = font();
       b.alignment = { horizontal: "right" };
-      if (row.justification) {
-        const j = ws.getCell(`E${r}`);
-        j.value = row.justification;
-        j.font = font({ size: 9 });
-        j.alignment = { horizontal: "left", wrapText: true, vertical: "top" };
-      }
+    });
+    const justification = row.reprogrammings[rounds - 1]?.justification ?? "";
+    if (rounds > 0 && justification) {
+      const j = ws.getCell(r, justCol);
+      j.value = justification;
+      j.font = font({ size: 9 });
+      j.alignment = { horizontal: "left", wrapText: true, vertical: "top" };
     }
     r++;
   }
 
   const totals = libTotals(doc.rows);
+  const thin = { style: "thin" as const, color: { argb: "FF000000" } };
   const totalRow = (label: string, topBorder: boolean) => {
-    const l = ws.getCell(`A${r}`);
+    const l = ws.getCell(r, 1);
     l.value = label;
     l.font = font({ bold: true });
     l.alignment = { horizontal: "left", indent: 4 };
-    const a = ws.getCell(`C${r}`);
+    const a = ws.getCell(r, approvedCol);
     a.value = `P  ${fmtAmount(totals.approved)}`;
     a.font = font({ bold: true });
     a.alignment = { horizontal: "right" };
-    const b = ws.getCell(`D${r}`);
-    b.value = fmtAmount(totals.reprogramming);
-    b.font = font({ bold: true });
-    b.alignment = { horizontal: "right" };
-    if (topBorder) {
-      const thin = { style: "thin" as const, color: { argb: "FF000000" } };
-      a.border = { top: thin };
-      b.border = { top: thin };
-    }
+    if (topBorder) a.border = { top: thin };
+    roundCols.forEach((col, i) => {
+      const b = ws.getCell(r, col);
+      b.value = fmtAmount(totals.reprogrammings[i] ?? 0);
+      b.font = font({ bold: true });
+      b.alignment = { horizontal: "right" };
+      if (topBorder) b.border = { top: thin };
+    });
     r++;
   };
   totalRow("Sub-Total for MOOE", false);

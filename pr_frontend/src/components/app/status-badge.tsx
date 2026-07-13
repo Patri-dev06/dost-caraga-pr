@@ -15,6 +15,7 @@ const styles: Record<string, string> = {
   "Warning": "bg-warning/15 text-warning-foreground border-warning/40",
   "N/A": "bg-muted text-muted-foreground border-border",
   "Active": "bg-success/10 text-success border-success/30",
+  "Pending": "bg-warning/15 text-warning-foreground border-warning/40",
   "Inactive": "bg-muted text-muted-foreground border-border",
 };
 

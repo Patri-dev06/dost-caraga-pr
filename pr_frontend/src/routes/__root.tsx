@@ -7,6 +7,8 @@ import { AppTopbar } from "@/components/app/app-topbar";
 import { Toaster } from "@/components/ui/sonner";
 import { AppQueryProvider } from "@/lib/query";
 import { AUTH_EXPIRED_EVENT, getAuthIdleTimeoutMs, hasValidToken, recordAuthActivity } from "@/lib/api";
+import { CurrentUserProvider, useCanAccess, useCurrentUser } from "@/lib/current-user";
+import { moduleForPath } from "@/lib/modules";
 
 const themeInitializationScript = `
   (() => {
@@ -19,6 +21,32 @@ const themeInitializationScript = `
       document.documentElement.style.colorScheme = isDark ? "dark" : "light";
     } catch {
       // Keep the default light theme when browser storage is unavailable.
+    }
+  })();
+`;
+
+const authRedirectScript = `
+  (() => {
+    try {
+      const path = window.location.pathname;
+      if (path === "/login") return;
+
+      const token = localStorage.getItem("pr_backend_token");
+      const expiresAt = Number(localStorage.getItem("pr_backend_token_expires_at") || 0);
+      const lastActivityAt = Number(localStorage.getItem("pr_backend_token_last_activity_at") || 0);
+      const idleTimeoutMs = ${Number(import.meta.env.VITE_AUTH_IDLE_TIMEOUT_MINUTES ?? 30) * 60 * 1000};
+      const expired = expiresAt && Date.now() >= expiresAt;
+      const idleExpired = idleTimeoutMs > 0 && lastActivityAt && Date.now() - lastActivityAt >= idleTimeoutMs;
+
+      if (!token || expired || idleExpired) {
+        localStorage.removeItem("pr_backend_token");
+        localStorage.removeItem("pr_backend_token_expires_at");
+        localStorage.removeItem("pr_backend_token_last_activity_at");
+        localStorage.removeItem("pr_backend_current_user");
+        window.location.replace("/login");
+      }
+    } catch {
+      if (window.location.pathname !== "/login") window.location.replace("/login");
     }
   })();
 `;
@@ -77,6 +105,7 @@ function RootShell({ children }: { children: React.ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitializationScript }} />
+        <script dangerouslySetInnerHTML={{ __html: authRedirectScript }} />
         <HeadContent />
       </head>
       <body>
@@ -145,35 +174,66 @@ function RootComponent() {
     );
   }
 
+  if (!authChecked) {
+    return null;
+  }
+
   if (authChecked && !hasValidToken()) {
-    return (
-      <AppQueryProvider>
-        <div className="flex min-h-screen items-center justify-center bg-background px-4 text-sm text-muted-foreground">
-          Redirecting to sign in...
-        </div>
-        <Toaster />
-      </AppQueryProvider>
-    );
+    return null;
   }
 
   return (
     <AppQueryProvider>
-      <SidebarProvider>
-        <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden bg-background print:block print:min-h-0 print:overflow-visible print:bg-white">
-          <div className="contents print:hidden">
-            <AppSidebar />
-          </div>
-          <SidebarInset className="flex min-w-0 flex-1 flex-col overflow-x-hidden print:overflow-visible print:bg-white">
+      <CurrentUserProvider>
+        <SidebarProvider>
+          <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden bg-background print:block print:min-h-0 print:overflow-visible print:bg-white">
             <div className="contents print:hidden">
-              <AppTopbar />
+              <AppSidebar />
             </div>
-            <main className="min-w-0 flex-1 overflow-x-hidden print:overflow-visible print:bg-white">
-              <Outlet />
-            </main>
-          </SidebarInset>
-        </div>
-        <Toaster />
-      </SidebarProvider>
+            <SidebarInset className="flex min-w-0 flex-1 flex-col overflow-x-hidden print:overflow-visible print:bg-white">
+              <div className="contents print:hidden">
+                <AppTopbar />
+              </div>
+              <main className="min-w-0 flex-1 overflow-x-hidden print:overflow-visible print:bg-white">
+                <ModuleGuard>
+                  <Outlet />
+                </ModuleGuard>
+              </main>
+            </SidebarInset>
+          </div>
+          <Toaster />
+        </SidebarProvider>
+      </CurrentUserProvider>
     </AppQueryProvider>
   );
+}
+
+/** Redirects to the dashboard if the current route's module is not permitted for this user. */
+function ModuleGuard({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const canAccess = useCanAccess();
+  const { ready } = useCurrentUser();
+  const moduleKey = moduleForPath(pathname);
+  const allowed = !moduleKey || canAccess(moduleKey);
+
+  useEffect(() => {
+    if (ready && !allowed) {
+      router.navigate({ to: "/", replace: true });
+    }
+  }, [ready, allowed, router, pathname]);
+
+  if (ready && !allowed) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center px-4 text-center">
+        <p className="label-eyebrow mb-2">Access restricted</p>
+        <h2 className="text-xl font-semibold text-navy">You don't have access to this module</h2>
+        <p className="mt-2 max-w-md text-sm text-muted-foreground">
+          Ask your Superadmin to grant access, or head back to the dashboard.
+        </p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
 }

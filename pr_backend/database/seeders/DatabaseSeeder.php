@@ -38,11 +38,23 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Admin', 'description' => 'Manages users, roles, and reference data.', 'permissions' => ['Manage users', 'Manage references', 'View audit logs']],
         ])->map(fn ($data) => Role::updateOrCreate(['name' => $data['name']], $data));
 
+        $superadmin = User::updateOrCreate(['email' => 'superadmin@dost.gov.ph'], [
+            'name' => 'System Superadmin',
+            'password' => Hash::make('password123'),
+            'office_id' => $offices->firstWhere('code', 'ORD')->id,
+            'status' => 'Active',
+            'tier' => 'superadmin',
+            'modules' => null,
+        ]);
+        $superadmin->roles()->sync([$roles->firstWhere('name', 'Admin')->id]);
+
         $admin = User::updateOrCreate(['email' => 'admin@dost.gov.ph'], [
-            'name' => 'System Admin',
+            'name' => 'Supply Unit Admin',
             'password' => Hash::make('password123'),
             'office_id' => $offices->firstWhere('code', 'ICTU')->id,
             'status' => 'Active',
+            'tier' => 'admin',
+            'modules' => null,
         ]);
         $admin->roles()->sync([$roles->firstWhere('name', 'Admin')->id]);
 
@@ -51,6 +63,8 @@ class DatabaseSeeder extends Seeder
             'password' => Hash::make('password123'),
             'office_id' => $offices->firstWhere('code', 'RO')->id,
             'status' => 'Active',
+            'tier' => 'regular',
+            'modules' => ['pr', 'lib', 'ppmp'],
         ]);
         $requester->roles()->sync([$roles->firstWhere('name', 'Requester')->id]);
 

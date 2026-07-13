@@ -7,10 +7,14 @@ import { exportPurchaseRequestExcel } from "@/lib/pr-excel";
 import {
   apiCreatePurchaseRequest,
   apiGetPurchaseRequest,
+  apiGetSignatories,
   apiSubmitPurchaseRequest,
   apiUpdatePurchaseRequest,
   type PurchaseRequestCreatePayload,
+  type Signatory as SignatoryOption,
 } from "@/lib/api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useCurrentUser } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
@@ -97,6 +101,46 @@ function TextField({
         "rounded-sm outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100 print:hover:bg-transparent",
       )}
     />
+  );
+}
+
+// Signatory name cell: a dropdown of approved accounts while editing, plain text
+// otherwise. Keeps the current value selectable even if that account is gone.
+function SignatorySelect({
+  value,
+  options,
+  editing,
+  onPick,
+}: {
+  value: string;
+  options: SignatoryOption[];
+  editing: boolean;
+  onPick: (name: string) => void;
+}) {
+  if (!editing) return <TextField value={value} onChange={() => {}} editing={false} align="center" bold />;
+  const items =
+    value && !options.some((o) => o.name === value)
+      ? [{ id: -1, name: value, tier: "regular" as const, position: null }, ...options]
+      : options;
+  return (
+    <div className="px-1 py-0.5" style={{ fontFamily: "var(--font-sans)" }}>
+      <Select value={value || undefined} onValueChange={onPick}>
+        <SelectTrigger className="h-7 border-black/20 text-center font-bold">
+          <SelectValue placeholder="Select…" />
+        </SelectTrigger>
+        <SelectContent>
+          {items.length === 0 ? (
+            <div className="px-2 py-1.5 text-sm text-muted-foreground">No approved accounts yet</div>
+          ) : (
+            items.map((o) => (
+              <SelectItem key={o.name} value={o.name}>
+                {o.name}
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 
@@ -238,30 +282,44 @@ function NewPR() {
   const [rcc, setRcc] = useState("");
   const [fundSource, setFundSource] = useState(FUND_SOURCES[0]);
   const [modeOfProcurement, setModeOfProcurement] = useState(MODES[0]);
-  const [purpose, setPurpose] = useState("Subscription to productivity tools for day-to-day use of PSTOs.");
+  const [purpose, setPurpose] = useState("");
 
-  const [items, setItems] = useState<FormItem[]>(() => [
-    {
-      id: "seed-1",
-      stockNo: "",
-      unit: "License",
-      description:
-        "Office Productivity Tool\nTechnical Specifications:\nFamily license (6 users per license; suitable for non-commercial user)\n1-year subscription per license\nCompatible with Windows 11 or later, macOS, and other standard operating systems\nVAT inclusive",
-      qty: "4",
-      unitCost: "8500",
-    },
-    newItem(),
-    newItem(),
-  ]);
+  const [items, setItems] = useState<FormItem[]>(() => [newItem(), newItem(), newItem()]);
 
-  const [reqName, setReqName] = useState("JENIFER T. VILLAPLAZA");
-  const [reqDesig, setReqDesig] = useState("SRS II");
-  const [recName, setRecName] = useState("IMELDA S. MEZO");
-  const [recDesig, setRecDesig] = useState("ARD-FAS");
-  const [appName, setAppName] = useState("ENGR. NOEL M. AJOC");
-  const [appDesig, setAppDesig] = useState("Regional Director");
+  // Requested by is the signed-in user (auto-filled below). Recommending/Approved
+  // are chosen from the approved-accounts dropdowns.
+  const [reqName, setReqName] = useState("");
+  const [reqDesig, setReqDesig] = useState("");
+  const [recName, setRecName] = useState("");
+  const [recDesig, setRecDesig] = useState("");
+  const [appName, setAppName] = useState("");
+  const [appDesig, setAppDesig] = useState("");
 
   const [action, setAction] = useState<"draft" | "submit" | null>(null);
+
+  // Approved accounts for the Recommending / Approved signatory dropdowns.
+  const [signatories, setSignatories] = useState<SignatoryOption[]>([]);
+  useEffect(() => {
+    apiGetSignatories()
+      .then(setSignatories)
+      .catch(() => setSignatories([]));
+  }, []);
+
+  // "Requested by" is always the signed-in user — auto-fill their name and
+  // position on a brand-new PR (never override an existing/edited one).
+  const { user: currentUser } = useCurrentUser();
+  useEffect(() => {
+    if (existing || !currentUser) return;
+    setReqName((prev) => prev || currentUser.name);
+    setReqDesig((prev) => prev || currentUser.position);
+  }, [currentUser, existing]);
+
+  // Picking a signatory fills the name and auto-fills the designation from sign-up.
+  const pickSignatory = (name: string, setName: (v: string) => void, setDesig: (v: string) => void) => {
+    setName(name);
+    const chosen = signatories.find((o) => o.name === name);
+    if (chosen?.position) setDesig(chosen.position);
+  };
 
   // Prefill the form once when editing an existing draft/returned PR.
   const prefilled = useRef(false);
@@ -319,6 +377,16 @@ function NewPR() {
   }
   function addItem() {
     setItems((prev) => [...prev, newItem()]);
+  }
+  // Insert a fresh item row directly below the given one.
+  function addItemAfter(id: string) {
+    setItems((prev) => {
+      const i = prev.findIndex((it) => it.id === id);
+      if (i < 0) return [...prev, newItem()];
+      const next = [...prev];
+      next.splice(i + 1, 0, newItem());
+      return next;
+    });
   }
   function removeItem(id: string) {
     setItems((prev) => (prev.length > 1 ? prev.filter((it) => it.id !== id) : prev));
@@ -467,9 +535,11 @@ function NewPR() {
             <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={exportExcel}>
               <FileSpreadsheet className="h-4 w-4" /> Export Excel
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
-              <Printer className="h-4 w-4" /> Print
-            </Button>
+            {mode === "preview" && (
+              <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
+                <Printer className="h-4 w-4" /> Print
+              </Button>
+            )}
             {!isViewOnly && (
               <>
                 <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={saveDraft} disabled={mutation.isPending}>
@@ -624,15 +694,27 @@ function NewPR() {
                       <div className="min-h-[1.4em] px-1 py-0.5 text-right tabular-nums">
                         {parseNum(it.qty) * parseNum(it.unitCost) ? money(parseNum(it.qty) * parseNum(it.unitCost)) : " "}
                       </div>
-                      {editing && items.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeItem(it.id)}
-                          title="Remove item"
-                          className="no-print absolute right-[-1.9rem] top-1 text-red-500 hover:text-red-700"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                      {editing && (
+                        <div className="no-print absolute right-[-3.6rem] top-1 flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => addItemAfter(it.id)}
+                            title="Add item below"
+                            className="text-emerald-500 hover:text-emerald-700"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </button>
+                          {items.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeItem(it.id)}
+                              title="Remove item"
+                              className="text-red-500 hover:text-red-700"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -651,7 +733,13 @@ function NewPR() {
 
             {editing && (
               <div className="no-print border-x border-b border-black bg-secondary/30 px-2 py-1.5">
-                <Button variant="outline" size="sm" onClick={addItem} className="h-7 gap-1.5 border-border" style={{ fontFamily: "var(--font-sans)" }}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={addItem}
+                  className="h-7 gap-1.5 border-border transition-all hover:-translate-y-px hover:border-primary hover:bg-primary hover:text-primary-foreground hover:shadow-sm"
+                  style={{ fontFamily: "var(--font-sans)" }}
+                >
                   <Plus className="h-3.5 w-3.5" /> Add Item Row
                 </Button>
               </div>
@@ -709,19 +797,19 @@ function NewPR() {
                   <tr>
                     <td className="border border-black/20 print:border-transparent px-1 py-0.5 align-bottom">Printed Name :</td>
                     <td className="border border-black/20 print:border-transparent align-bottom">
-                      <TextField value={reqName} onChange={setReqName} editing={editing} align="center" bold />
+                      <TextField value={reqName} onChange={setReqName} editing={false} align="center" bold />
                     </td>
                     <td className="border border-black/20 print:border-transparent align-bottom">
-                      <TextField value={recName} onChange={setRecName} editing={editing} align="center" bold />
+                      <SignatorySelect value={recName} options={signatories} editing={editing} onPick={(n) => pickSignatory(n, setRecName, setRecDesig)} />
                     </td>
                     <td className="border border-black/20 print:border-transparent align-bottom">
-                      <TextField value={appName} onChange={setAppName} editing={editing} align="center" bold />
+                      <SignatorySelect value={appName} options={signatories} editing={editing} onPick={(n) => pickSignatory(n, setAppName, setAppDesig)} />
                     </td>
                   </tr>
                   <tr>
                     <td className="border border-black/20 print:border-transparent px-1 py-0.5 align-top">Designation :</td>
                     <td className="border border-black/20 print:border-transparent align-top">
-                      <TextField value={reqDesig} onChange={setReqDesig} editing={editing} align="center" />
+                      <TextField value={reqDesig} onChange={setReqDesig} editing={false} align="center" />
                     </td>
                     <td className="border border-black/20 print:border-transparent align-top">
                       <TextField value={recDesig} onChange={setRecDesig} editing={editing} align="center" />

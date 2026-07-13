@@ -1,10 +1,11 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { FilePlus2, FileText, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { FilePlus2, FileText, AlertTriangle, CheckCircle2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
-import { listLibs, libTotals, fmtAmount, type LibDoc } from "@/lib/lib-store";
-import { listPpmpsForLib, totalPpmpBudgetForLib, type PpmpForLib } from "@/lib/ppmp-store";
+import { currentLibBudgetTotal, isApprovedReprogrammedLib, listLibs, fmtAmount, syncLibsFromDatabase, type LibDoc } from "@/lib/lib-store";
+import { listPpmpsForLib, syncPpmpsFromDatabase, totalPpmpBudgetForLib, type PpmpForLib } from "@/lib/ppmp-store";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/planning/ppmp")({
   head: () => ({
@@ -24,19 +25,35 @@ function PpmpListPage() {
   useEffect(() => {
     if (pathname !== "/planning/ppmp") return;
 
-    const libs = listLibs().filter((l) => l.status === "Approved");
-    setApprovedLibs(libs);
+    const refresh = () => {
+      const libs = listLibs().filter((l) => l.status === "Approved");
+      setApprovedLibs(libs);
 
-    const map: Record<string, PpmpForLib[]> = {};
-    for (const lib of libs) {
-      map[lib.id] = listPpmpsForLib(lib.id);
-    }
-    setPpmpsByLib(map);
+      const map: Record<string, PpmpForLib[]> = {};
+      for (const lib of libs) {
+        map[lib.id] = listPpmpsForLib(lib.id);
+      }
+      setPpmpsByLib(map);
+    };
+
+    refresh();
+    syncLibsFromDatabase()
+      .then(() => syncPpmpsFromDatabase())
+      .then(refresh)
+      .catch(() => undefined);
   }, [pathname]);
 
   if (pathname !== "/planning/ppmp") return <Outlet />;
 
   const hasApproved = approvedLibs.length > 0;
+  const ppmpStatusClass = (status: PpmpForLib["status"]) =>
+    cn(
+      "inline-flex rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+      status === "Draft" && "bg-secondary text-secondary-foreground",
+      status === "Submitted to Budget Officer" && "bg-warning/15 text-warning-foreground",
+      status === "Budget Officer Checked" && "bg-primary/15 text-primary",
+      status === "Approved" && "bg-success/15 text-success",
+    );
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
@@ -68,7 +85,8 @@ function PpmpListPage() {
           </p>
 
           {approvedLibs.map((lib) => {
-            const libTotal = libTotals(lib.rows).approved;
+            const libTotal = currentLibBudgetTotal(lib);
+            const reprogrammed = isApprovedReprogrammedLib(lib);
             const ppmps = ppmpsByLib[lib.id] ?? [];
             const ppmpUsed = totalPpmpBudgetForLib(lib.id);
             const remaining = libTotal - ppmpUsed;
@@ -82,9 +100,19 @@ function PpmpListPage() {
                 <div className="flex flex-wrap items-start gap-4 border-b border-border p-4 sm:items-center">
                   <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-success sm:mt-0" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-navy">
-                      {lib.projectTitle || "Untitled Project"}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="min-w-0 text-sm font-semibold text-navy">
+                        {lib.projectTitle || "Untitled Project"}
+                      </p>
+                      <span
+                        className={cn(
+                          "inline-flex shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+                          reprogrammed ? "bg-primary/15 text-primary" : "bg-success/10 text-success",
+                        )}
+                      >
+                        {reprogrammed ? `Reprogrammed · Rev ${lib.revision}` : "Original Approved LIB"}
+                      </span>
+                    </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {lib.programTitle} · CY {lib.fiscalYear}
                     </p>
@@ -95,6 +123,11 @@ function PpmpListPage() {
                       <p className="text-sm font-semibold tabular-nums text-navy">
                         {fmtAmount(libTotal)}
                       </p>
+                      {reprogrammed && (
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          Items follow approved reprogramming
+                        </p>
+                      )}
                     </div>
                     <Button asChild size="sm" className="gap-1.5">
                       <Link to="/planning/ppmp/new" search={{ lib: lib.id }}>
@@ -109,6 +142,11 @@ function PpmpListPage() {
                   <div>
                     <p className="label-eyebrow">LIB Budget</p>
                     <p className="mt-0.5 text-sm font-semibold tabular-nums text-navy">{fmtAmount(libTotal)}</p>
+                    {reprogrammed && (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        Reprogrammed items; total unchanged
+                      </p>
+                    )}
                   </div>
                   <div>
                     <p className="label-eyebrow">PPMP Used</p>
@@ -133,26 +171,33 @@ function PpmpListPage() {
                 ) : (
                   <div className="divide-y divide-border">
                     {ppmps.map((ppmp) => (
-                      <div
+                      <Link
                         key={ppmp.id}
-                        className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40"
+                        to="/planning/ppmp/new"
+                        search={{ lib: ppmp.libId, edit: ppmp.id }}
+                        className="flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-secondary/40"
                       >
-                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <FileText className={cn("h-4 w-4 shrink-0", ppmp.status === "Approved" ? "text-success" : "text-muted-foreground")} />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-navy">
                             {ppmp.ppmpNo}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {ppmp.endUserUnit} · FY {ppmp.fiscalYear} · {ppmp.documentType} · {ppmp.rows.length} items
+                            {ppmp.endUserUnit} · FY {ppmp.fiscalYear} · {ppmp.documentType}
+                            {ppmp.revisionCount > 0 ? ` · Rev ${ppmp.revisionCount}` : ""} · {ppmp.rows.length} items
                           </p>
                         </div>
+                        <span className={ppmpStatusClass(ppmp.status)}>
+                          {ppmp.status}
+                        </span>
                         <p className="text-sm font-semibold tabular-nums text-navy">
                           {fmtAmount(ppmp.totalBudget)}
                         </p>
                         <span className="hidden text-xs text-muted-foreground md:block">
                           {new Date(ppmp.createdAt).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" })}
                         </span>
-                      </div>
+                        <Eye className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      </Link>
                     ))}
                   </div>
                 )}
@@ -171,6 +216,7 @@ function PpmpListPage() {
           </p>
         </div>
       )}
+
     </div>
   );
 }

@@ -6,11 +6,28 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
     Route::post('/auth/login', [AuthController::class, 'login']);
+    Route::post('/auth/register', [AuthController::class, 'register']);
+    Route::get('/auth/offices', [AuthController::class, 'offices']);
 
     Route::middleware('auth.token')->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::post('/auth/refresh', [AuthController::class, 'refresh']);
         Route::get('/auth/me', [AuthController::class, 'me']);
+
+        // Approved accounts for signatory pickers (readable by any signed-in user).
+        Route::get('/signatories', [ProcurementController::class, 'signatories']);
+
+        Route::get('/planning-libs', [ProcurementController::class, 'planningLibIndex']);
+        Route::post('/planning-libs', [ProcurementController::class, 'planningLibStore']);
+        Route::get('/planning-libs/{clientUid}', [ProcurementController::class, 'planningLibShow']);
+        Route::put('/planning-libs/{clientUid}', [ProcurementController::class, 'planningLibStore']);
+        Route::delete('/planning-libs/{clientUid}', [ProcurementController::class, 'planningLibDestroy']);
+
+        Route::get('/planning-ppmps', [ProcurementController::class, 'planningPpmpIndex']);
+        Route::post('/planning-ppmps', [ProcurementController::class, 'planningPpmpStore']);
+        Route::get('/planning-ppmps/{clientUid}', [ProcurementController::class, 'planningPpmpShow']);
+        Route::put('/planning-ppmps/{clientUid}', [ProcurementController::class, 'planningPpmpStore']);
+        Route::delete('/planning-ppmps/{clientUid}', [ProcurementController::class, 'planningPpmpDestroy']);
 
         foreach (['users', 'roles', 'offices', 'fund-sources', 'projects', 'procurement-items'] as $resource) {
             Route::get($resource, [ProcurementController::class, 'index'])->defaults('resource', $resource);

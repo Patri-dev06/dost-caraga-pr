@@ -1,16 +1,19 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Eye, Loader2, Pencil, Plus, Printer, Save, Trash2, AlertTriangle } from "lucide-react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, Copy, Eye, GripVertical, Loader2, Pencil, Plus, Printer, Save, Trash2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { apiGetSignatories, type Signatory as SignatoryOption } from "@/lib/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { getLib, listLibs, libTotals, fmtAmount, parseAmount, type LibDoc } from "@/lib/lib-store";
-import { savePpmp, totalPpmpBudgetForLib, type PpmpItemRow } from "@/lib/ppmp-store";
+import { currentLibBudgetTotal, getLib, listLibs, fmtAmount, parseAmount, type LibDoc } from "@/lib/lib-store";
+import { getPpmp, savePpmp, totalPpmpBudgetForLib, type PpmpItemRow, type PpmpStatus } from "@/lib/ppmp-store";
 
 export const Route = createFileRoute("/planning/ppmp/new")({
-  validateSearch: (search: Record<string, unknown>): { lib?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { lib?: string; edit?: string } => ({
     lib: typeof search.lib === "string" ? search.lib : undefined,
+    edit: typeof search.edit === "string" ? search.edit : undefined,
   }),
   head: () => ({
     meta: [
@@ -33,6 +36,14 @@ const PROCUREMENT_MODES = [
   "Negotiated Procurement",
 ];
 const PRE_PROC_OPTIONS = ["No", "Yes"];
+const PPMP_EXCLUDED_LIB_LABELS = new Set(["Fuel Expenses", "Other Professional Services"]);
+const MAX_FINAL_PPMP_REVISIONS = 5;
+const BLANK_LINES_PER_CATEGORY = 2;
+
+function monthYearOptions(fiscalYear: string): string[] {
+  const year = String(Number(fiscalYear) || new Date().getFullYear());
+  return ["", ...Array.from({ length: 12 }, (_, i) => `${String(i + 1).padStart(2, "0")}/${year}`)];
+}
 
 type Align = "left" | "center" | "right";
 const alignCls: Record<Align, string> = { left: "text-left", center: "text-center", right: "text-right" };
@@ -64,6 +75,39 @@ function TextField({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       className={cn(shared, "rounded-sm px-0.5 outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100")}
+    />
+  );
+}
+
+function MainItemField({
+  value,
+  onChange,
+  editing,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  editing: boolean;
+}) {
+  const style = {
+    fontWeight: 900,
+    fontStyle: "italic" as const,
+    WebkitTextStroke: "0.25px currentColor",
+    textShadow: "0.35px 0 currentColor",
+  };
+  if (!editing) {
+    return (
+      <span className="inline-block min-h-[1.2em] w-full uppercase leading-snug" style={style}>
+        {value || " "}
+      </span>
+    );
+  }
+  return (
+    <input
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="CATEGORY NAME"
+      className="w-full rounded-sm bg-transparent px-0.5 uppercase leading-snug outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100"
+      style={style}
     />
   );
 }
@@ -106,14 +150,115 @@ function AmountField({
 }) {
   const shared = "w-full bg-transparent text-right tabular-nums leading-snug";
   if (!editing) return <span className={cn(shared, "inline-block min-h-[1.2em]")}>{value === "" ? " " : `₱${fmtAmount(parseAmount(value))}`}</span>;
+  const formatTypedAmount = (raw: string) => {
+    const cleaned = raw.replace(/[^\d.]/g, "");
+    const [wholeRaw = "", decimalRaw] = cleaned.split(".");
+    const whole = wholeRaw.replace(/^0+(?=\d)/, "");
+    const grouped = whole === "" ? "" : Number(whole).toLocaleString("en-US");
+    if (cleaned.includes(".")) return `${grouped || "0"}.${(decimalRaw ?? "").slice(0, 2)}`;
+    return grouped;
+  };
   return (
     <input
       inputMode="decimal"
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => onChange(formatTypedAmount(e.target.value))}
       placeholder="0.00"
       className={cn(shared, "rounded-sm px-0.5 outline-none placeholder:text-black/20 hover:bg-amber-50 focus:bg-amber-100")}
     />
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function valueToHtml(value: string): string {
+  if (/<[a-z][\s\S]*>/i.test(value)) return value;
+  return escapeHtml(value).replace(/\n/g, "<br>");
+}
+
+function htmlToPlainText(value: string): string {
+  if (typeof document === "undefined") return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const div = document.createElement("div");
+  div.innerHTML = valueToHtml(value);
+  return div.textContent?.trim() ?? "";
+}
+
+function firstTextLine(value: string): string {
+  const plain = htmlToPlainText(value);
+  return plain.split(/\n|\r/)[0]?.trim() || plain;
+}
+
+function RichTextField({
+  value,
+  onChange,
+  editing,
+  italic,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  editing: boolean;
+  italic?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || document.activeElement === el) return;
+    el.innerHTML = valueToHtml(value);
+  }, [value]);
+
+  const applyBold = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    document.execCommand("bold");
+    onChange(el.innerHTML);
+  };
+
+  if (!editing) {
+    return (
+      <div
+        className={cn("min-h-[1.2em] whitespace-pre-wrap break-words leading-snug", italic && "italic")}
+        dangerouslySetInnerHTML={{ __html: valueToHtml(value) || " " }}
+      />
+    );
+  }
+
+  return (
+    <div className="group/rich relative">
+      <button
+        type="button"
+        onMouseDown={(event) => {
+          event.preventDefault();
+          applyBold();
+        }}
+        title="Bold selected text"
+        className="no-print absolute right-0 top-0 z-10 rounded-sm bg-white px-1 text-[9px] font-bold leading-4 opacity-0 shadow-sm ring-1 ring-black/10 hover:bg-amber-100 group-focus-within/rich:opacity-100 group-hover/rich:opacity-100"
+      >
+        B
+      </button>
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={(event) => onChange(event.currentTarget.innerHTML)}
+        onBlur={(event) => onChange(event.currentTarget.innerHTML)}
+        onKeyDown={(event) => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+            event.preventDefault();
+            applyBold();
+          }
+        }}
+        className={cn("min-h-[1.2em] w-full rounded-sm bg-transparent px-0.5 pr-4 leading-snug outline-none hover:bg-amber-50 focus:bg-amber-100", italic && "italic")}
+        dangerouslySetInnerHTML={{ __html: valueToHtml(value) }}
+      />
+    </div>
   );
 }
 
@@ -152,7 +297,9 @@ function AutoTextarea({
 interface PpmpRow {
   id: string;
   isCategory: boolean;
+  isSubcategory: boolean;
   categoryLabel: string;
+  subcategoryLabel: string;
   generalDescription: string;
   projectType: string;
   quantitySize: string;
@@ -182,11 +329,13 @@ interface PpmpDoc {
   rows: PpmpRow[];
 }
 
-function newRow(categoryLabel?: string): PpmpRow {
+function newRow(categoryLabel?: string, subcategoryLabel?: string): PpmpRow {
   return {
     id: crypto.randomUUID(),
     isCategory: false,
+    isSubcategory: false,
     categoryLabel: categoryLabel ?? "",
+    subcategoryLabel: subcategoryLabel ?? "",
     generalDescription: "",
     projectType: "Goods",
     quantitySize: "",
@@ -207,14 +356,94 @@ function newCategoryRow(label: string): PpmpRow {
   return { ...newRow(), id: crypto.randomUUID(), isCategory: true, categoryLabel: label };
 }
 
-function getLibExpenseCategories(lib: LibDoc): string[] {
-  const cats: string[] = [];
-  for (const row of lib.rows) {
-    if (row.header && row.indent <= 1 && row.label.trim()) {
-      cats.push(row.label.trim());
+function newSubcategoryRow(categoryLabel: string, subcategoryLabel: string): PpmpRow {
+  return { ...newRow(categoryLabel), id: crypto.randomUUID(), isSubcategory: true, subcategoryLabel };
+}
+
+function isDataRow(row: PpmpRow): boolean {
+  return !row.isCategory && !row.isSubcategory;
+}
+
+function isProcurementRow(row: PpmpRow): boolean {
+  return isDataRow(row);
+}
+
+function getLibExpenseTemplateRows(lib: LibDoc): PpmpRow[] {
+  const rows: PpmpRow[] = [];
+  const addCategoryWithBlankLines = (label: string) => {
+    rows.push(newCategoryRow(label));
+    for (let i = 0; i < BLANK_LINES_PER_CATEGORY; i++) {
+      rows.push(newRow(label));
     }
+  };
+
+  for (const row of lib.rows) {
+    const label = row.label.trim();
+    if (!label) continue;
+
+    if (row.indent === 0) {
+      addCategoryWithBlankLines(label);
+      continue;
+    }
+
+    if (row.indent === 1) {
+      if (PPMP_EXCLUDED_LIB_LABELS.has(label)) {
+        continue;
+      }
+      addCategoryWithBlankLines(label);
+      continue;
+    }
+
+    // LIB child lines become user-managed PPMP rows, so the template only
+    // seeds main categories plus blank editable line items.
   }
-  return cats;
+  return rows;
+}
+
+function formRowsFromSavedItems(items: PpmpItemRow[]): PpmpRow[] {
+  const rows: PpmpRow[] = [];
+  const categoryIds = new Set<string>();
+  const subcategoryKeys = new Set<string>();
+
+  for (const item of items) {
+    const [rawCategory, rawSubcategory] = item.expense_category.split(" - ");
+    const category = rawCategory?.trim() || "UNCATEGORIZED";
+    const subcategory = (item.expense_subcategory || rawSubcategory || "").trim();
+
+    if (!categoryIds.has(category)) {
+      rows.push(newCategoryRow(category));
+      categoryIds.add(category);
+    }
+
+    if (subcategory) {
+      const key = `${category}::${subcategory}`;
+      if (!subcategoryKeys.has(key)) {
+        const subRow = newSubcategoryRow(category, subcategory);
+        subRow.generalDescription = item.general_description;
+        rows.push(subRow);
+        subcategoryKeys.add(key);
+      }
+    }
+
+    const row = newRow(category, subcategory);
+    row.id = item.id || crypto.randomUUID();
+    row.generalDescription = subcategory ? "" : item.general_description;
+    row.projectType = item.project_type || "Goods";
+    row.quantitySize = item.quantity_size || "";
+    row.quantity = String(item.quantity || 1);
+    row.recommendedMode = item.recommended_mode || "Small Value Procurement";
+    row.preProcConference = item.pre_procurement_conference || "No";
+    row.procStart = item.procurement_start || "";
+    row.procEnd = item.procurement_end || "";
+    row.deliveryPeriod = item.delivery_period || "";
+    row.sourceOfFunds = item.source_of_funds || "";
+    row.estimatedBudget = item.estimated_budget ? String(item.estimated_budget) : "";
+    row.supportingDocs = item.supporting_documents || "";
+    row.remarks = item.remarks || "";
+    rows.push(row);
+  }
+
+  return rows;
 }
 
 function getCategorySubtotal(rows: PpmpRow[], categoryId: string): number {
@@ -227,20 +456,242 @@ function getCategorySubtotal(rows: PpmpRow[], categoryId: string): number {
     }
     if (counting) {
       if (r.isCategory) break;
+      if (isProcurementRow(r)) total += parseAmount(r.estimatedBudget);
+    }
+  }
+  return total;
+}
+
+function getSubcategorySubtotal(rows: PpmpRow[], subcategoryId: string): number {
+  let counting = false;
+  let total = 0;
+  for (const r of rows) {
+    if (r.id === subcategoryId) {
+      counting = true;
+      continue;
+    }
+    if (counting) {
+      if (r.isCategory || r.isSubcategory) break;
       total += parseAmount(r.estimatedBudget);
     }
   }
   return total;
 }
 
+function normalizeBudgetLabel(label: string): string {
+  return label.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function latestLibRowBudget(row: LibDoc["rows"][number]): number {
+  const latestReprogramming = [...(row.reprogrammings ?? [])].reverse().find((rp) => rp.amount.trim() !== "");
+  return parseAmount(latestReprogramming?.amount ?? row.approved);
+}
+
+function getLibBudgetLimits(lib: LibDoc): Map<string, number> {
+  const limits = new Map<string, number>();
+  const addLimit = (label: string, amount: number) => {
+    const key = normalizeBudgetLabel(label);
+    if (!key || PPMP_EXCLUDED_LIB_LABELS.has(label.trim())) return;
+    limits.set(key, (limits.get(key) ?? 0) + amount);
+  };
+
+  lib.rows.forEach((row, index) => {
+    const label = row.label.trim();
+    if (!label) return;
+
+    if (!row.header) {
+      addLimit(label, latestLibRowBudget(row));
+      return;
+    }
+
+    let total = 0;
+    for (let i = index + 1; i < lib.rows.length; i++) {
+      const child = lib.rows[i];
+      if (child.indent <= row.indent) break;
+      if (!child.header) total += latestLibRowBudget(child);
+    }
+    addLimit(label, total);
+  });
+
+  return limits;
+}
+
+function getPpmpBudgetOverages(rows: PpmpRow[], lib: LibDoc): { label: string; total: number; limit: number; type: "category" | "subcategory" }[] {
+  const limits = getLibBudgetLimits(lib);
+  const overages: { label: string; total: number; limit: number; type: "category" | "subcategory" }[] = [];
+
+  for (const row of rows) {
+    if (row.isCategory) {
+      const label = row.categoryLabel.trim();
+      const limit = limits.get(normalizeBudgetLabel(label));
+      if (limit == null) continue;
+      const total = getCategorySubtotal(rows, row.id);
+      if (total > limit) overages.push({ label, total, limit, type: "category" });
+    }
+
+    if (row.isSubcategory) {
+      const label = row.subcategoryLabel.trim();
+      const limit = limits.get(normalizeBudgetLabel(label));
+      if (limit == null) continue;
+      const total = getSubcategorySubtotal(rows, row.id);
+      if (total > limit) overages.push({ label, total, limit, type: "subcategory" });
+    }
+  }
+
+  return overages;
+}
+
+function getPpmpBudgetOverageRowIds(rows: PpmpRow[], lib: LibDoc): Set<string> {
+  const limits = getLibBudgetLimits(lib);
+  const rowIds = new Set<string>();
+
+  rows.forEach((row, index) => {
+    if (!isProcurementRow(row)) return;
+
+    const { categoryId, subcategoryId } = currentGroupIds(rows, index);
+    const category = categoryId ? rows.find((r) => r.id === categoryId) : undefined;
+    const subcategory = subcategoryId ? rows.find((r) => r.id === subcategoryId) : undefined;
+
+    if (subcategory?.subcategoryLabel.trim()) {
+      const limit = limits.get(normalizeBudgetLabel(subcategory.subcategoryLabel));
+      if (limit != null && getSubcategorySubtotal(rows, subcategory.id) > limit) {
+        rowIds.add(row.id);
+        return;
+      }
+    }
+
+    if (category?.categoryLabel.trim()) {
+      const limit = limits.get(normalizeBudgetLabel(category.categoryLabel));
+      if (limit != null && getCategorySubtotal(rows, category.id) > limit) {
+        rowIds.add(row.id);
+      }
+    }
+  });
+
+  return rowIds;
+}
+
+function categoryHasDataRows(rows: PpmpRow[], categoryId: string): boolean {
+  const catIdx = rows.findIndex((row) => row.id === categoryId);
+  if (catIdx < 0) return false;
+  const nextCat = rows.findIndex((row, j) => j > catIdx && row.isCategory);
+  return rows.some((row, i) => i > catIdx && (nextCat === -1 || i < nextCat) && isProcurementRow(row));
+}
+
+function subcategoryHasDataRows(rows: PpmpRow[], subcategoryId: string): boolean {
+  const subIdx = rows.findIndex((row) => row.id === subcategoryId);
+  if (subIdx < 0) return false;
+  const nextGroup = rows.findIndex((row, j) => j > subIdx && (row.isCategory || row.isSubcategory));
+  return rows.some((row, i) => i > subIdx && (nextGroup === -1 || i < nextGroup) && isDataRow(row));
+}
+
+function getActiveSubcategory(rows: PpmpRow[], index: number): PpmpRow | undefined {
+  let active: PpmpRow | undefined;
+  for (let i = index; i >= 0; i--) {
+    const row = rows[i];
+    if (row.isCategory) return undefined;
+    if (row.isSubcategory) {
+      active = row;
+      break;
+    }
+  }
+  return active;
+}
+
+function countSubcategoryDataRows(rows: PpmpRow[], subcategoryId: string): number {
+  const subIdx = rows.findIndex((row) => row.id === subcategoryId);
+  if (subIdx < 0) return 0;
+  let count = 0;
+  for (let i = subIdx + 1; i < rows.length; i++) {
+    if (rows[i].isCategory || rows[i].isSubcategory) break;
+    if (isDataRow(rows[i])) count += 1;
+  }
+  return count;
+}
+
+function isFirstDataRowInSubcategory(rows: PpmpRow[], index: number, subcategoryId: string): boolean {
+  const subIdx = rows.findIndex((row) => row.id === subcategoryId);
+  if (subIdx < 0 || index <= subIdx) return false;
+  for (let i = subIdx + 1; i < index; i++) {
+    if (rows[i].isCategory || rows[i].isSubcategory) break;
+    if (isDataRow(rows[i])) return false;
+  }
+  return isDataRow(rows[index]);
+}
+
+function currentContext(rows: PpmpRow[], index: number): { categoryLabel: string; subcategoryLabel: string } {
+  let categoryLabel = "";
+  let subcategoryLabel = "";
+  for (let i = 0; i <= index; i++) {
+    const row = rows[i];
+    if (row.isCategory) {
+      categoryLabel = row.categoryLabel;
+      subcategoryLabel = "";
+    } else if (row.isSubcategory) {
+      subcategoryLabel = row.subcategoryLabel;
+    }
+  }
+  return { categoryLabel, subcategoryLabel };
+}
+
+function currentGroupIds(rows: PpmpRow[], index: number): { categoryId?: string; subcategoryId?: string } {
+  let categoryId: string | undefined;
+  let subcategoryId: string | undefined;
+  for (let i = 0; i <= index; i++) {
+    const row = rows[i];
+    if (row.isCategory) {
+      categoryId = row.id;
+      subcategoryId = undefined;
+    } else if (row.isSubcategory) {
+      subcategoryId = row.id;
+    }
+  }
+  return { categoryId, subcategoryId };
+}
+
+function endsSubcategoryBlock(rows: PpmpRow[], index: number): string | undefined {
+  const { subcategoryId } = currentGroupIds(rows, index);
+  if (!subcategoryId || !subcategoryHasDataRows(rows, subcategoryId)) return undefined;
+  const next = rows[index + 1];
+  return !next || next.isCategory || next.isSubcategory ? subcategoryId : undefined;
+}
+
+function endsCategoryBlock(rows: PpmpRow[], index: number): string | undefined {
+  const { categoryId } = currentGroupIds(rows, index);
+  if (!categoryId) return undefined;
+  const category = rows.find((row) => row.id === categoryId);
+  if (!category || /^\s*[IVXLCDM]+\./i.test(category.categoryLabel)) return undefined;
+  const next = rows[index + 1];
+  return !next || next.isCategory ? categoryId : undefined;
+}
+
+function categoryBlockBounds(rows: PpmpRow[], categoryId: string): { start: number; end: number } | null {
+  const start = rows.findIndex((row) => row.id === categoryId && row.isCategory);
+  if (start < 0) return null;
+  const nextCategory = rows.findIndex((row, index) => index > start && row.isCategory);
+  return { start, end: nextCategory === -1 ? rows.length : nextCategory };
+}
+
 function CreatePpmpPage() {
   const navigate = useNavigate();
-  const { lib: libId } = Route.useSearch();
+  const { lib: libId, edit: editId } = Route.useSearch();
   const [selectedLib, setSelectedLib] = useState<LibDoc | null>(null);
   const [existingPpmpTotal, setExistingPpmpTotal] = useState(0);
+  const [workflowStatus, setWorkflowStatus] = useState<PpmpStatus>("Draft");
+  const [revisionCount, setRevisionCount] = useState(0);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
-  const [saving, setSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState<"draft" | "submit" | "approve" | null>(null);
+  const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null);
+  const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null);
   const loaded = useRef(false);
+
+  // Approved accounts (status = Active), offered as signatory choices.
+  const [signatories, setSignatories] = useState<SignatoryOption[]>([]);
+  useEffect(() => {
+    apiGetSignatories()
+      .then(setSignatories)
+      .catch(() => setSignatories([]));
+  }, []);
 
   const [doc, setDoc] = useState<PpmpDoc>({
     ppmpNo: "3",
@@ -260,8 +711,11 @@ function CreatePpmpPage() {
     if (loaded.current) return;
     loaded.current = true;
 
+    const existingPpmp = editId ? getPpmp(editId) : undefined;
+
     let lib: LibDoc | undefined;
     if (libId) lib = getLib(libId);
+    if (!lib && existingPpmp?.libId) lib = getLib(existingPpmp.libId);
     if (!lib) {
       const libs = listLibs();
       lib = libs.find((l) => l.status === "Approved");
@@ -274,24 +728,91 @@ function CreatePpmpPage() {
     }
 
     setSelectedLib(lib);
-    setExistingPpmpTotal(totalPpmpBudgetForLib(lib.id));
+    setExistingPpmpTotal(Math.max(0, totalPpmpBudgetForLib(lib.id) - (existingPpmp?.totalBudget ?? 0)));
 
-    const categories = getLibExpenseCategories(lib);
-    const initialRows: PpmpRow[] = [];
-    for (const cat of categories) {
-      initialRows.push(newCategoryRow(cat));
+    if (existingPpmp) {
+      setWorkflowStatus(existingPpmp.status);
+      setRevisionCount(existingPpmp.revisionCount);
+      if (existingPpmp.status === "Approved") setMode("preview");
+      setDoc({
+        ppmpNo: existingPpmp.ppmpNo,
+        fiscalYear: String(existingPpmp.fiscalYear || lib.fiscalYear || "2026"),
+        endUserUnit: existingPpmp.endUserUnit,
+        documentType: existingPpmp.documentType,
+        preparedByName: existingPpmp.preparedByName,
+        preparedByPosition: existingPpmp.preparedByPosition,
+        preparedByDate: existingPpmp.preparedByDate,
+        budgetOfficerName: existingPpmp.budgetOfficerName,
+        budgetOfficerPosition: existingPpmp.budgetOfficerPosition,
+        budgetCertifiedDate: existingPpmp.budgetCertifiedDate,
+        rows: Array.isArray(existingPpmp.formRows) && existingPpmp.formRows.length > 0
+          ? (existingPpmp.formRows as unknown as PpmpRow[])
+          : formRowsFromSavedItems(existingPpmp.rows),
+      });
+      return;
     }
-    setDoc((d) => ({ ...d, fiscalYear: lib.fiscalYear || "2026", rows: initialRows }));
-  }, [libId, navigate]);
 
-  const editing = mode === "edit";
+    const initialRows = getLibExpenseTemplateRows(lib);
+    setDoc((d) => ({ ...d, fiscalYear: lib.fiscalYear || "2026", rows: initialRows }));
+  }, [editId, libId, navigate]);
+
+  const approvedLocked = workflowStatus === "Approved";
+  const editing = mode === "edit" && !approvedLocked;
 
   const set = <K extends keyof PpmpDoc>(key: K, value: PpmpDoc[K]) => setDoc((d) => ({ ...d, [key]: value }));
   const setRow = (id: string, patch: Partial<PpmpRow>) =>
     setDoc((d) => ({ ...d, rows: d.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
   const removeRow = (id: string) => setDoc((d) => ({ ...d, rows: d.rows.filter((r) => r.id !== id) }));
+  const duplicateRow = (id: string) =>
+    setDoc((d) => {
+      const index = d.rows.findIndex((row) => row.id === id);
+      if (index < 0) return d;
+      const copy = { ...d.rows[index], id: crypto.randomUUID() };
+      const rows = [...d.rows];
+      rows.splice(index + 1, 0, copy);
+      return { ...d, rows };
+    });
+  const moveCategoryBlock = (categoryId: string, direction: "up" | "down") =>
+    setDoc((d) => {
+      const rows = [...d.rows];
+      const bounds = categoryBlockBounds(rows, categoryId);
+      if (!bounds) return d;
+
+      if (direction === "up") {
+        const previousCategoryIndex = rows.findLastIndex((row, index) => index < bounds.start && row.isCategory);
+        if (previousCategoryIndex < 0) return d;
+        const block = rows.splice(bounds.start, bounds.end - bounds.start);
+        rows.splice(previousCategoryIndex, 0, ...block);
+        return { ...d, rows };
+      }
+
+      const nextCategoryIndex = bounds.end < rows.length && rows[bounds.end]?.isCategory ? bounds.end : -1;
+      if (nextCategoryIndex < 0) return d;
+      const nextBounds = categoryBlockBounds(rows, rows[nextCategoryIndex].id);
+      if (!nextBounds) return d;
+      const block = rows.splice(bounds.start, bounds.end - bounds.start);
+      const insertAt = nextBounds.end - block.length;
+      rows.splice(insertAt, 0, ...block);
+      return { ...d, rows };
+    });
+  const reorderCategoryBlock = (sourceCategoryId: string, targetCategoryId: string) =>
+    setDoc((d) => {
+      if (sourceCategoryId === targetCategoryId) return d;
+      const rows = [...d.rows];
+      const sourceBounds = categoryBlockBounds(rows, sourceCategoryId);
+      const targetBounds = categoryBlockBounds(rows, targetCategoryId);
+      if (!sourceBounds || !targetBounds) return d;
+
+      const movingDown = sourceBounds.start < targetBounds.start;
+      const block = rows.splice(sourceBounds.start, sourceBounds.end - sourceBounds.start);
+      const adjustedTargetBounds = categoryBlockBounds(rows, targetCategoryId);
+      if (!adjustedTargetBounds) return d;
+      rows.splice(movingDown ? adjustedTargetBounds.end : adjustedTargetBounds.start, 0, ...block);
+      return { ...d, rows };
+    });
 
   const categories = doc.rows.filter((r) => r.isCategory);
+  const subcategories = doc.rows.filter((r) => r.isSubcategory);
 
   function addLineUnderCategory(categoryId: string) {
     setDoc((d) => {
@@ -303,7 +824,42 @@ function CreatePpmpPage() {
         if (rows[j].isCategory) break;
         insertAt = j + 1;
       }
-      rows.splice(insertAt, 0, newRow(rows[i].categoryLabel));
+      const previousSubcategory = rows
+        .slice(i + 1, insertAt)
+        .reverse()
+        .find((row) => row.isSubcategory);
+      rows.splice(insertAt, 0, newRow(rows[i].categoryLabel, previousSubcategory?.subcategoryLabel));
+      return { ...d, rows };
+    });
+  }
+
+  function addSubcategoryUnderCategory(categoryId: string) {
+    setDoc((d) => {
+      const rows = [...d.rows];
+      const i = rows.findIndex((r) => r.id === categoryId);
+      if (i < 0) return d;
+      let insertAt = i + 1;
+      for (let j = i + 1; j < rows.length; j++) {
+        if (rows[j].isCategory) break;
+        insertAt = j + 1;
+      }
+      rows.splice(insertAt, 0, newSubcategoryRow(rows[i].categoryLabel, ""));
+      return { ...d, rows };
+    });
+  }
+
+  function addLineUnderSubcategory(subcategoryId: string) {
+    setDoc((d) => {
+      const rows = [...d.rows];
+      const i = rows.findIndex((r) => r.id === subcategoryId);
+      if (i < 0) return d;
+      let insertAt = i + 1;
+      for (let j = i + 1; j < rows.length; j++) {
+        if (rows[j].isCategory || rows[j].isSubcategory) break;
+        insertAt = j + 1;
+      }
+      const context = currentContext(rows, i);
+      rows.splice(insertAt, 0, newRow(context.categoryLabel, rows[i].subcategoryLabel));
       return { ...d, rows };
     });
   }
@@ -313,29 +869,55 @@ function CreatePpmpPage() {
   }
 
   function addLineAtEnd() {
-    setDoc((d) => ({ ...d, rows: [...d.rows, newRow()] }));
+    setDoc((d) => {
+      const context = d.rows.length > 0 ? currentContext(d.rows, d.rows.length - 1) : { categoryLabel: "", subcategoryLabel: "" };
+      return { ...d, rows: [...d.rows, newRow(context.categoryLabel, context.subcategoryLabel)] };
+    });
   }
 
-  const libBudgetTotal = selectedLib ? libTotals(selectedLib.rows).approved : 0;
+  const libBudgetTotal = useMemo(() => (selectedLib ? currentLibBudgetTotal(selectedLib) : 0), [selectedLib]);
+  const deliveryMonthYearOptions = useMemo(() => monthYearOptions(doc.fiscalYear), [doc.fiscalYear]);
   const ppmpTotal = useMemo(
-    () => doc.rows.filter((r) => !r.isCategory).reduce((sum, r) => sum + parseAmount(r.estimatedBudget), 0),
+    () => doc.rows.filter(isProcurementRow).reduce((sum, r) => sum + parseAmount(r.estimatedBudget), 0),
     [doc.rows],
   );
+  const budgetOverages = useMemo(() => (selectedLib ? getPpmpBudgetOverages(doc.rows, selectedLib) : []), [doc.rows, selectedLib]);
+  const budgetOverageRowIds = useMemo(() => (selectedLib ? getPpmpBudgetOverageRowIds(doc.rows, selectedLib) : new Set<string>()), [doc.rows, selectedLib]);
+  const hasBudgetOverages = budgetOverages.length > 0;
   const totalUsed = existingPpmpTotal + ppmpTotal;
   const remaining = libBudgetTotal - totalUsed;
   const overBudget = remaining < 0;
   const usagePercent = libBudgetTotal > 0 ? Math.min(100, (totalUsed / libBudgetTotal) * 100) : 0;
 
-  function handleSave() {
+  function incrementPpmpNo(value: string): string {
+    const match = value.trim().match(/^(.*?)(\d+)(\D*)$/);
+    if (!match) return value.trim() ? `${value.trim()}-1` : "1";
+    return `${match[1]}${Number(match[2]) + 1}${match[3]}`;
+  }
+
+  function startRevision() {
+    if (doc.documentType === "Final" && revisionCount >= MAX_FINAL_PPMP_REVISIONS) {
+      toast.error(`Final PPMP has reached the maximum of ${MAX_FINAL_PPMP_REVISIONS} revisions.`);
+      return;
+    }
+
+    setDoc((d) => ({ ...d, ppmpNo: incrementPpmpNo(d.ppmpNo) }));
+    setRevisionCount((count) => count + 1);
+    setWorkflowStatus("Draft");
+    setMode("edit");
+    toast.success("Revision started. PPMP No. has been incremented.");
+  }
+
+  function persistPpmp(status: PpmpStatus) {
     if (!selectedLib) return;
 
-    const dataRows = doc.rows.filter((r) => !r.isCategory);
+    const dataRows = doc.rows.filter(isProcurementRow);
     if (dataRows.length === 0) {
       toast.error("Add at least one PPMP line item before saving.");
       return;
     }
 
-    const emptyItems = dataRows.filter((r) => !r.generalDescription.trim() && !r.quantitySize.trim());
+    const emptyItems = dataRows.filter((r) => !r.generalDescription.trim() && !htmlToPlainText(r.quantitySize));
     if (emptyItems.length > 0) {
       toast.error(`${emptyItems.length} row(s) have no description or item details.`);
       return;
@@ -346,31 +928,60 @@ function CreatePpmpPage() {
       return;
     }
 
-    setSaving(true);
+    if (hasBudgetOverages) {
+      const overage = budgetOverages[0];
+      toast.error(`${overage.label} exceeds its LIB budget: ₱${fmtAmount(overage.total)} / ₱${fmtAmount(overage.limit)}.`);
+      return;
+    }
+
+    setSavingAction(status === "Draft" ? "draft" : status === "Approved" ? "approve" : "submit");
     try {
-      const ppmpRows: PpmpItemRow[] = dataRows.map((r) => ({
-        id: r.id,
-        expense_category: r.categoryLabel,
-        general_description: r.generalDescription,
-        item_name: r.quantitySize.split("\n")[0] || r.generalDescription,
-        project_type: r.projectType,
-        quantity_size: r.quantitySize,
-        quantity: parseAmount(r.quantity) || 1,
-        recommended_mode: r.recommendedMode,
-        pre_procurement_conference: r.preProcConference,
-        procurement_start: r.procStart,
-        procurement_end: r.procEnd,
-        delivery_period: r.deliveryPeriod,
-        source_of_funds: r.sourceOfFunds,
-        estimated_budget: parseAmount(r.estimatedBudget),
-        supporting_documents: r.supportingDocs,
-        remarks: r.remarks,
-      }));
+      const existingPpmp = editId ? getPpmp(editId) : undefined;
+      let activeCategory = "";
+      let activeSubcategory = "";
+      let activeSubcategoryDescription = "";
+      const ppmpRows: PpmpItemRow[] = doc.rows.flatMap((r) => {
+        if (r.isCategory) {
+          activeCategory = r.categoryLabel;
+          activeSubcategory = "";
+          activeSubcategoryDescription = "";
+          return [];
+        }
+        if (r.isSubcategory) {
+          activeSubcategory = r.subcategoryLabel;
+          activeSubcategoryDescription = r.generalDescription;
+          return [];
+        }
+        const category = activeCategory || r.categoryLabel;
+        const subcategory = activeSubcategory || r.subcategoryLabel;
+        const generalDescription = activeSubcategoryDescription || r.generalDescription;
+        return [{
+          id: r.id,
+          expense_category: subcategory ? `${category} - ${subcategory}` : category,
+          expense_subcategory: subcategory,
+          general_description: generalDescription,
+          item_name: firstTextLine(r.quantitySize) || generalDescription,
+          project_type: r.projectType,
+          quantity_size: r.quantitySize,
+          quantity: parseAmount(r.quantity) || 1,
+          recommended_mode: r.recommendedMode,
+          pre_procurement_conference: r.preProcConference,
+          procurement_start: r.procStart,
+          procurement_end: r.procEnd,
+          delivery_period: r.deliveryPeriod,
+          source_of_funds: "",
+          estimated_budget: parseAmount(r.estimatedBudget),
+          supporting_documents: r.supportingDocs,
+          remarks: r.remarks,
+        }];
+      });
 
       savePpmp({
-        id: `ppmp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        id: existingPpmp?.id ?? `ppmp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         libId: selectedLib.id,
         ppmpNo: doc.ppmpNo.trim() || "1",
+        status,
+        revisionCount,
         fiscalYear: Number(doc.fiscalYear) || 2026,
         endUserUnit: doc.endUserUnit.trim(),
         documentType: doc.documentType as "Indicative" | "Final",
@@ -381,23 +992,45 @@ function CreatePpmpPage() {
         budgetOfficerPosition: doc.budgetOfficerPosition.trim(),
         budgetCertifiedDate: doc.budgetCertifiedDate,
         rows: ppmpRows,
+        formRows: doc.rows as unknown as Record<string, unknown>[],
         totalBudget: ppmpTotal,
-        createdAt: new Date().toISOString(),
+        createdAt: existingPpmp?.createdAt ?? new Date().toISOString(),
       });
 
-      toast.success("PPMP saved successfully.");
-      navigate({ to: "/planning/ppmp" });
+      setWorkflowStatus(status);
+      toast.success(
+        status === "Draft"
+          ? "PPMP saved as draft."
+          : status === "Approved"
+            ? "PPMP approved."
+            : "PPMP submitted to Budget Officer.",
+      );
+      if (status === "Approved") {
+        setMode("preview");
+      } else {
+        navigate({ to: "/planning/ppmp" });
+      }
     } catch {
       toast.error("Unable to save PPMP.");
     } finally {
-      setSaving(false);
+      setSavingAction(null);
     }
   }
 
   if (!selectedLib) return null;
 
+  const documentActionButtonClass = "h-7 gap-1.5 border border-black/10 bg-white text-slate-800 shadow-sm hover:bg-slate-50 hover:text-slate-950 dark:border-black/10 dark:bg-white dark:text-slate-800 dark:hover:bg-slate-50 dark:hover:text-slate-950";
+
   return (
     <div className="min-h-full bg-background print:bg-white">
+      <style>{`
+        @media print {
+          @page {
+            size: landscape;
+            margin: 10mm;
+          }
+        }
+      `}</style>
       {/* Toolbar */}
       <div className="no-print sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center gap-2 px-3 py-3 sm:px-6">
@@ -408,19 +1041,22 @@ function CreatePpmpPage() {
           </Button>
 
           <span className="hidden rounded-md bg-secondary px-2 py-1 text-xs font-semibold text-secondary-foreground sm:inline">
-            New PPMP
+            {editId ? `${workflowStatus}${revisionCount > 0 ? ` · Rev ${revisionCount}` : ""}` : "New PPMP"}
           </span>
 
           <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
             <button
               type="button"
-              onClick={() => setMode("edit")}
+              onClick={() => {
+                if (approvedLocked) startRevision();
+                else setMode("edit");
+              }}
               className={cn(
                 "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                 mode === "edit" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <Pencil className="h-3.5 w-3.5" /> Edit
+              <Pencil className="h-3.5 w-3.5" /> {approvedLocked ? "Revise" : "Edit"}
             </button>
             <button
               type="button"
@@ -440,9 +1076,25 @@ function CreatePpmpPage() {
                 <Printer className="h-4 w-4" /> Print
               </Button>
             )}
-            <Button size="sm" className="gap-1.5" onClick={handleSave} disabled={saving || overBudget}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save PPMP
+            {workflowStatus === "Submitted to Budget Officer" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 border-emerald-500/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+                onClick={() => persistPpmp("Approved")}
+                disabled={savingAction !== null || overBudget || hasBudgetOverages}
+              >
+                {savingAction === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                Approve
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => persistPpmp("Draft")} disabled={approvedLocked || savingAction !== null || overBudget || hasBudgetOverages}>
+              {savingAction === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save Draft
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={() => persistPpmp("Submitted to Budget Officer")} disabled={approvedLocked || savingAction !== null || overBudget || hasBudgetOverages}>
+              {savingAction === "submit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Submit to Budget Officer
             </Button>
           </div>
         </div>
@@ -453,13 +1105,13 @@ function CreatePpmpPage() {
         <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center gap-4 px-3 py-2.5 sm:px-6">
           <div className="flex items-center gap-4 text-xs">
             <span className="text-muted-foreground">LIB: <strong className="text-navy">₱{fmtAmount(libBudgetTotal)}</strong></span>
-            <span className="text-muted-foreground">This PPMP: <strong className={overBudget ? "text-destructive" : "text-navy"}>₱{fmtAmount(ppmpTotal)}</strong></span>
-            <span className="text-muted-foreground">Remaining: <strong className={overBudget ? "text-destructive" : "text-success"}>₱{fmtAmount(remaining)}</strong></span>
+            <span className="text-muted-foreground">This PPMP: <strong className={overBudget || hasBudgetOverages ? "text-destructive" : "text-navy"}>₱{fmtAmount(ppmpTotal)}</strong></span>
+            <span className="text-muted-foreground">Remaining: <strong className={overBudget || hasBudgetOverages ? "text-destructive" : "text-success"}>₱{fmtAmount(remaining)}</strong></span>
           </div>
           <div className="ml-auto flex w-32 items-center gap-2">
             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
               <div
-                className={cn("h-full rounded-full transition-all", overBudget ? "bg-destructive" : usagePercent > 80 ? "bg-warning" : "bg-primary")}
+                className={cn("h-full rounded-full transition-all", overBudget || hasBudgetOverages ? "bg-destructive" : usagePercent > 80 ? "bg-warning" : "bg-primary")}
                 style={{ width: `${Math.min(100, usagePercent)}%` }}
               />
             </div>
@@ -469,6 +1121,15 @@ function CreatePpmpPage() {
             <div className="flex w-full items-center gap-1.5 text-xs text-destructive">
               <AlertTriangle className="h-3.5 w-3.5" />
               <span>Over budget by ₱{fmtAmount(Math.abs(remaining))} — reduce items to save.</span>
+            </div>
+          )}
+          {hasBudgetOverages && (
+            <div className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs text-destructive">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              <span>
+                {budgetOverages[0].label} exceeds LIB budget: ₱{fmtAmount(budgetOverages[0].total)} / ₱{fmtAmount(budgetOverages[0].limit)}
+              </span>
+              {budgetOverages.length > 1 && <span>+{budgetOverages.length - 1} more</span>}
             </div>
           )}
         </div>
@@ -573,113 +1234,263 @@ function CreatePpmpPage() {
               </thead>
               <tbody>
                 {doc.rows.map((r, idx) => {
-                  if (r.isCategory) {
-                    const subtotal = getCategorySubtotal(doc.rows, r.id);
-                    const nextCatIdx = doc.rows.findIndex((row, j) => j > idx && row.isCategory);
-                    const hasItems = doc.rows.slice(idx + 1, nextCatIdx === -1 ? undefined : nextCatIdx).some((row) => !row.isCategory);
+                  const endedSubcategoryId = endsSubcategoryBlock(doc.rows, idx);
+                  const endedCategoryId = endsCategoryBlock(doc.rows, idx);
+                  const endedSubcategory = endedSubcategoryId ? doc.rows.find((row) => row.id === endedSubcategoryId) : undefined;
+                  const endedCategory = endedCategoryId ? doc.rows.find((row) => row.id === endedCategoryId) : undefined;
+                  const trailingSubtotalRows = (
+                    <>
+                      {endedSubcategory && (
+                        <tr className="font-bold bg-gray-50/50">
+                          <td colSpan={9} className="border border-black px-1 py-1 text-right uppercase text-[9px]">
+                            SUBTOTAL {endedSubcategory.subcategoryLabel}
+                          </td>
+                          <td className="border border-black px-1 py-1 text-right tabular-nums">
+                            ₱{fmtAmount(getSubcategorySubtotal(doc.rows, endedSubcategory.id))}
+                          </td>
+                          <td colSpan={2} className="border border-black" />
+                        </tr>
+                      )}
+                      {endedCategory && (
+                        <tr className="bg-gray-50/50 font-bold italic">
+                          <td className="border border-black px-1 py-1 uppercase text-[9px]">
+                            SUBTOTAL {endedCategory.categoryLabel}
+                          </td>
+                          <td colSpan={8} className="border border-black" />
+                          <td className="border border-black px-1 py-1 text-right tabular-nums">
+                            ₱{fmtAmount(getCategorySubtotal(doc.rows, endedCategory.id))}
+                          </td>
+                          <td colSpan={2} className="border border-black" />
+                        </tr>
+                      )}
+                    </>
+                  );
 
+                  if (r.isCategory) {
                     return (
-                      <tr key={r.id} className="group">
-                        {/* Category header row */}
-                        <td colSpan={12} className="relative border border-black px-1 py-1 font-bold uppercase italic">
-                          {editing && (
-                            <button
-                              type="button"
-                              onClick={() => removeRow(r.id)}
-                              title="Remove category"
-                              className="no-print absolute -left-5 top-1 text-red-400 opacity-0 hover:text-red-600 group-hover:opacity-100"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          )}
-                          <TextField value={r.categoryLabel} onChange={(v) => setRow(r.id, { categoryLabel: v })} editing={editing} bold placeholder="CATEGORY NAME" className="uppercase italic" />
-                        </td>
-                      </tr>
+                      <Fragment key={r.id}>
+                        <tr
+                          className={cn("group", dragOverCategoryId === r.id && draggedCategoryId !== r.id && "bg-amber-100")}
+                          onDragOver={(event) => {
+                            if (!editing || !draggedCategoryId || draggedCategoryId === r.id) return;
+                            event.preventDefault();
+                            setDragOverCategoryId(r.id);
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverCategoryId === r.id) setDragOverCategoryId(null);
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            const sourceId = event.dataTransfer.getData("text/plain") || draggedCategoryId;
+                            if (editing && sourceId) reorderCategoryBlock(sourceId, r.id);
+                            setDraggedCategoryId(null);
+                            setDragOverCategoryId(null);
+                          }}
+                        >
+                          {/* Category header row */}
+                          <td colSpan={12} className="relative border border-black px-1 py-1 font-bold uppercase italic">
+                            {editing && (
+                              <div className="no-print absolute -right-24 top-1/2 z-50 flex -translate-y-1/2 items-center gap-0.5 rounded-sm bg-white px-1 py-0.5 opacity-80 shadow-md ring-1 ring-black/15 transition-opacity group-hover:opacity-100">
+                                <button
+                                  type="button"
+                                  draggable
+                                  onDragStart={(event) => {
+                                    setDraggedCategoryId(r.id);
+                                    event.dataTransfer.effectAllowed = "move";
+                                    event.dataTransfer.setData("text/plain", r.id);
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggedCategoryId(null);
+                                    setDragOverCategoryId(null);
+                                  }}
+                                  title="Drag category"
+                                  className="cursor-grab rounded-sm p-0.5 text-black active:cursor-grabbing hover:bg-amber-100"
+                                >
+                                  <GripVertical className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => moveCategoryBlock(r.id, "up")}
+                                  title="Move category up"
+                                  className="rounded-sm p-0.5 text-gray-600 hover:bg-amber-100 hover:text-black"
+                                >
+                                  <ArrowUp className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => moveCategoryBlock(r.id, "down")}
+                                  title="Move category down"
+                                  className="rounded-sm p-0.5 text-gray-600 hover:bg-amber-100 hover:text-black"
+                                >
+                                  <ArrowDown className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeRow(r.id)}
+                                  title="Remove category"
+                                  className="rounded-sm p-0.5 text-red-500 hover:bg-red-50 hover:text-red-700"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
+                            <MainItemField value={r.categoryLabel} onChange={(v) => setRow(r.id, { categoryLabel: v })} editing={editing} />
+                          </td>
+                        </tr>
+                        {trailingSubtotalRows}
+                      </Fragment>
                     );
                   }
 
-                  return (
-                    <tr key={r.id} className="group align-top">
-                      {/* Column 1: General Description */}
-                      <td className="relative border border-black px-1 py-0.5">
-                        {editing && (
-                          <button
-                            type="button"
-                            onClick={() => removeRow(r.id)}
-                            title="Remove row"
-                            className="no-print absolute -left-5 top-1 text-red-400 opacity-0 hover:text-red-600 group-hover:opacity-100"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        )}
-                        <AutoTextarea value={r.generalDescription} onChange={(v) => setRow(r.id, { generalDescription: v })} editing={editing} />
-                      </td>
-                      {/* Column 2: Type (Dropdown) */}
-                      <td className="border border-black px-0.5 py-0.5 text-center">
-                        <SelectField value={r.projectType} onChange={(v) => setRow(r.id, { projectType: v })} options={PROJECT_TYPES} editing={editing} />
-                      </td>
-                      {/* Column 3: Quantity and Size */}
-                      <td className="border border-black px-1 py-0.5">
-                        <AutoTextarea value={r.quantitySize} onChange={(v) => setRow(r.id, { quantitySize: v })} editing={editing} italic />
-                      </td>
-                      {/* Column 4: Recommended Mode (Dropdown) */}
-                      <td className="border border-black px-0.5 py-0.5 text-center">
-                        <SelectField value={r.recommendedMode} onChange={(v) => setRow(r.id, { recommendedMode: v })} options={PROCUREMENT_MODES} editing={editing} />
-                      </td>
-                      {/* Column 5: Pre-Proc Conference (Dropdown) */}
-                      <td className="border border-black px-0.5 py-0.5 text-center">
-                        <SelectField value={r.preProcConference} onChange={(v) => setRow(r.id, { preProcConference: v })} options={PRE_PROC_OPTIONS} editing={editing} />
-                      </td>
-                      {/* Column 6: Start */}
-                      <td className="border border-black px-1 py-0.5 text-center">
-                        <TextField value={r.procStart} onChange={(v) => setRow(r.id, { procStart: v })} editing={editing} align="center" placeholder="Jan-26" />
-                      </td>
-                      {/* Column 7: End */}
-                      <td className="border border-black px-1 py-0.5 text-center">
-                        <TextField value={r.procEnd} onChange={(v) => setRow(r.id, { procEnd: v })} editing={editing} align="center" placeholder="Jan-26" />
-                      </td>
-                      {/* Column 8: Delivery Period */}
-                      <td className="border border-black px-1 py-0.5 text-center">
-                        <TextField value={r.deliveryPeriod} onChange={(v) => setRow(r.id, { deliveryPeriod: v })} editing={editing} align="center" placeholder="02/2026" />
-                      </td>
-                      {/* Column 9: Source of Funds */}
-                      <td className="border border-black px-1 py-0.5">
-                        <AutoTextarea value={r.sourceOfFunds} onChange={(v) => setRow(r.id, { sourceOfFunds: v })} editing={editing} />
-                      </td>
-                      {/* Column 10: Estimated Budget */}
-                      <td className="border border-black px-1 py-0.5">
-                        <AmountField value={r.estimatedBudget} onChange={(v) => setRow(r.id, { estimatedBudget: v })} editing={editing} />
-                      </td>
-                      {/* Column 11: Supporting Docs */}
-                      <td className="border border-black px-1 py-0.5">
-                        <TextField value={r.supportingDocs} onChange={(v) => setRow(r.id, { supportingDocs: v })} editing={editing} />
-                      </td>
-                      {/* Column 12: Remarks */}
-                      <td className="border border-black px-1 py-0.5">
-                        <TextField value={r.remarks} onChange={(v) => setRow(r.id, { remarks: v })} editing={editing} />
-                      </td>
-                    </tr>
-                  );
-                })}
+                  if (r.isSubcategory) {
+                    return (
+                      <Fragment key={r.id}>
+                        <tr className="group">
+                          <td className="relative border border-black px-1 py-1 italic">
+                            {editing && (
+                              <div className="no-print absolute -left-11 top-1 z-50 flex items-center gap-0.5 rounded-sm bg-white px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-black/15 group-hover:opacity-100">
+                                <button
+                                  type="button"
+                                  onClick={() => duplicateRow(r.id)}
+                                  title="Duplicate row"
+                                  className="rounded-sm text-gray-700 hover:bg-amber-100 hover:text-black"
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeRow(r.id)}
+                                  title="Remove sub item"
+                                  className="text-red-400 hover:text-red-600"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
+                            <TextField value={r.subcategoryLabel} onChange={(v) => setRow(r.id, { subcategoryLabel: v })} editing={editing} italic placeholder="Sub item name" />
+                          </td>
+                          <td colSpan={11} className="border border-black" />
+                        </tr>
+                        {trailingSubtotalRows}
+                      </Fragment>
+                    );
+                  }
 
-                {/* Subtotal rows per category */}
-                {categories.map((cat) => {
-                  const subtotal = getCategorySubtotal(doc.rows, cat.id);
-                  if (subtotal === 0 && !doc.rows.some((r, i) => {
-                    const catIdx = doc.rows.indexOf(cat);
-                    const nextCat = doc.rows.findIndex((row, j) => j > catIdx && row.isCategory);
-                    return i > catIdx && (nextCat === -1 || i < nextCat) && !r.isCategory;
-                  })) return null;
+                  const activeSubcategory = getActiveSubcategory(doc.rows, idx);
+                  const showSharedDescription = Boolean(activeSubcategory && isFirstDataRowInSubcategory(doc.rows, idx, activeSubcategory.id));
+                  const sharedDescriptionRowSpan = activeSubcategory ? countSubcategoryDataRows(doc.rows, activeSubcategory.id) : 1;
+
                   return (
-                    <tr key={`subtotal-${cat.id}`} className="font-bold bg-gray-50/50">
-                      <td colSpan={9} className="border border-black px-1 py-1 text-right uppercase text-[9px]">
-                        SUBTOTAL {cat.categoryLabel}
-                      </td>
-                      <td className="border border-black px-1 py-1 text-right tabular-nums">
-                        ₱{fmtAmount(subtotal)}
-                      </td>
-                      <td colSpan={2} className="border border-black" />
-                    </tr>
+                    <Fragment key={r.id}>
+                      <tr className="group align-top">
+                        {/* Column 1: General Description */}
+                        {activeSubcategory ? (
+                          showSharedDescription && (
+                            <td rowSpan={Math.max(1, sharedDescriptionRowSpan)} className="relative border border-black px-1 py-0.5 align-top">
+                              <AutoTextarea
+                                value={activeSubcategory.generalDescription}
+                                onChange={(v) => setRow(activeSubcategory.id, { generalDescription: v })}
+                                editing={editing}
+                                italic
+                                className="min-h-[4.8em]"
+                              />
+                            </td>
+                          )
+                        ) : (
+                          <td className="relative border border-black px-1 py-0.5">
+                            {editing && (
+                              <div className="no-print absolute -left-11 top-1 z-50 flex items-center gap-0.5 rounded-sm bg-white px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-black/15 group-hover:opacity-100">
+                                <button
+                                  type="button"
+                                  onClick={() => duplicateRow(r.id)}
+                                  title="Duplicate row"
+                                  className="rounded-sm text-gray-700 hover:bg-amber-100 hover:text-black"
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => removeRow(r.id)}
+                                  title="Remove row"
+                                  className="text-red-400 hover:text-red-600"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
+                            <AutoTextarea value={r.generalDescription} onChange={(v) => setRow(r.id, { generalDescription: v })} editing={editing} />
+                          </td>
+                        )}
+                        {/* Column 2: Type (Dropdown) */}
+                        <td className="relative border border-black px-0.5 py-0.5 text-center">
+                          {editing && activeSubcategory && (
+                            <div className="no-print absolute -left-11 top-1 z-50 flex items-center gap-0.5 rounded-sm bg-white px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-black/15 group-hover:opacity-100">
+                              <button
+                                type="button"
+                                onClick={() => duplicateRow(r.id)}
+                                title="Duplicate row"
+                                className="rounded-sm text-gray-700 hover:bg-amber-100 hover:text-black"
+                              >
+                                <Copy className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeRow(r.id)}
+                                title="Remove row"
+                                className="text-red-400 hover:text-red-600"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
+                          )}
+                          <SelectField value={r.projectType} onChange={(v) => setRow(r.id, { projectType: v })} options={PROJECT_TYPES} editing={editing} />
+                        </td>
+                        {/* Column 3: Quantity and Size */}
+                        <td className="border border-black px-1 py-0.5">
+                          <RichTextField value={r.quantitySize} onChange={(v) => setRow(r.id, { quantitySize: v })} editing={editing} italic />
+                        </td>
+                        {/* Column 4: Recommended Mode (Dropdown) */}
+                        <td className="border border-black px-0.5 py-0.5 text-center">
+                          <SelectField value={r.recommendedMode} onChange={(v) => setRow(r.id, { recommendedMode: v })} options={PROCUREMENT_MODES} editing={editing} />
+                        </td>
+                        {/* Column 5: Pre-Proc Conference (Dropdown) */}
+                        <td className="border border-black px-0.5 py-0.5 text-center">
+                          <SelectField value={r.preProcConference} onChange={(v) => setRow(r.id, { preProcConference: v })} options={PRE_PROC_OPTIONS} editing={editing} />
+                        </td>
+                        {/* Column 6: Start */}
+                        <td className="border border-black px-1 py-0.5 text-center">
+                          <SelectField value={r.procStart} onChange={(v) => setRow(r.id, { procStart: v })} options={deliveryMonthYearOptions} editing={editing} />
+                        </td>
+                        {/* Column 7: End */}
+                        <td className="border border-black px-1 py-0.5 text-center">
+                          <SelectField value={r.procEnd} onChange={(v) => setRow(r.id, { procEnd: v })} options={deliveryMonthYearOptions} editing={editing} />
+                        </td>
+                        {/* Column 8: Delivery Period */}
+                        <td className="border border-black px-1 py-0.5 text-center">
+                          <SelectField value={r.deliveryPeriod} onChange={(v) => setRow(r.id, { deliveryPeriod: v })} options={deliveryMonthYearOptions} editing={editing} />
+                        </td>
+                        {/* Column 9: Source of Funds */}
+                        <td className="border border-black" />
+                        {/* Column 10: Estimated Budget */}
+                        <td
+                          className={cn(
+                            "border border-black px-1 py-0.5",
+                            budgetOverageRowIds.has(r.id) && "bg-red-100 text-red-950 ring-2 ring-inset ring-red-500 print:bg-red-100",
+                          )}
+                        >
+                          <AmountField value={r.estimatedBudget} onChange={(v) => setRow(r.id, { estimatedBudget: v })} editing={editing} />
+                        </td>
+                        {/* Column 11: Supporting Docs */}
+                        <td className="border border-black px-1 py-0.5">
+                          <TextField value={r.supportingDocs} onChange={(v) => setRow(r.id, { supportingDocs: v })} editing={editing} />
+                        </td>
+                        {/* Column 12: Remarks */}
+                        <td className="border border-black px-1 py-0.5">
+                          <TextField value={r.remarks} onChange={(v) => setRow(r.id, { remarks: v })} editing={editing} />
+                        </td>
+                      </tr>
+                      {trailingSubtotalRows}
+                    </Fragment>
                   );
                 })}
 
@@ -700,7 +1511,7 @@ function CreatePpmpPage() {
                 {categories.length > 0 ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-7 gap-1.5 border-border">
+                      <Button variant="outline" size="sm" className={documentActionButtonClass}>
                         <Plus className="h-3.5 w-3.5" /> Add Line
                       </Button>
                     </DropdownMenuTrigger>
@@ -711,16 +1522,44 @@ function CreatePpmpPage() {
                           <span className="truncate">{c.categoryLabel || "(untitled)"}</span>
                         </DropdownMenuItem>
                       ))}
+                      {subcategories.length > 0 && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuLabel>Subcategories</DropdownMenuLabel>
+                          {subcategories.map((s) => (
+                            <DropdownMenuItem key={s.id} onClick={() => addLineUnderSubcategory(s.id)}>
+                              <span className="truncate">{s.subcategoryLabel || "(untitled subcategory)"}</span>
+                            </DropdownMenuItem>
+                          ))}
+                        </>
+                      )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onClick={addLineAtEnd}>At the end</DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : (
-                  <Button variant="outline" size="sm" onClick={addLineAtEnd} className="h-7 gap-1.5 border-border">
+                  <Button variant="outline" size="sm" onClick={addLineAtEnd} className={documentActionButtonClass}>
                     <Plus className="h-3.5 w-3.5" /> Add Line
                   </Button>
                 )}
-                <Button variant="outline" size="sm" onClick={addCategory} className="h-7 gap-1.5 border-border">
+                {categories.length > 0 && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className={documentActionButtonClass}>
+                        <Plus className="h-3.5 w-3.5" /> Add Subcategory
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="max-h-72 w-64 overflow-y-auto">
+                      <DropdownMenuLabel>Add subcategory under…</DropdownMenuLabel>
+                      {categories.map((c) => (
+                        <DropdownMenuItem key={c.id} onClick={() => addSubcategoryUnderCategory(c.id)}>
+                          <span className="truncate">{c.categoryLabel || "(untitled)"}</span>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+                <Button variant="outline" size="sm" onClick={addCategory} className={documentActionButtonClass}>
                   <Plus className="h-3.5 w-3.5" /> Add Category
                 </Button>
               </div>
@@ -728,8 +1567,8 @@ function CreatePpmpPage() {
 
             {/* Signatories */}
             <div className="mt-10 grid grid-cols-2 gap-x-12 gap-y-8">
-              <Signatory label="Prepared & Submitted by:" name={doc.preparedByName} position={doc.preparedByPosition} date={doc.preparedByDate} editing={editing} onName={(v) => set("preparedByName", v)} onPosition={(v) => set("preparedByPosition", v)} onDate={(v) => set("preparedByDate", v)} />
-              <Signatory label="Certified Funds Available:" name={doc.budgetOfficerName} position={doc.budgetOfficerPosition} date={doc.budgetCertifiedDate} editing={editing} onName={(v) => set("budgetOfficerName", v)} onPosition={(v) => set("budgetOfficerPosition", v)} onDate={(v) => set("budgetCertifiedDate", v)} />
+              <Signatory label="Prepared & Submitted by:" name={doc.preparedByName} position={doc.preparedByPosition} date={doc.preparedByDate} editing={editing} options={signatories} onName={(v) => set("preparedByName", v)} onPosition={(v) => set("preparedByPosition", v)} onDate={(v) => set("preparedByDate", v)} />
+              <Signatory label="Certified Funds Available:" name={doc.budgetOfficerName} position={doc.budgetOfficerPosition} date={doc.budgetCertifiedDate} editing={editing} options={signatories} onName={(v) => set("budgetOfficerName", v)} onPosition={(v) => set("budgetOfficerPosition", v)} onDate={(v) => set("budgetCertifiedDate", v)} />
             </div>
           </div>
 
@@ -751,6 +1590,7 @@ function Signatory({
   position,
   date,
   editing,
+  options,
   onName,
   onPosition,
   onDate,
@@ -760,23 +1600,62 @@ function Signatory({
   position: string;
   date: string;
   editing: boolean;
+  options: SignatoryOption[];
   onName: (v: string) => void;
   onPosition: (v: string) => void;
   onDate: (v: string) => void;
 }) {
+  // Keep the current name selectable even if that account is no longer among the
+  // approved options (e.g. a previously-picked signatory was deactivated).
+  const items = name && !options.some((o) => o.name === name) ? [{ id: -1, name, tier: "regular" as const, position: null }, ...options] : options;
+  // Picking a signatory fills the name and auto-fills the position captured at sign-up.
+  const pick = (n: string) => {
+    onName(n);
+    const chosen = options.find((o) => o.name === n);
+    if (chosen?.position) onPosition(chosen.position);
+  };
   return (
     <div>
       <p className="text-[11px]">{label}</p>
       <div className="mt-8">
-        <div className={cn("font-bold", editing && "border-b border-black/20")}>
-          <TextField value={name} onChange={onName} editing={editing} bold placeholder="Name" />
-        </div>
-        <div className={cn("text-[10px]", editing && "border-b border-black/20")}>
-          <TextField value={position} onChange={onPosition} editing={editing} className="text-[10px]" placeholder="Designation" />
-        </div>
-        <div className={cn("mt-1 text-[10px]", editing && "border-b border-black/20")}>
-          <TextField value={date} onChange={onDate} editing={editing} className="text-[10px]" placeholder="Date" />
-        </div>
+        {editing ? (
+          <div style={{ fontFamily: "var(--font-sans)" }}>
+            <Select value={name || undefined} onValueChange={pick}>
+              <SelectTrigger className="h-8 border-black/20 font-bold">
+                <SelectValue placeholder="Select signatory…" />
+              </SelectTrigger>
+              <SelectContent>
+                {items.length === 0 ? (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">No approved accounts yet</div>
+                ) : (
+                  items.map((o) => (
+                    <SelectItem key={o.name} value={o.name}>
+                      {o.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+            <div className="mt-1 border-b border-black/20 text-[10px]">
+              <TextField value={position} onChange={onPosition} editing className="text-[10px]" placeholder="Designation" />
+            </div>
+            <div className="mt-1 border-b border-black/20 text-[10px]">
+              <TextField value={date} onChange={onDate} editing className="text-[10px]" placeholder="Date" />
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="font-bold">
+              <TextField value={name} onChange={onName} editing={false} bold placeholder="Name" />
+            </div>
+            <div className="text-[10px]">
+              <TextField value={position} onChange={onPosition} editing={false} className="text-[10px]" placeholder="Designation" />
+            </div>
+            <div className="mt-1 text-[10px]">
+              <TextField value={date} onChange={onDate} editing={false} className="text-[10px]" placeholder="Date" />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

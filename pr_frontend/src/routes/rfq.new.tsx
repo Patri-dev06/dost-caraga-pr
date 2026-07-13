@@ -88,6 +88,32 @@ function AutoTextarea({
   );
 }
 
+// Right-aligned amount cell. While focused it shows the raw digits for easy
+// editing; when blurred (or read-only) it shows the grouped "8,000.00" form.
+// parseAmount tolerates the commas either way.
+function AmountInput({
+  value,
+  onChange,
+  editing,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  editing: boolean;
+}) {
+  const [focused, setFocused] = useState(false);
+  if (!editing) return <span>{value ? fmtAmount(parseAmount(value)) : " "}</span>;
+  return (
+    <input
+      inputMode="decimal"
+      value={focused || value === "" ? value : fmtAmount(parseAmount(value))}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-sm bg-transparent px-0.5 text-right tabular-nums outline-none hover:bg-amber-50 focus:bg-amber-100"
+    />
+  );
+}
+
 interface RfqFormItem {
   id: string;
   itemNo: number;
@@ -531,48 +557,16 @@ function CreateRfqPage() {
                       <AutoTextarea value={item.description} onChange={(v) => setItem(item.id, { description: v })} editing={editing} />
                     </td>
                     <td className="border border-black px-1 py-1 text-right tabular-nums">
-                      {editing ? (
-                        <input
-                          value={item.unitAbc}
-                          onChange={(e) => setItem(item.id, { unitAbc: e.target.value })}
-                          className="w-full rounded-sm bg-transparent px-0.5 text-right tabular-nums outline-none hover:bg-amber-50 focus:bg-amber-100"
-                        />
-                      ) : (
-                        <span>{item.unitAbc ? fmtAmount(parseAmount(item.unitAbc)) : " "}</span>
-                      )}
+                      <AmountInput value={item.unitAbc} onChange={(v) => setItem(item.id, { unitAbc: v })} editing={editing} />
                     </td>
                     <td className="border border-black px-1 py-1 text-right tabular-nums">
-                      {editing ? (
-                        <input
-                          value={item.totalAbc}
-                          onChange={(e) => setItem(item.id, { totalAbc: e.target.value })}
-                          className="w-full rounded-sm bg-transparent px-0.5 text-right tabular-nums outline-none hover:bg-amber-50 focus:bg-amber-100"
-                        />
-                      ) : (
-                        <span>{item.totalAbc ? fmtAmount(parseAmount(item.totalAbc)) : " "}</span>
-                      )}
+                      <AmountInput value={item.totalAbc} onChange={(v) => setItem(item.id, { totalAbc: v })} editing={editing} />
                     </td>
                     <td className="border border-black px-1 py-1 text-right tabular-nums">
-                      {editing ? (
-                        <input
-                          value={item.unitPrice}
-                          onChange={(e) => setItem(item.id, { unitPrice: e.target.value })}
-                          className="w-full rounded-sm bg-transparent px-0.5 text-right tabular-nums outline-none hover:bg-amber-50 focus:bg-amber-100"
-                        />
-                      ) : (
-                        <span>{item.unitPrice ? fmtAmount(parseAmount(item.unitPrice)) : " "}</span>
-                      )}
+                      <AmountInput value={item.unitPrice} onChange={(v) => setItem(item.id, { unitPrice: v })} editing={editing} />
                     </td>
                     <td className="border border-black px-1 py-1 text-right tabular-nums">
-                      {editing ? (
-                        <input
-                          value={item.total}
-                          onChange={(e) => setItem(item.id, { total: e.target.value })}
-                          className="w-full rounded-sm bg-transparent px-0.5 text-right tabular-nums outline-none hover:bg-amber-50 focus:bg-amber-100"
-                        />
-                      ) : (
-                        <span>{item.total ? fmtAmount(parseAmount(item.total)) : " "}</span>
-                      )}
+                      <AmountInput value={item.total} onChange={(v) => setItem(item.id, { total: v })} editing={editing} />
                     </td>
                   </tr>
                 ))}

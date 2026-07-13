@@ -1,5 +1,7 @@
-// Frontend-only persistence for Line Item Budgets (DOST Form 4).
-// There is no backend LIB resource, so documents are stored in localStorage.
+// Line Item Budgets (DOST Form 4). PostgreSQL is the source of truth; localStorage
+// is retained as a browser cache/fallback while the API is unavailable.
+
+import { apiDeletePlanningLib, apiGetPlanningLibs, apiUpsertPlanningLib, getCurrentUser } from "./api";
 
 export type LibStatus =
   | "Draft"
@@ -8,6 +10,20 @@ export type LibStatus =
   | "Pending Regional Director Approval"
   | "Approved";
 
+// A LIB may be reprogrammed up to MAX_REVISIONS times. Each revision adds one
+// reprogramming round (First, Second, Third) carrying its own amount + justification.
+export const MAX_REVISIONS = 3;
+
+export const REPROG_LABELS = ["First", "Second", "Third"] as const;
+export function reprogLabel(roundIndex: number): string {
+  return `${REPROG_LABELS[roundIndex] ?? `Round ${roundIndex + 1}`} Reprogramming`;
+}
+
+export interface LibReprogramming {
+  amount: string; // numeric string
+  justification: string; // why this line changed in this round
+}
+
 export interface LibRow {
   id: string;
   label: string; // Object of Expenditure
@@ -15,8 +31,12 @@ export interface LibRow {
   indent: 0 | 1 | 2; // 0 = section, 1 = group/line, 2 = sub-line
   header: boolean; // true = category header (bold, no amounts)
   approved: string; // numeric string
-  reprogramming: string; // numeric string
-  justification: string; // reprogramming justification (on-screen only, never printed)
+  reprogrammings: LibReprogramming[]; // one entry per committed/in-progress revision round
+}
+
+// Highest number of reprogramming rounds present across the given rows.
+export function maxRounds(rows: LibRow[]): number {
+  return rows.reduce((m, r) => Math.max(m, r.reprogrammings?.length ?? 0), 0);
 }
 
 export interface LibSnapshot {
@@ -46,7 +66,10 @@ export interface LibDoc {
   approvedName: string;
   approvedPosition: string;
   status: LibStatus;
+  revision: number; // count of committed reprogramming rounds (0..MAX_REVISIONS)
   history?: LibSnapshot[]; // snapshots captured on each revision
+  ownerId?: number; // account that created this LIB (visibility scope)
+  ownerName?: string; // creator's name, for display
   createdAt: string;
   updatedAt: string;
 }
@@ -69,23 +92,50 @@ export function parseAmount(v: string): number {
 export function fmtAmount(n: number): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-export function libTotals(rows: LibRow[]) {
-  return rows.reduce(
-    (acc, r) => {
-      if (!r.header) {
-        acc.approved += parseAmount(r.approved);
-        acc.reprogramming += parseAmount(r.reprogramming);
-      }
-      return acc;
-    },
-    { approved: 0, reprogramming: 0 },
-  );
+export function libTotals(rows: LibRow[]): { approved: number; reprogrammings: number[] } {
+  const reprogrammings = new Array(maxRounds(rows)).fill(0) as number[];
+  let approved = 0;
+  for (const r of rows) {
+    // Category/Title headers may carry their own amount now, so include every row.
+    // Empty cells parse to 0, so classic "header has no amount" data is unaffected.
+    approved += parseAmount(r.approved);
+    (r.reprogrammings ?? []).forEach((rp, i) => {
+      reprogrammings[i] += parseAmount(rp.amount);
+    });
+  }
+  return { approved, reprogrammings };
+}
+
+export const LIB_TOTAL_TOLERANCE = 0.005;
+
+export function reprogrammingTotalDifference(rows: LibRow[], roundIndex: number): number {
+  const totals = libTotals(rows);
+  return (totals.reprogrammings[roundIndex] ?? 0) - totals.approved;
+}
+
+export function isReprogrammingTotalBalanced(rows: LibRow[], roundIndex: number): boolean {
+  return Math.abs(reprogrammingTotalDifference(rows, roundIndex)) <= LIB_TOTAL_TOLERANCE;
+}
+
+export function currentLibBudgetTotal(libOrRows: LibDoc | LibRow[]): number {
+  const rows = Array.isArray(libOrRows) ? libOrRows : libOrRows.rows;
+  return libTotals(rows).approved;
+}
+
+export function isApprovedReprogrammedLib(lib: LibDoc): boolean {
+  return lib.status === "Approved" && lib.revision > 0;
 }
 
 function row(
   label: string,
   opts: { note?: string; indent?: 0 | 1 | 2; header?: boolean; approved?: number; reprogramming?: number; justification?: string } = {},
 ): LibRow {
+  // The default template is an already-approved-and-once-revised sample, so any
+  // line that carries a reprogramming amount seeds a single "First Reprogramming" round.
+  const reprogrammings: LibReprogramming[] =
+    !opts.header && opts.reprogramming != null
+      ? [{ amount: String(opts.reprogramming), justification: opts.justification ?? "" }]
+      : [];
   return {
     id: newRowId(),
     label,
@@ -93,8 +143,7 @@ function row(
     indent: opts.indent ?? 1,
     header: opts.header ?? false,
     approved: opts.approved != null ? String(opts.approved) : "",
-    reprogramming: opts.reprogramming != null ? String(opts.reprogramming) : "",
-    justification: opts.justification ?? "",
+    reprogrammings,
   };
 }
 
@@ -142,6 +191,7 @@ export function defaultLibContent(): Omit<LibDoc, "id" | "status" | "createdAt" 
     projectLeader: "ENGR. NOEL M. AJOC",
     monitoringAgency: "DOST-Caraga / MIS",
     rows: defaultLibRows(),
+    revision: 1,
     chargeableNote: "* Chargeable against the CY 2026 DOST Caraga Local GIA",
     preparedByName: "JENIFER T. VILLAPLAZA",
     preparedByPosition: "Science Research Specialist II",
@@ -154,16 +204,108 @@ export function defaultLibContent(): Omit<LibDoc, "id" | "status" | "createdAt" 
   };
 }
 
+// A blank LIB for the "Create" form: empty fields and a single ready-to-fill
+// line so the user can start typing (and use the per-row + menu) right away. The
+// filled-in sample lives in defaultLibContent() and only seeds the list demo.
+export function emptyLibContent(): Omit<LibDoc, "id" | "status" | "createdAt" | "updatedAt"> {
+  return {
+    fiscalYear: "2026",
+    programTitle: "",
+    projectTitle: "",
+    implementingAgency: "",
+    totalDuration: "",
+    cooperatingAgency: "",
+    projectLeader: "",
+    monitoringAgency: "",
+    rows: [row("", { indent: 1 })],
+    revision: 0,
+    chargeableNote: "",
+    preparedByName: "",
+    preparedByPosition: "",
+    recommendingName: "",
+    recommendingPosition: "",
+    certifiedName: "",
+    certifiedPosition: "",
+    approvedName: "",
+    approvedPosition: "",
+  };
+}
+
 export function newLibDoc(): LibDoc {
   const now = new Date().toISOString();
-  return { id: newLibId(), status: "Draft", history: [], createdAt: now, updatedAt: now, ...defaultLibContent() };
+  const me = getCurrentUser();
+  // A brand-new draft starts blank — no reprogramming rounds yet (those columns
+  // only appear once an approved LIB is revised). Stamp the creator so it stays
+  // private to them (superadmins can still see every LIB).
+  return {
+    id: newLibId(),
+    status: "Draft",
+    history: [],
+    ownerId: me?.id,
+    ownerName: me?.name,
+    createdAt: now,
+    updatedAt: now,
+    ...emptyLibContent(),
+  };
+}
+
+/**
+ * Who may see a given document. A document is private to its creator; a
+ * superadmin sees everything. Legacy/ownerless docs are visible only to
+ * superadmins.
+ */
+export function canViewOwned(ownerId: number | undefined): boolean {
+  const me = getCurrentUser();
+  if (!me) return false;
+  if (me.tier === "superadmin") return true;
+  return ownerId != null && ownerId === me.id;
+}
+
+// Convert a row that may still be in the legacy single-reprogramming shape
+// ({ reprogramming, justification }) into the multi-round shape.
+function migrateRow(r: Record<string, unknown>): LibRow {
+  if (Array.isArray((r as { reprogrammings?: unknown }).reprogrammings)) {
+    const { reprogramming: _a, justification: _b, ...rest } = r as Record<string, unknown>;
+    return rest as unknown as LibRow;
+  }
+  const { reprogramming, justification, ...rest } = r as Record<string, unknown>;
+  const amount = reprogramming == null ? "" : String(reprogramming);
+  const just = justification == null ? "" : String(justification);
+  const header = Boolean((rest as { header?: unknown }).header);
+  const reprogrammings: LibReprogramming[] = header || (amount.trim() === "" && just.trim() === "") ? [] : [{ amount, justification: just }];
+  return { ...(rest as unknown as LibRow), reprogrammings };
+}
+
+// Ensure every non-header row has exactly `rounds` reprogramming entries so the
+// columns line up (padding blanks / trimming extras as needed).
+function normalizeRows(rows: LibRow[], rounds: number): LibRow[] {
+  return rows.map((r) => {
+    // Headers may carry their own amount now, so they get reprogramming slots too.
+    const reps = [...(r.reprogrammings ?? [])];
+    while (reps.length < rounds) reps.push({ amount: "", justification: "" });
+    reps.length = rounds;
+    return { ...r, reprogrammings: reps };
+  });
+}
+
+function migrateDoc(doc: Record<string, unknown>): LibDoc {
+  const rowsRaw = ((doc.rows as Record<string, unknown>[]) ?? []).map(migrateRow);
+  const anyReprog = rowsRaw.some((r) => !r.header && r.reprogrammings.length > 0);
+  const revision = typeof doc.revision === "number" ? doc.revision : anyReprog ? 1 : 0;
+  const rows = normalizeRows(rowsRaw, revision);
+  const history: LibSnapshot[] = ((doc.history as Record<string, unknown>[]) ?? []).map((s) => ({
+    savedAt: String(s.savedAt ?? ""),
+    status: s.status as LibStatus,
+    rows: ((s.rows as Record<string, unknown>[]) ?? []).map(migrateRow),
+  }));
+  return { ...(doc as unknown as LibDoc), revision, rows, history };
 }
 
 function read(): LibDoc[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as LibDoc[]) : [];
+    return raw ? (JSON.parse(raw) as Record<string, unknown>[]).map(migrateDoc) : [];
   } catch {
     return [];
   }
@@ -175,30 +317,40 @@ function write(list: LibDoc[]) {
 
 export function listLibs(): LibDoc[] {
   const list = read();
-  if (list.length === 0) {
-    // Seed one example (the DOST Form 4 sample) so the list isn't empty.
-    const now = new Date().toISOString();
-    const seed: LibDoc = { id: newLibId(), status: "Approved", createdAt: now, updatedAt: now, ...defaultLibContent() };
-    write([seed]);
-    return [seed];
-  }
-  return list.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  // Only surface documents the current user is allowed to see.
+  return list.filter((d) => canViewOwned(d.ownerId)).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }
 
 export function getLib(id: string): LibDoc | undefined {
-  return read().find((d) => d.id === id);
+  const doc = read().find((d) => d.id === id);
+  return doc && canViewOwned(doc.ownerId) ? doc : undefined;
 }
 
 export function saveLib(doc: LibDoc): LibDoc {
   const list = read();
   const idx = list.findIndex((d) => d.id === doc.id);
-  const updated: LibDoc = { ...doc, updatedAt: new Date().toISOString() };
+  const me = getCurrentUser();
+  // Preserve the original owner; stamp the current user on first save if unset.
+  const updated: LibDoc = {
+    ...doc,
+    ownerId: doc.ownerId ?? me?.id,
+    ownerName: doc.ownerName ?? me?.name,
+    updatedAt: new Date().toISOString(),
+  };
   if (idx >= 0) list[idx] = updated;
   else list.unshift(updated);
   write(list);
+  void apiUpsertPlanningLib<LibDoc>(updated).catch(() => undefined);
   return updated;
 }
 
 export function deleteLib(id: string) {
   write(read().filter((d) => d.id !== id));
+  void apiDeletePlanningLib(id).catch(() => undefined);
+}
+
+export async function syncLibsFromDatabase(): Promise<LibDoc[]> {
+  const docs = (await apiGetPlanningLibs<LibDoc>()).map((doc) => migrateDoc(doc as unknown as Record<string, unknown>));
+  if (typeof window !== "undefined") write(docs);
+  return listLibs();
 }

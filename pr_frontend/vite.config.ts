@@ -7,8 +7,12 @@ export default defineConfig({
   plugins: [tailwindcss(), tanstackStart(), react()],
   resolve: { tsconfigPaths: true },
   server: {
-    host: "127.0.0.1",
+    host: true,
     port: 5173,
+    allowedHosts: [
+      ".trycloudflare.com",
+      "pr.dostcaraga.ph",
+    ],
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8000",

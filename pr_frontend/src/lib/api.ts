@@ -4,21 +4,40 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
 const TOKEN_KEY = "pr_backend_token";
 const TOKEN_EXPIRES_AT_KEY = "pr_backend_token_expires_at";
 const TOKEN_LAST_ACTIVITY_KEY = "pr_backend_token_last_activity_at";
+const CURRENT_USER_KEY = "pr_backend_current_user";
 const AUTH_IDLE_TIMEOUT_MS = Number(import.meta.env.VITE_AUTH_IDLE_TIMEOUT_MINUTES ?? 30) * 60 * 1000;
 const PHILIPPINE_TIME_ZONE = "Asia/Manila";
 export const AUTH_EXPIRED_EVENT = "pr_backend_auth_expired";
+export const CURRENT_USER_EVENT = "pr_backend_current_user_changed";
 
 type ApiList<T> = { data: T[] };
 type ApiRecord<T> = { data: T };
+
+export type UserTier = "superadmin" | "admin" | "regular";
 
 export type UserRecord = {
   id: number;
   name: string;
   email: string;
   office: string;
+  officeId: number | null;
   roles: string[];
   status: string;
+  tier: UserTier;
+  modules: string[]; // Superadmin-granted toggleable modules (regular accounts)
+  accessModules: string[]; // effective modules the user can reach
   lastLogin: string;
+};
+
+/** The signed-in user, persisted client-side for gating the UI. */
+export type CurrentUser = {
+  id: number;
+  name: string;
+  email: string;
+  tier: UserTier;
+  modules: string[]; // effective modules (access_modules)
+  office: string;
+  position: string;
 };
 
 export type RoleRecord = {
@@ -259,20 +278,77 @@ export function clearToken() {
   window.localStorage.removeItem(TOKEN_KEY);
   window.localStorage.removeItem(TOKEN_EXPIRES_AT_KEY);
   window.localStorage.removeItem(TOKEN_LAST_ACTIVITY_KEY);
+  clearCurrentUser();
 }
 
 export function hasValidToken() {
   return Boolean(getToken());
 }
 
+export function getCurrentUser(): CurrentUser | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CURRENT_USER_KEY);
+    return raw ? (JSON.parse(raw) as CurrentUser) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCurrentUser(user: CurrentUser) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+  window.dispatchEvent(new CustomEvent(CURRENT_USER_EVENT));
+}
+
+export function clearCurrentUser() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(CURRENT_USER_KEY);
+  window.dispatchEvent(new CustomEvent(CURRENT_USER_EVENT));
+}
+
 export async function login(email: string, password: string) {
-  const result = await request<{ token: string; expires_in: number; user: unknown }>("/auth/login", {
+  const result = await request<{ token: string; expires_in: number; user: BackendUser }>("/auth/login", {
     method: "POST",
     body: { email, password },
     auth: false,
   });
   setToken(result.token, result.expires_in);
+  setCurrentUser(mapCurrentUser(result.user));
   return result;
+}
+
+export type PublicOffice = { id: number; name: string; code: string };
+
+export type RegisterPayload = {
+  name: string;
+  email: string;
+  password: string;
+  position: string;
+  office_id: number;
+};
+
+/** Public office list for the registration form (no auth required). */
+export async function apiPublicOffices(): Promise<PublicOffice[]> {
+  const result = await request<{ data: PublicOffice[] }>("/auth/offices", { auth: false });
+  return result.data;
+}
+
+/** Register a new (Pending) account. Requires admin activation before sign-in. */
+export async function register(payload: RegisterPayload) {
+  return request<{ message: string }>("/auth/register", {
+    method: "POST",
+    body: payload,
+    auth: false,
+  });
+}
+
+/** Refresh the signed-in user from the backend (source of truth for tier/modules). */
+export async function apiMe(): Promise<CurrentUser> {
+  const result = await request<{ data: BackendUser }>("/auth/me");
+  const user = mapCurrentUser(result.data);
+  setCurrentUser(user);
+  return user;
 }
 
 export async function logout() {
@@ -351,6 +427,22 @@ export async function apiGetUsers() {
   return result.data.map(mapUser);
 }
 
+export type Signatory = { id: number; name: string; tier: UserTier; position: string | null };
+
+/** Approved accounts (status = Active) for signatory pickers — any signed-in user may read this. */
+export async function apiGetSignatories(): Promise<Signatory[]> {
+  const result = await request<ApiList<{ id: number; name: string; tier?: UserTier; position?: string | null }>>("/signatories");
+  return result.data.map((u) => ({ id: u.id, name: u.name, tier: u.tier ?? "regular", position: u.position ?? null }));
+}
+
+export async function apiUpdateUser(
+  id: number,
+  payload: { tier?: UserTier; modules?: string[] | null; status?: string; role_ids?: number[] },
+) {
+  const result = await request<ApiRecord<BackendUser>>(`/users/${id}`, { method: "PUT", body: payload });
+  return mapUser(result.data);
+}
+
 export async function apiGetRoles() {
   const result = await request<ApiList<BackendRole>>("/roles");
   return result.data.map(mapRole);
@@ -401,6 +493,43 @@ export async function apiCreatePpmpDocument(payload: PpmpDocumentCreatePayload, 
     body: payload,
   });
   return mapPpmpDocument(result.data);
+}
+
+export async function apiGetPlanningLibs<T = unknown>(): Promise<T[]> {
+  const result = await request<ApiList<T>>("/planning-libs");
+  return result.data;
+}
+
+export async function apiUpsertPlanningLib<T = unknown>(payload: T & { id?: string }): Promise<T> {
+  const id = payload.id;
+  const result = await request<ApiRecord<T>>(id ? `/planning-libs/${encodeURIComponent(id)}` : "/planning-libs", {
+    method: id ? "PUT" : "POST",
+    body: payload,
+  });
+  return result.data;
+}
+
+export async function apiDeletePlanningLib(id: string): Promise<void> {
+  await request<{ message: string }>(`/planning-libs/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function apiGetPlanningPpmps<T = unknown>(libId?: string): Promise<T[]> {
+  const query = libId ? `?lib_id=${encodeURIComponent(libId)}` : "";
+  const result = await request<ApiList<T>>(`/planning-ppmps${query}`);
+  return result.data;
+}
+
+export async function apiUpsertPlanningPpmp<T = unknown>(payload: T & { id?: string }): Promise<T> {
+  const id = payload.id;
+  const result = await request<ApiRecord<T>>(id ? `/planning-ppmps/${encodeURIComponent(id)}` : "/planning-ppmps", {
+    method: id ? "PUT" : "POST",
+    body: payload,
+  });
+  return result.data;
+}
+
+export async function apiDeletePlanningPpmp(id: string): Promise<void> {
+  await request<{ message: string }>(`/planning-ppmps/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export async function apiGetAppCse() {
@@ -551,8 +680,13 @@ type BackendUser = {
   name: string;
   email: string;
   office?: { name: string } | null;
+  office_id?: number | null;
+  position?: string | null;
   roles?: BackendRole[];
   status: string;
+  tier?: UserTier;
+  modules?: string[] | null;
+  access_modules?: string[];
   last_login_at: string | null;
 };
 
@@ -705,9 +839,25 @@ function mapUser(user: BackendUser): UserRecord {
     name: user.name,
     email: user.email,
     office: user.office?.name ?? "Unassigned",
+    officeId: user.office_id ?? null,
     roles: user.roles?.map((role) => role.name) ?? [],
     status: user.status,
+    tier: user.tier ?? "regular",
+    modules: user.modules ?? [],
+    accessModules: user.access_modules ?? [],
     lastLogin: user.last_login_at ?? "Never",
+  };
+}
+
+function mapCurrentUser(user: BackendUser): CurrentUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    tier: user.tier ?? "regular",
+    modules: user.access_modules ?? [],
+    office: user.office?.name ?? "Unassigned",
+    position: user.position ?? "",
   };
 }
 

@@ -8,14 +8,17 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class PpmpItem extends Model
 {
     protected $fillable = [
+        'client_uid',
         'ppmp_document_id',
         'project_id',
         'procurement_item_id',
         'row_number',
         'code',
         'expense_category',
+        'expense_subcategory',
         'general_description',
         'project_type',
+        'item_name',
         'quantity_size',
         'recommended_mode',
         'pre_procurement_conference',

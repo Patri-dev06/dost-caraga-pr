@@ -9,6 +9,8 @@ use App\Models\ApprovalAction;
 use App\Models\AuditLog;
 use App\Models\BudgetAllocation;
 use App\Models\FundSource;
+use App\Models\LibDocument;
+use App\Models\LibDocumentRow;
 use App\Models\Office;
 use App\Models\PpmpDocument;
 use App\Models\PpmpItem;
@@ -39,9 +41,37 @@ class ProcurementController extends Controller
         'users' => User::class,
     ];
 
+    /** Abort with 403 unless the current user may access the given module. */
+    private function guardModule(string $module): void
+    {
+        abort_unless(request()->user()?->canAccessModule($module), 403, 'You do not have access to this module.');
+    }
+
+    /** Map a generic REST resource to the module that governs it, then enforce it. */
+    private function guardResource(string $resource): void
+    {
+        if ($resource === 'users') {
+            abort_unless(request()->user()?->tier === 'superadmin', 403, 'Only the Superadmin can manage users.');
+
+            return;
+        }
+
+        $module = match ($resource) {
+            'roles' => 'settings',
+            'offices', 'fund-sources', 'projects', 'procurement-items' => 'references',
+            'purchase-requests' => 'pr',
+            default => null,
+        };
+
+        if ($module !== null) {
+            $this->guardModule($module);
+        }
+    }
+
     public function index(Request $request): JsonResponse
     {
         $resource = $this->resource($request);
+        $this->guardResource($resource);
         $query = $this->query($resource);
         $search = $request->query('search');
 
@@ -69,9 +99,311 @@ class ProcurementController extends Controller
         return response()->json($data);
     }
 
+    /**
+     * Lightweight list of approved accounts (status = Active) for signatory
+     * pickers. Unlike the superadmin-only /users endpoint, any signed-in user may
+     * read this, but it only exposes name/tier/suggested position — never
+     * credentials or module grants.
+     */
+    public function signatories(Request $request): JsonResponse
+    {
+        $users = User::query()
+            ->where('status', 'Active')
+            ->with('roles:id,name')
+            ->orderBy('name')
+            ->get()
+            ->map(fn (User $user): array => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'tier' => $user->tier,
+                // Prefer the self-reported position captured at sign-up; fall back to role.
+                'position' => $user->position ?: $user->roles->pluck('name')->first(),
+            ]);
+
+        return response()->json(['data' => $users]);
+    }
+
+    public function planningLibIndex(Request $request): JsonResponse
+    {
+        $this->guardModule('lib');
+
+        $query = LibDocument::with('rows')->latest('updated_at');
+        $this->scopeOwned($query);
+
+        return response()->json(['data' => $query->get()->map(fn (LibDocument $document): array => $this->formatLibDocument($document))->all()]);
+    }
+
+    public function planningLibShow(Request $request, string $clientUid): JsonResponse
+    {
+        $this->guardModule('lib');
+        $document = LibDocument::with('rows')->where('client_uid', $clientUid)->firstOrFail();
+        $this->abortUnlessOwned($document->owner_id);
+
+        return response()->json(['data' => $this->formatLibDocument($document)]);
+    }
+
+    public function planningLibStore(Request $request, ?string $clientUid = null): JsonResponse
+    {
+        $this->guardModule('lib');
+
+        $data = $request->validate([
+            'id' => ['required', 'string'],
+            'fiscalYear' => ['nullable', 'string'],
+            'programTitle' => ['nullable', 'string'],
+            'projectTitle' => ['nullable', 'string'],
+            'implementingAgency' => ['nullable', 'string'],
+            'totalDuration' => ['nullable', 'string'],
+            'cooperatingAgency' => ['nullable', 'string'],
+            'projectLeader' => ['nullable', 'string'],
+            'monitoringAgency' => ['nullable', 'string'],
+            'revision' => ['nullable', 'integer', 'min:0'],
+            'chargeableNote' => ['nullable', 'string'],
+            'preparedByName' => ['nullable', 'string'],
+            'preparedByPosition' => ['nullable', 'string'],
+            'recommendingName' => ['nullable', 'string'],
+            'recommendingPosition' => ['nullable', 'string'],
+            'certifiedName' => ['nullable', 'string'],
+            'certifiedPosition' => ['nullable', 'string'],
+            'approvedName' => ['nullable', 'string'],
+            'approvedPosition' => ['nullable', 'string'],
+            'status' => ['required', 'string'],
+            'history' => ['nullable', 'array'],
+            'rows' => ['required', 'array'],
+            'rows.*.id' => ['required', 'string'],
+            'rows.*.label' => ['nullable', 'string'],
+            'rows.*.note' => ['nullable', 'string'],
+            'rows.*.indent' => ['required', 'integer', 'min:0', 'max:2'],
+            'rows.*.header' => ['required', 'boolean'],
+            'rows.*.approved' => ['nullable', 'string'],
+            'rows.*.reprogrammings' => ['nullable', 'array'],
+            'createdAt' => ['nullable', 'date'],
+        ]);
+
+        $user = $request->user();
+        $uid = $clientUid ?? $data['id'];
+
+        $document = DB::transaction(function () use ($data, $uid, $user): LibDocument {
+            $document = LibDocument::firstOrNew(['client_uid' => $uid]);
+            if ($document->exists) {
+                $this->abortUnlessOwned($document->owner_id);
+            }
+
+            $document->fill([
+                'fiscal_year' => $data['fiscalYear'] ?? '',
+                'program_title' => $data['programTitle'] ?? null,
+                'project_title' => $data['projectTitle'] ?? null,
+                'implementing_agency' => $data['implementingAgency'] ?? null,
+                'total_duration' => $data['totalDuration'] ?? null,
+                'cooperating_agency' => $data['cooperatingAgency'] ?? null,
+                'project_leader' => $data['projectLeader'] ?? null,
+                'monitoring_agency' => $data['monitoringAgency'] ?? null,
+                'revision' => $data['revision'] ?? 0,
+                'chargeable_note' => $data['chargeableNote'] ?? null,
+                'prepared_by_name' => $data['preparedByName'] ?? null,
+                'prepared_by_position' => $data['preparedByPosition'] ?? null,
+                'recommending_name' => $data['recommendingName'] ?? null,
+                'recommending_position' => $data['recommendingPosition'] ?? null,
+                'certified_name' => $data['certifiedName'] ?? null,
+                'certified_position' => $data['certifiedPosition'] ?? null,
+                'approved_name' => $data['approvedName'] ?? null,
+                'approved_position' => $data['approvedPosition'] ?? null,
+                'status' => $data['status'],
+                'history' => $data['history'] ?? [],
+                'owner_id' => $document->owner_id ?? $user?->id,
+                'owner_name' => $document->owner_name ?? $user?->name,
+            ])->save();
+
+            $document->rows()->delete();
+            foreach ($data['rows'] as $index => $row) {
+                $document->rows()->create([
+                    'client_uid' => $row['id'],
+                    'label' => $row['label'] ?? '',
+                    'note' => $row['note'] ?? '',
+                    'indent' => $row['indent'],
+                    'header' => $row['header'],
+                    'approved' => $row['approved'] ?? '',
+                    'reprogrammings' => $row['reprogrammings'] ?? [],
+                    'sort_order' => $index,
+                ]);
+            }
+
+            return $document->fresh('rows');
+        });
+
+        $this->audit($request, 'LIB', 'Saved LIB Document', $document->client_uid);
+
+        return response()->json(['data' => $this->formatLibDocument($document)], $clientUid ? 200 : 201);
+    }
+
+    public function planningLibDestroy(Request $request, string $clientUid): JsonResponse
+    {
+        $this->guardModule('lib');
+        $document = LibDocument::where('client_uid', $clientUid)->firstOrFail();
+        $this->abortUnlessOwned($document->owner_id);
+        $document->delete();
+
+        return response()->json(['message' => 'LIB document removed.']);
+    }
+
+    public function planningPpmpIndex(Request $request): JsonResponse
+    {
+        $this->guardModule('ppmp');
+
+        $query = PpmpDocument::with('items')->whereNotNull('client_uid')->latest('created_at');
+        $this->scopeOwned($query);
+
+        if ($request->query('lib_id')) {
+            $query->whereHas('libDocument', fn (Builder $q) => $q->where('client_uid', $request->query('lib_id')));
+        }
+
+        return response()->json(['data' => $query->get()->map(fn (PpmpDocument $document): array => $this->formatPlanningPpmp($document))->all()]);
+    }
+
+    public function planningPpmpShow(Request $request, string $clientUid): JsonResponse
+    {
+        $this->guardModule('ppmp');
+        $document = PpmpDocument::with('items')->where('client_uid', $clientUid)->firstOrFail();
+        $this->abortUnlessOwned($document->owner_id);
+
+        return response()->json(['data' => $this->formatPlanningPpmp($document)]);
+    }
+
+    public function planningPpmpStore(Request $request, ?string $clientUid = null): JsonResponse
+    {
+        $this->guardModule('ppmp');
+
+        $data = $request->validate([
+            'id' => ['required', 'string'],
+            'libId' => ['required', 'string'],
+            'ppmpNo' => ['nullable', 'string'],
+            'status' => ['required', 'string'],
+            'revisionCount' => ['nullable', 'integer', 'min:0'],
+            'fiscalYear' => ['required', 'integer', 'between:2000,2100'],
+            'endUserUnit' => ['nullable', 'string'],
+            'documentType' => ['required', 'string', Rule::in(['Indicative', 'Final'])],
+            'preparedByName' => ['nullable', 'string'],
+            'preparedByPosition' => ['nullable', 'string'],
+            'preparedByDate' => ['nullable', 'string'],
+            'budgetOfficerName' => ['nullable', 'string'],
+            'budgetOfficerPosition' => ['nullable', 'string'],
+            'budgetCertifiedDate' => ['nullable', 'string'],
+            'rows' => ['required', 'array'],
+            'rows.*.id' => ['required', 'string'],
+            'rows.*.expense_category' => ['nullable', 'string'],
+            'rows.*.expense_subcategory' => ['nullable', 'string'],
+            'rows.*.general_description' => ['nullable', 'string'],
+            'rows.*.item_name' => ['nullable', 'string'],
+            'rows.*.project_type' => ['nullable', 'string'],
+            'rows.*.quantity_size' => ['nullable', 'string'],
+            'rows.*.quantity' => ['nullable', 'numeric'],
+            'rows.*.recommended_mode' => ['nullable', 'string'],
+            'rows.*.pre_procurement_conference' => ['nullable', 'string'],
+            'rows.*.procurement_start' => ['nullable', 'string'],
+            'rows.*.procurement_end' => ['nullable', 'string'],
+            'rows.*.delivery_period' => ['nullable', 'string'],
+            'rows.*.source_of_funds' => ['nullable', 'string'],
+            'rows.*.estimated_budget' => ['nullable', 'numeric'],
+            'rows.*.supporting_documents' => ['nullable', 'string'],
+            'rows.*.remarks' => ['nullable', 'string'],
+            'formRows' => ['nullable', 'array'],
+            'totalBudget' => ['required', 'numeric', 'min:0'],
+            'createdAt' => ['nullable', 'date'],
+        ]);
+
+        $user = $request->user();
+        $uid = $clientUid ?? $data['id'];
+        $lib = LibDocument::where('client_uid', $data['libId'])->first();
+
+        $document = DB::transaction(function () use ($data, $uid, $user, $lib): PpmpDocument {
+            $document = PpmpDocument::firstOrNew(['client_uid' => $uid]);
+            if ($document->exists) {
+                $this->abortUnlessOwned($document->owner_id);
+            }
+
+            $document->fill([
+                'project_id' => $document->project_id ?? $this->defaultPlanningProjectId(),
+                'lib_document_id' => $lib?->id,
+                'ppmp_no' => $data['ppmpNo'] ?? null,
+                'status' => $data['status'],
+                'revision_count' => $data['revisionCount'] ?? 0,
+                'fiscal_year' => $data['fiscalYear'],
+                'end_user_unit' => $data['endUserUnit'] ?? null,
+                'document_type' => $data['documentType'],
+                'prepared_submitted_by_name' => $data['preparedByName'] ?? null,
+                'prepared_submitted_by_position' => $data['preparedByPosition'] ?? null,
+                'prepared_submitted_by_date' => $this->dateOrNull($data['preparedByDate'] ?? null),
+                'budget_officer_name' => $data['budgetOfficerName'] ?? null,
+                'budget_officer_position' => $data['budgetOfficerPosition'] ?? null,
+                'budget_certified_date' => $this->dateOrNull($data['budgetCertifiedDate'] ?? null),
+                'total_estimated_budget' => $data['totalBudget'],
+                'row_count' => count($data['rows']),
+                'form_rows' => $data['formRows'] ?? [],
+                'owner_id' => $document->owner_id ?? $user?->id,
+                'owner_name' => $document->owner_name ?? $user?->name,
+                'imported_by' => $document->imported_by ?? $user?->id,
+                'imported_at' => $document->imported_at ?? now(),
+            ])->save();
+
+            $document->items()->delete();
+            foreach ($data['rows'] as $index => $row) {
+                $itemName = $row['item_name'] ?? $row['general_description'] ?? 'PPMP Item';
+                $itemId = $this->resolveOrCreateProcurementItemId($itemName, [
+                    'description' => $row['quantity_size'] ?? null,
+                    'category' => $row['expense_category'] ?? null,
+                    'uom' => 'unit',
+                    'is_cse' => false,
+                ]);
+                $quantity = max(0.01, (float) ($row['quantity'] ?? 1));
+                $budget = (float) ($row['estimated_budget'] ?? 0);
+
+                $document->items()->create([
+                    'client_uid' => $row['id'],
+                    'project_id' => $document->project_id,
+                    'procurement_item_id' => $itemId,
+                    'row_number' => $index + 1,
+                    'expense_category' => $row['expense_category'] ?? null,
+                    'expense_subcategory' => $row['expense_subcategory'] ?? null,
+                    'general_description' => $row['general_description'] ?? null,
+                    'project_type' => $row['project_type'] ?? null,
+                    'item_name' => $itemName,
+                    'quantity_size' => $row['quantity_size'] ?? null,
+                    'quantity' => $quantity,
+                    'recommended_mode' => $row['recommended_mode'] ?? null,
+                    'pre_procurement_conference' => $row['pre_procurement_conference'] ?? null,
+                    'procurement_start' => $row['procurement_start'] ?? null,
+                    'procurement_end' => $row['procurement_end'] ?? null,
+                    'delivery_period' => $row['delivery_period'] ?? null,
+                    'source_of_funds' => $row['source_of_funds'] ?? null,
+                    'estimated_budget' => $budget,
+                    'estimated_unit_cost' => $quantity > 0 ? $budget / $quantity : $budget,
+                    'supporting_documents' => $row['supporting_documents'] ?? null,
+                    'remarks' => $row['remarks'] ?? null,
+                    'schedule' => $this->scheduleFromPpmpRow($row),
+                ]);
+            }
+
+            return $document->fresh('items');
+        });
+
+        $this->audit($request, 'PPMP', 'Saved PPMP Document', $document->client_uid);
+
+        return response()->json(['data' => $this->formatPlanningPpmp($document)], $clientUid ? 200 : 201);
+    }
+
+    public function planningPpmpDestroy(Request $request, string $clientUid): JsonResponse
+    {
+        $this->guardModule('ppmp');
+        $document = PpmpDocument::where('client_uid', $clientUid)->firstOrFail();
+        $this->abortUnlessOwned($document->owner_id);
+        $document->delete();
+
+        return response()->json(['message' => 'PPMP document removed.']);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $resource = $this->resource($request);
+        $this->guardResource($resource);
 
         if ($resource === 'purchase-requests') {
             return $this->storePurchaseRequest($request);
@@ -90,7 +422,9 @@ class ProcurementController extends Controller
 
     public function show(Request $request, int $resourceId): JsonResponse
     {
-        $record = $this->query($this->resource($request))->findOrFail($resourceId);
+        $resource = $this->resource($request);
+        $this->guardResource($resource);
+        $record = $this->query($resource)->findOrFail($resourceId);
 
         return response()->json(['data' => $this->format($record)]);
     }
@@ -98,6 +432,7 @@ class ProcurementController extends Controller
     public function update(Request $request, int $resourceId): JsonResponse
     {
         $resource = $this->resource($request);
+        $this->guardResource($resource);
 
         if ($resource === 'purchase-requests') {
             return $this->updatePurchaseRequest($request, $resourceId);
@@ -117,7 +452,9 @@ class ProcurementController extends Controller
 
     public function destroy(Request $request, int $resourceId): JsonResponse
     {
-        $record = $this->query($this->resource($request))->findOrFail($resourceId);
+        $resource = $this->resource($request);
+        $this->guardResource($resource);
+        $record = $this->query($resource)->findOrFail($resourceId);
 
         if ($record instanceof User) {
             $record->forceFill(['status' => 'Inactive'])->save();
@@ -132,6 +469,7 @@ class ProcurementController extends Controller
 
     public function ppmpIndex(Project $project): JsonResponse
     {
+        $this->guardModule('references');
         return response()->json([
             'data' => PpmpItem::with(['item', 'document'])
                 ->whereBelongsTo($project)
@@ -149,6 +487,7 @@ class ProcurementController extends Controller
 
     public function ppmpStore(Request $request, Project $project): JsonResponse
     {
+        $this->guardModule('references');
         $data = validator($this->normalizedReferencePayload($request, false), [
             'procurement_item_id' => ['required', 'exists:procurement_items,id'],
             'code' => ['nullable', 'string'],
@@ -175,6 +514,7 @@ class ProcurementController extends Controller
 
     public function ppmpDocumentStore(Request $request, Project $project): JsonResponse
     {
+        $this->guardModule('references');
         $data = $request->validate([
             'document' => ['required', 'array'],
             'document.ppmp_no' => ['nullable', 'string'],
@@ -298,6 +638,136 @@ class ProcurementController extends Controller
         return 1.0;
     }
 
+    private function scopeOwned(Builder $query): void
+    {
+        $user = request()->user();
+        if ($user?->tier === 'superadmin') {
+            return;
+        }
+
+        $query->where('owner_id', $user?->id);
+    }
+
+    private function abortUnlessOwned(?int $ownerId): void
+    {
+        $user = request()->user();
+        if ($user?->tier === 'superadmin') {
+            return;
+        }
+
+        abort_unless($ownerId !== null && $ownerId === $user?->id, 403, 'You do not have access to this document.');
+    }
+
+    private function defaultPlanningProjectId(): int
+    {
+        return Project::firstOrCreate(
+            ['code' => 'LOCAL-PLANNING'],
+            [
+                'title' => 'Local Planning Documents',
+                'description' => 'System project used for LIB/PPMP planning documents created from the planning module.',
+                'fiscal_year' => (int) now()->format('Y'),
+                'status' => 'Active',
+            ],
+        )->id;
+    }
+
+    private function dateOrNull(?string $value): ?string
+    {
+        $value = trim((string) $value);
+        return $value === '' ? null : $value;
+    }
+
+    private function formatLibDocument(LibDocument $document): array
+    {
+        $document->loadMissing('rows');
+
+        return [
+            'id' => $document->client_uid,
+            'fiscalYear' => $document->fiscal_year,
+            'programTitle' => $document->program_title ?? '',
+            'projectTitle' => $document->project_title ?? '',
+            'implementingAgency' => $document->implementing_agency ?? '',
+            'totalDuration' => $document->total_duration ?? '',
+            'cooperatingAgency' => $document->cooperating_agency ?? '',
+            'projectLeader' => $document->project_leader ?? '',
+            'monitoringAgency' => $document->monitoring_agency ?? '',
+            'rows' => $document->rows->map(fn (LibDocumentRow $row): array => [
+                'id' => $row->client_uid,
+                'label' => $row->label ?? '',
+                'note' => $row->note ?? '',
+                'indent' => $row->indent,
+                'header' => $row->header,
+                'approved' => $row->approved ?? '',
+                'reprogrammings' => $row->reprogrammings ?? [],
+            ])->all(),
+            'revision' => $document->revision,
+            'chargeableNote' => $document->chargeable_note ?? '',
+            'preparedByName' => $document->prepared_by_name ?? '',
+            'preparedByPosition' => $document->prepared_by_position ?? '',
+            'recommendingName' => $document->recommending_name ?? '',
+            'recommendingPosition' => $document->recommending_position ?? '',
+            'certifiedName' => $document->certified_name ?? '',
+            'certifiedPosition' => $document->certified_position ?? '',
+            'approvedName' => $document->approved_name ?? '',
+            'approvedPosition' => $document->approved_position ?? '',
+            'status' => $document->status,
+            'history' => $document->history ?? [],
+            'ownerId' => $document->owner_id,
+            'ownerName' => $document->owner_name,
+            'createdAt' => $document->created_at?->toISOString(),
+            'updatedAt' => $document->updated_at?->toISOString(),
+        ];
+    }
+
+    private function formatPlanningPpmp(PpmpDocument $document): array
+    {
+        $document->loadMissing(['items', 'libDocument']);
+
+        return [
+            'id' => $document->client_uid,
+            'libId' => $document->libDocument?->client_uid,
+            'ppmpNo' => $document->ppmp_no ?? '',
+            'status' => $document->status,
+            'revisionCount' => $document->revision_count,
+            'fiscalYear' => $document->fiscal_year,
+            'endUserUnit' => $document->end_user_unit ?? '',
+            'documentType' => $document->document_type,
+            'preparedByName' => $document->prepared_submitted_by_name ?? '',
+            'preparedByPosition' => $document->prepared_submitted_by_position ?? '',
+            'preparedByDate' => $document->prepared_submitted_by_date?->toDateString() ?? '',
+            'budgetOfficerName' => $document->budget_officer_name ?? '',
+            'budgetOfficerPosition' => $document->budget_officer_position ?? '',
+            'budgetCertifiedDate' => $document->budget_certified_date?->toDateString() ?? '',
+            'rows' => $document->items
+                ->sortBy([['row_number', 'asc'], ['id', 'asc']])
+                ->values()
+                ->map(fn (PpmpItem $item): array => [
+                    'id' => $item->client_uid ?? (string) $item->id,
+                    'expense_category' => $item->expense_category ?? '',
+                    'expense_subcategory' => $item->expense_subcategory ?? '',
+                    'general_description' => $item->general_description ?? '',
+                    'item_name' => $item->item_name ?? $item->item?->name ?? '',
+                    'project_type' => $item->project_type ?? '',
+                    'quantity_size' => $item->quantity_size ?? '',
+                    'quantity' => (float) $item->quantity,
+                    'recommended_mode' => $item->recommended_mode ?? '',
+                    'pre_procurement_conference' => $item->pre_procurement_conference ?? '',
+                    'procurement_start' => $item->procurement_start ?? '',
+                    'procurement_end' => $item->procurement_end ?? '',
+                    'delivery_period' => $item->delivery_period ?? '',
+                    'source_of_funds' => $item->source_of_funds ?? '',
+                    'estimated_budget' => (float) ($item->estimated_budget ?? 0),
+                    'supporting_documents' => $item->supporting_documents ?? '',
+                    'remarks' => $item->remarks ?? '',
+                ])->all(),
+            'formRows' => $document->form_rows ?? [],
+            'totalBudget' => (float) $document->total_estimated_budget,
+            'ownerId' => $document->owner_id,
+            'ownerName' => $document->owner_name,
+            'createdAt' => $document->created_at?->toISOString(),
+        ];
+    }
+
     private function numericOrNull(mixed $value): ?float
     {
         if ($value === null || $value === '') {
@@ -389,6 +859,7 @@ class ProcurementController extends Controller
 
     public function appCseIndex(?Project $project = null): JsonResponse
     {
+        $this->guardModule('references');
         $query = AppCseItem::with('item');
         $project ? $query->whereBelongsTo($project) : $query->whereNull('project_id');
 
@@ -397,6 +868,7 @@ class ProcurementController extends Controller
 
     public function appCseStore(Request $request, ?Project $project = null): JsonResponse
     {
+        $this->guardModule('references');
         $data = validator($this->normalizedReferencePayload($request, true), [
             'procurement_item_id' => ['required', 'exists:procurement_items,id'],
             'code' => ['nullable', 'string'],
@@ -409,6 +881,7 @@ class ProcurementController extends Controller
 
     public function appNonCseIndex(?Project $project = null): JsonResponse
     {
+        $this->guardModule('references');
         $query = AppNonCseItem::with('item');
         $project ? $query->whereBelongsTo($project) : $query->whereNull('project_id');
 
@@ -417,6 +890,7 @@ class ProcurementController extends Controller
 
     public function appNonCseStore(Request $request, ?Project $project = null): JsonResponse
     {
+        $this->guardModule('references');
         $data = validator($this->normalizedReferencePayload($request, false), [
             'procurement_item_id' => ['required', 'exists:procurement_items,id'],
             'code' => ['nullable', 'string'],
@@ -446,6 +920,7 @@ class ProcurementController extends Controller
 
     public function budgetShow(Project $project): JsonResponse
     {
+        $this->guardModule('references');
         $budgets = BudgetAllocation::whereBelongsTo($project)->get();
 
         return response()->json([
@@ -458,6 +933,7 @@ class ProcurementController extends Controller
 
     public function budgetStore(Request $request, Project $project): JsonResponse
     {
+        $this->guardModule('references');
         $data = $request->validate([
             'account_code' => ['required', 'string'],
             'account_name' => ['required', 'string'],
@@ -523,6 +999,7 @@ class ProcurementController extends Controller
 
     public function validatePurchaseRequest(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
+        $this->guardModule('validation');
         $purchaseRequest->load('items.item', 'project', 'fundSource');
         $purchaseRequest->validationResults()->delete();
 
@@ -553,6 +1030,7 @@ class ProcurementController extends Controller
 
     public function submitPurchaseRequest(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
+        $this->guardModule('pr');
         $validation = $this->validatePurchaseRequest($request, $purchaseRequest)->getData(true);
 
         if ($validation['status'] === 'Failed') {
@@ -572,6 +1050,7 @@ class ProcurementController extends Controller
 
     public function approvals(): JsonResponse
     {
+        $this->guardModule('approvals');
         return response()->json([
             'data' => PurchaseRequest::with(['office', 'fundSource', 'project', 'items'])
                 ->whereIn('status', ['For Recommendation', 'For Approval'])
@@ -583,6 +1062,7 @@ class ProcurementController extends Controller
 
     public function recommend(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
+        $this->guardModule('approvals');
         $purchaseRequest->forceFill([
             'status' => 'For Approval',
             'stage' => $this->preferenceValue('rd_approval_stage', 'Director Approval'),
@@ -594,6 +1074,7 @@ class ProcurementController extends Controller
 
     public function approve(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
+        $this->guardModule('approvals');
         $purchaseRequest->forceFill(['status' => 'Approved', 'stage' => 'Approved'])->save();
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Approved', $request->input('remarks'));
 
@@ -602,6 +1083,7 @@ class ProcurementController extends Controller
 
     public function reject(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
+        $this->guardModule('approvals');
         $data = $request->validate(['reason' => ['required', 'string']]);
         $purchaseRequest->forceFill(['status' => 'Rejected', 'stage' => 'Rejected'])->save();
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Rejected', $data['reason']);
@@ -611,6 +1093,7 @@ class ProcurementController extends Controller
 
     public function auditLogs(Request $request): JsonResponse
     {
+        $this->guardModule('audit');
         $timezone = config('app.timezone', 'Asia/Manila');
         $logs = AuditLog::latest('created_at')
             ->paginate((int) $request->query('per_page', 15))
@@ -634,6 +1117,7 @@ class ProcurementController extends Controller
 
     public function systemSettings(): JsonResponse
     {
+        $this->guardModule('settings');
         $this->ensureDefaultSystemPreferences();
 
         return response()->json([
@@ -643,6 +1127,7 @@ class ProcurementController extends Controller
 
     public function updateSystemSettings(Request $request): JsonResponse
     {
+        $this->guardModule('settings');
         abort_unless($request->user()?->roles->contains('name', 'Admin'), 403, 'Only administrators can update system preferences.');
 
         $data = $request->validate([
@@ -870,6 +1355,9 @@ class ProcurementController extends Controller
             'role_ids' => ['array'],
             'role_ids.*' => ['exists:roles,id'],
             'status' => ['sometimes', 'string'],
+            'tier' => ['sometimes', Rule::in(['superadmin', 'admin', 'regular'])],
+            'modules' => ['sometimes', 'nullable', 'array'],
+            'modules.*' => ['string', Rule::in(User::TOGGLEABLE_MODULES)],
         ]);
 
         $roleIds = $data['role_ids'] ?? [];
@@ -1021,7 +1509,7 @@ class ProcurementController extends Controller
             'fund-sources' => $request->validate(['name' => [$required, 'string'], 'fund_type' => [$required, 'string'], 'description' => ['nullable', 'string'], 'active' => ['sometimes', 'boolean']]),
             'projects' => $request->validate(['office_id' => ['nullable', 'exists:offices,id'], 'fund_source_id' => ['nullable', 'exists:fund_sources,id'], 'code' => [$required, 'string'], 'title' => [$required, 'string'], 'description' => ['nullable', 'string'], 'fiscal_year' => [$required, 'integer'], 'status' => ['sometimes', 'string']]),
             'procurement-items' => $request->validate(['name' => [$required, 'string'], 'description' => ['nullable', 'string'], 'category' => ['nullable', 'string'], 'uom' => [$required, 'string'], 'is_cse' => ['sometimes', 'boolean'], 'active' => ['sometimes', 'boolean']]),
-            'users' => $request->validate(['name' => ['sometimes', 'string'], 'email' => ['sometimes', 'email'], 'office_id' => ['nullable', 'exists:offices,id'], 'role_ids' => ['array'], 'role_ids.*' => ['exists:roles,id'], 'status' => ['sometimes', 'string']]),
+            'users' => $request->validate(['name' => ['sometimes', 'string'], 'email' => ['sometimes', 'email'], 'office_id' => ['nullable', 'exists:offices,id'], 'role_ids' => ['array'], 'role_ids.*' => ['exists:roles,id'], 'status' => ['sometimes', 'string'], 'tier' => ['sometimes', Rule::in(['superadmin', 'admin', 'regular'])], 'modules' => ['sometimes', 'nullable', 'array'], 'modules.*' => ['string', Rule::in(User::TOGGLEABLE_MODULES)]]),
             default => [],
         };
     }
