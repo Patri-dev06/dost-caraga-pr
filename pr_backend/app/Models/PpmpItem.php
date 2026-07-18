@@ -29,6 +29,7 @@ class PpmpItem extends Model
         'estimated_budget',
         'supporting_documents',
         'remarks',
+        'reviewer_comment',
         'quantity',
         'estimated_unit_cost',
         'schedule',

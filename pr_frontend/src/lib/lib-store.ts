@@ -261,12 +261,24 @@ export function canViewOwned(ownerId: number | undefined): boolean {
   return ownerId != null && ownerId === me.id;
 }
 
+// Coerce a persisted reprogramming entry into the expected string shape. The
+// database stores empty cells as null, so amount/justification can come back
+// null even though the type says string — callers then do `.amount.trim()` and
+// crash. Normalise here so every consumer sees plain strings.
+function sanitizeReprogramming(rp: unknown): LibReprogramming {
+  const o = (rp ?? {}) as { amount?: unknown; justification?: unknown };
+  return {
+    amount: o.amount == null ? "" : String(o.amount),
+    justification: o.justification == null ? "" : String(o.justification),
+  };
+}
+
 // Convert a row that may still be in the legacy single-reprogramming shape
 // ({ reprogramming, justification }) into the multi-round shape.
 function migrateRow(r: Record<string, unknown>): LibRow {
   if (Array.isArray((r as { reprogrammings?: unknown }).reprogrammings)) {
-    const { reprogramming: _a, justification: _b, ...rest } = r as Record<string, unknown>;
-    return rest as unknown as LibRow;
+    const { reprogramming: _a, justification: _b, reprogrammings, ...rest } = r as Record<string, unknown>;
+    return { ...(rest as unknown as LibRow), reprogrammings: (reprogrammings as unknown[]).map(sanitizeReprogramming) };
   }
   const { reprogramming, justification, ...rest } = r as Record<string, unknown>;
   const amount = reprogramming == null ? "" : String(reprogramming);
@@ -315,15 +327,44 @@ function write(list: LibDoc[]) {
   window.localStorage.setItem(KEY, JSON.stringify(list));
 }
 
+const BO_LIB_IDS_KEY = "dost_bo_lib_ids";
+
+/**
+ * LIB ids the current user may also see as the designated Budget Officer —
+ * those referenced by PPMPs routed to them. Maintained by the PPMP store during
+ * sync so LIB visibility stays precise (no cross-account cache leaks).
+ */
+export function setBudgetOfficerLibIds(ids: string[]): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(BO_LIB_IDS_KEY, JSON.stringify(ids));
+}
+
+function budgetOfficerLibIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(BO_LIB_IDS_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** Whether the current user may view a LIB (owner/superadmin, or Budget Officer for a routed LIB). */
+export function canViewLib(doc: Pick<LibDoc, "id" | "ownerId">): boolean {
+  if (canViewOwned(doc.ownerId)) return true;
+  const me = getCurrentUser();
+  return Boolean(me?.isBudgetOfficer) && budgetOfficerLibIds().has(doc.id);
+}
+
 export function listLibs(): LibDoc[] {
   const list = read();
   // Only surface documents the current user is allowed to see.
-  return list.filter((d) => canViewOwned(d.ownerId)).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  return list.filter((d) => canViewLib(d)).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }
 
 export function getLib(id: string): LibDoc | undefined {
   const doc = read().find((d) => d.id === id);
-  return doc && canViewOwned(doc.ownerId) ? doc : undefined;
+  return doc && canViewLib(doc) ? doc : undefined;
 }
 
 export function saveLib(doc: LibDoc): LibDoc {

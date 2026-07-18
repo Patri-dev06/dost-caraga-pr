@@ -38,6 +38,7 @@ export type CurrentUser = {
   modules: string[]; // effective modules (access_modules)
   office: string;
   position: string;
+  isBudgetOfficer: boolean; // designated Budget Officer for PPMP fund certification
 };
 
 export type RoleRecord = {
@@ -435,6 +436,56 @@ export async function apiGetSignatories(): Promise<Signatory[]> {
   return result.data.map((u) => ({ id: u.id, name: u.name, tier: u.tier ?? "regular", position: u.position ?? null }));
 }
 
+export type BudgetOfficer = { id: number; name: string; position: string; isCurrentUser: boolean };
+
+/** The account designated as Budget Officer, used to certify fund availability on PPMPs. */
+export async function apiGetBudgetOfficer(): Promise<BudgetOfficer | null> {
+  const result = await request<{ data: BudgetOfficer | null }>("/budget-officer");
+  return result.data;
+}
+
+export type AppNotification = {
+  id: number;
+  type: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  data: Record<string, unknown> | null;
+  read: boolean;
+  createdAt: string;
+};
+
+export async function apiGetNotifications(): Promise<{ items: AppNotification[]; unread: number }> {
+  const result = await request<{ data: AppNotification[]; unread: number }>("/notifications");
+  return { items: result.data, unread: result.unread };
+}
+
+export async function apiMarkNotificationRead(id: number): Promise<void> {
+  await request<{ message: string }>(`/notifications/${id}/read`, { method: "POST" });
+}
+
+export async function apiMarkAllNotificationsRead(): Promise<void> {
+  await request<{ message: string }>("/notifications/read-all", { method: "POST" });
+}
+
+export type PpmpReviewPayload = {
+  reviewComment?: string;
+  returnReason?: string;
+  itemComments?: Record<string, string>;
+};
+
+/** Budget Officer returns a submitted PPMP to its owner for revision. */
+export async function apiReturnPlanningPpmp<T = unknown>(id: string, payload: PpmpReviewPayload): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-ppmps/${encodeURIComponent(id)}/return`, { method: "POST", body: payload });
+  return result.data;
+}
+
+/** Budget Officer approves (certifies) a submitted PPMP. */
+export async function apiApprovePlanningPpmp<T = unknown>(id: string, payload: PpmpReviewPayload): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-ppmps/${encodeURIComponent(id)}/approve`, { method: "POST", body: payload });
+  return result.data;
+}
+
 export async function apiUpdateUser(
   id: number,
   payload: { tier?: UserTier; modules?: string[] | null; status?: string; role_ids?: number[] },
@@ -687,6 +738,7 @@ type BackendUser = {
   tier?: UserTier;
   modules?: string[] | null;
   access_modules?: string[];
+  is_budget_officer?: boolean;
   last_login_at: string | null;
 };
 
@@ -858,6 +910,7 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     modules: user.access_modules ?? [],
     office: user.office?.name ?? "Unassigned",
     position: user.position ?? "",
+    isBudgetOfficer: Boolean(user.is_budget_officer),
   };
 }
 

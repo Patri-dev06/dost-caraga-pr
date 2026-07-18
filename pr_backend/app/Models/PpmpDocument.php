@@ -32,6 +32,15 @@ class PpmpDocument extends Model
         'owner_id',
         'owner_name',
         'imported_at',
+        'budget_officer_id',
+        'budget_officer_comment',
+        'return_reason',
+        'submitted_at',
+        'reviewed_at',
+        'approved_by_id',
+        'approved_by_name',
+        'approved_at',
+        'approval_signature',
     ];
 
     protected function casts(): array
@@ -45,6 +54,9 @@ class PpmpDocument extends Model
             'prepared_submitted_by_date' => 'date',
             'budget_certified_date' => 'date',
             'imported_at' => 'datetime',
+            'submitted_at' => 'datetime',
+            'reviewed_at' => 'datetime',
+            'approved_at' => 'datetime',
         ];
     }
 
@@ -66,6 +78,16 @@ class PpmpDocument extends Model
     public function owner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'owner_id');
+    }
+
+    public function budgetOfficer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'budget_officer_id');
+    }
+
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by_id');
     }
 
     public function items(): HasMany

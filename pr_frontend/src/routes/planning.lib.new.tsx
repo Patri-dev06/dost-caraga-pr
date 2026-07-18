@@ -366,6 +366,16 @@ function LibForm() {
   }
 
   function approveCurrentLib() {
+    // A LIB can only be approved when every reprogramming round still totals the
+    // Approved LIB figure — reprogramming reallocates line items, it must never
+    // change the grand total. Block approval (and report each offending round).
+    if (unbalancedReprogrammings.length > 0) {
+      const detail = unbalancedReprogrammings
+        .map((r) => `${reprogLabel(r.roundIndex)} is ${reprogrammingDifferenceText(r.difference).toLowerCase()}`)
+        .join("; ");
+      toast.error(`Cannot approve — every reprogramming must equal the Approved LIB total of ₱${fmtAmount(totals.approved)}. ${detail}.`);
+      return;
+    }
     setAction("Approved");
     try {
       const approved = saveLib({ ...doc, status: "Approved" });
@@ -408,7 +418,7 @@ function LibForm() {
       if (!cur) return false;
       const baseline = reviseRound === 0 ? r.approved : r.reprogrammings[reviseRound - 1]?.amount ?? "";
       const changed = parseAmount(cur.amount) !== parseAmount(baseline);
-      return changed && !cur.justification.trim();
+      return changed && !(cur.justification ?? "").trim();
     });
     if (missing.length > 0) {
       // Flag the offending rows and scroll to the first one so it's obvious.
@@ -522,7 +532,12 @@ function LibForm() {
                 size="sm"
                 className="gap-1.5 border-emerald-500/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
                 onClick={approveCurrentLib}
-                disabled={action !== null}
+                disabled={action !== null || unbalancedReprogrammings.length > 0}
+                title={
+                  unbalancedReprogrammings.length > 0
+                    ? `Reprogramming must equal the Approved LIB total of ₱${fmtAmount(totals.approved)} before this can be approved.`
+                    : undefined
+                }
               >
                 {action === "Approved" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                 Approve

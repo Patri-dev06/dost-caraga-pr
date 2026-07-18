@@ -1,14 +1,42 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, Copy, Eye, GripVertical, Loader2, Pencil, Plus, Printer, Save, Trash2, AlertTriangle } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, Copy, Eye, GripVertical, Loader2, Lock, Pencil, Plus, Printer, Save, Trash2, AlertTriangle, MessageSquare, ShieldCheck, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { apiGetSignatories, type Signatory as SignatoryOption } from "@/lib/api";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { apiGetSignatories, apiGetBudgetOfficer, type Signatory as SignatoryOption, type BudgetOfficer } from "@/lib/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { currentLibBudgetTotal, getLib, listLibs, fmtAmount, parseAmount, type LibDoc } from "@/lib/lib-store";
-import { getPpmp, savePpmp, totalPpmpBudgetForLib, type PpmpItemRow, type PpmpStatus } from "@/lib/ppmp-store";
+import { getPpmp, savePpmp, totalPpmpBudgetForLib, returnPpmpForRevision, approvePpmpAsBudgetOfficer, type PpmpItemRow, type PpmpStatus } from "@/lib/ppmp-store";
+import { useCurrentUser } from "@/lib/current-user";
+
+// The date the preparer acted, as "YYYY-MM-DD" (local), matching how saved dates
+// come back from the backend.
+function todayFormatted(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// Render a stored date as "YYYY-MM-DD" (matching the "Prepared & Submitted by"
+// date). A date-only value is kept as-is; a full ISO timestamp is reduced to its
+// local calendar day so there is no UTC-midnight off-by-one.
+function formatSignatoryDate(value: string): string {
+  if (!value) return "";
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (dateOnly) return `${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]}`;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 export const Route = createFileRoute("/planning/ppmp/new")({
   validateSearch: (search: Record<string, unknown>): { lib?: string; edit?: string } => ({
@@ -194,6 +222,44 @@ function firstTextLine(value: string): string {
   return plain.split(/\n|\r/)[0]?.trim() || plain;
 }
 
+// The machine-readable quantity declared in Column 3 (e.g. "Quantity: 5 pax").
+// Mirrors the backend parser (ProcurementController::quantityFromPpmpRow) so the
+// number highlighted here is exactly what connected PRs will draw down against.
+function parseQuantityFromText(quantitySize: string): number | null {
+  const plain = htmlToPlainText(quantitySize);
+  const match = plain.match(/(?:quantity|qty)\s*:\s*([\d,]+(?:\.\d+)?)/i);
+  if (!match) return null;
+  const n = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// Units offered by Column 3's structured quantity line. The chosen unit travels
+// inside the text ("Quantity: 5 pax"), which is exactly what connected PRs parse
+// to constrain their own Unit and Quantity columns.
+const QUANTITY_UNITS = [
+  "pax", "pcs", "pieces", "unit", "lot", "set", "ream", "pack", "box",
+  "pad", "bottle", "gallon", "roll", "kit", "book", "month",
+];
+
+// Split Column 3 into the structured "Quantity: N unit" first line and the
+// description below it. This form composes plain "Quantity: N unit<br>…", but
+// hand-typed first lines wrapped in <div>/newlines are recognized too. When the
+// first line is not a quantity declaration, everything is description.
+function splitQuantitySize(value: string): { qty: string; unit: string; desc: string } {
+  const m = value.match(
+    /^\s*(?:<div[^>]*>)?\s*(?:quantity|qty)\s*:\s*([\d,]+(?:\.\d+)?)\s*([A-Za-z]+)?\s*(?:<\/div>\s*|<br\s*\/?>\s*|\n+|(?=<div)|$)/i,
+  );
+  if (!m) return { qty: "", unit: "", desc: value };
+  return { qty: m[1], unit: (m[2] ?? "").toLowerCase(), desc: value.slice(m[0].length) };
+}
+
+function composeQuantitySize(qty: string, unit: string, desc: string): string {
+  const cleanQty = qty.replace(/[^0-9.,]/g, "").trim();
+  if (!cleanQty) return desc;
+  const line = `Quantity: ${cleanQty}${unit ? ` ${unit}` : ""}`;
+  return desc.trim() ? `${line}<br>${desc}` : line;
+}
+
 function RichTextField({
   value,
   onChange,
@@ -243,6 +309,10 @@ function RichTextField({
       >
         B
       </button>
+      {/* Uncontrolled while focused: the content is set imperatively by the effect
+          above (only when NOT focused). Do NOT add `dangerouslySetInnerHTML` here —
+          re-applying it on every keystroke resets the caret to the start and
+          garbles input. */}
       <div
         ref={ref}
         contentEditable
@@ -255,8 +325,10 @@ function RichTextField({
             applyBold();
           }
         }}
-        className={cn("min-h-[1.2em] w-full rounded-sm bg-transparent px-0.5 pr-4 leading-snug outline-none hover:bg-amber-50 focus:bg-amber-100", italic && "italic")}
-        dangerouslySetInnerHTML={{ __html: valueToHtml(value) }}
+        className={cn(
+          "min-h-[1.2em] w-full whitespace-pre-wrap break-words rounded-sm bg-transparent px-0.5 pr-4 leading-snug outline-none hover:bg-amber-50 focus:bg-amber-100",
+          italic && "italic",
+        )}
       />
     </div>
   );
@@ -368,66 +440,132 @@ function isProcurementRow(row: PpmpRow): boolean {
   return isDataRow(row);
 }
 
+// Whether the user has actually filled in an item's procurement details
+// (columns 2–8, or a budget), versus an untouched blank template row. Used to
+// decide when to auto-fill the Source of Funds with the LIB project name.
+function isItemFilled(row: PpmpRow): boolean {
+  return (
+    htmlToPlainText(row.quantitySize).trim() !== "" ||
+    row.procStart.trim() !== "" ||
+    row.procEnd.trim() !== "" ||
+    row.deliveryPeriod.trim() !== "" ||
+    parseAmount(row.estimatedBudget) > 0
+  );
+}
+
+// A "title" section is a category numbered with a Roman numeral (e.g. "I. …",
+// "II. …"). Unlike a plain category it carries no SUBTOTAL of its own.
+function isTitleCategory(row: PpmpRow): boolean {
+  return row.isCategory && /^\s*[IVXLCDM]+\./i.test(row.categoryLabel);
+}
+
 function getLibExpenseTemplateRows(lib: LibDoc): PpmpRow[] {
   const rows: PpmpRow[] = [];
-  const addCategoryWithBlankLines = (label: string) => {
-    rows.push(newCategoryRow(label));
-    for (let i = 0; i < BLANK_LINES_PER_CATEGORY; i++) {
-      rows.push(newRow(label));
+  const libRows = lib.rows;
+  const addBlankLines = (categoryLabel: string, subcategoryLabel = "") => {
+    for (let i = 0; i < BLANK_LINES_PER_CATEGORY; i++) rows.push(newRow(categoryLabel, subcategoryLabel));
+  };
+  // Does a more deeply-indented LIB line follow this one before the next line at
+  // the same or shallower level? Such children become subcategories, so the
+  // parent itself gets no blank item rows (its items live under the children).
+  const hasDeeperChild = (start: number, indent: number): boolean => {
+    for (let j = start; j < libRows.length; j++) {
+      if (!libRows[j].label.trim()) continue;
+      return libRows[j].indent > indent;
     }
+    return false;
   };
 
-  for (const row of lib.rows) {
+  // Mirror the LIB hierarchy: indent 0/1 become categories; indent 2 becomes a
+  // subcategory under the current category (e.g. "Office Supplies" under
+  // "Supplies and Materials Expenses"), matching the real DOST PPMP structure.
+  let currentCategoryLabel = "";
+  let currentCategoryExcluded = false;
+
+  for (let i = 0; i < libRows.length; i++) {
+    const row = libRows[i];
     const label = row.label.trim();
     if (!label) continue;
 
-    if (row.indent === 0) {
-      addCategoryWithBlankLines(label);
+    if (row.indent <= 1) {
+      currentCategoryLabel = label;
+      currentCategoryExcluded = row.indent === 1 && PPMP_EXCLUDED_LIB_LABELS.has(label);
+      if (currentCategoryExcluded) continue;
+      rows.push(newCategoryRow(label));
+      // Seed blank items only when this category has no subcategory children.
+      if (!hasDeeperChild(i + 1, row.indent)) addBlankLines(label);
       continue;
     }
 
-    if (row.indent === 1) {
-      if (PPMP_EXCLUDED_LIB_LABELS.has(label)) {
-        continue;
-      }
-      addCategoryWithBlankLines(label);
-      continue;
-    }
-
-    // LIB child lines become user-managed PPMP rows, so the template only
-    // seeds main categories plus blank editable line items.
+    // indent >= 2 → a subcategory group under the current category.
+    if (currentCategoryExcluded || !currentCategoryLabel) continue;
+    rows.push(newSubcategoryRow(currentCategoryLabel, label));
+    addBlankLines(currentCategoryLabel, label);
   }
   return rows;
 }
 
+// Coerce a persisted form row back into the expected shape. The database stores
+// empty JSON fields as null (and older saves may miss newer fields entirely), so
+// any "string" here can come back null/undefined — callers then hit
+// `.trim()`/`.match()` on null and crash. Normalise once on load.
+function sanitizeFormRow(raw: Record<string, unknown>): PpmpRow {
+  const s = (v: unknown, fallback = "") => (v == null ? fallback : String(v));
+  return {
+    id: s(raw.id) || crypto.randomUUID(),
+    isCategory: Boolean(raw.isCategory),
+    isSubcategory: Boolean(raw.isSubcategory),
+    categoryLabel: s(raw.categoryLabel),
+    subcategoryLabel: s(raw.subcategoryLabel),
+    generalDescription: s(raw.generalDescription),
+    projectType: s(raw.projectType, "Goods"),
+    quantitySize: s(raw.quantitySize),
+    quantity: s(raw.quantity, "1"),
+    recommendedMode: s(raw.recommendedMode, "Small Value Procurement"),
+    preProcConference: s(raw.preProcConference, "No"),
+    procStart: s(raw.procStart),
+    procEnd: s(raw.procEnd),
+    deliveryPeriod: s(raw.deliveryPeriod),
+    sourceOfFunds: s(raw.sourceOfFunds),
+    estimatedBudget: s(raw.estimatedBudget),
+    supportingDocs: s(raw.supportingDocs),
+    remarks: s(raw.remarks),
+  };
+}
+
 function formRowsFromSavedItems(items: PpmpItemRow[]): PpmpRow[] {
   const rows: PpmpRow[] = [];
-  const categoryIds = new Set<string>();
+  const categoryRowByLabel = new Map<string, PpmpRow>();
   const subcategoryKeys = new Set<string>();
 
   for (const item of items) {
-    const [rawCategory, rawSubcategory] = item.expense_category.split(" - ");
+    const [rawCategory, rawSubcategory] = String(item.expense_category ?? "").split(" - ");
     const category = rawCategory?.trim() || "UNCATEGORIZED";
     const subcategory = (item.expense_subcategory || rawSubcategory || "").trim();
 
-    if (!categoryIds.has(category)) {
-      rows.push(newCategoryRow(category));
-      categoryIds.add(category);
+    let categoryRow = categoryRowByLabel.get(category);
+    if (!categoryRow) {
+      categoryRow = newCategoryRow(category);
+      categoryRowByLabel.set(category, categoryRow);
+      rows.push(categoryRow);
     }
 
     if (subcategory) {
       const key = `${category}::${subcategory}`;
       if (!subcategoryKeys.has(key)) {
         const subRow = newSubcategoryRow(category, subcategory);
-        subRow.generalDescription = item.general_description;
+        subRow.generalDescription = item.general_description || "";
         rows.push(subRow);
         subcategoryKeys.add(key);
       }
+    } else if (!categoryRow.generalDescription && item.general_description) {
+      // Category-level shared description — spans the category's items.
+      categoryRow.generalDescription = item.general_description;
     }
 
     const row = newRow(category, subcategory);
     row.id = item.id || crypto.randomUUID();
-    row.generalDescription = subcategory ? "" : item.general_description;
+    row.generalDescription = subcategory ? "" : item.general_description || "";
     row.projectType = item.project_type || "Goods";
     row.quantitySize = item.quantity_size || "";
     row.quantity = String(item.quantity || 1);
@@ -483,7 +621,7 @@ function normalizeBudgetLabel(label: string): string {
 }
 
 function latestLibRowBudget(row: LibDoc["rows"][number]): number {
-  const latestReprogramming = [...(row.reprogrammings ?? [])].reverse().find((rp) => rp.amount.trim() !== "");
+  const latestReprogramming = [...(row.reprogrammings ?? [])].reverse().find((rp) => (rp.amount ?? "").trim() !== "");
   return parseAmount(latestReprogramming?.amount ?? row.approved);
 }
 
@@ -585,34 +723,37 @@ function subcategoryHasDataRows(rows: PpmpRow[], subcategoryId: string): boolean
   return rows.some((row, i) => i > subIdx && (nextGroup === -1 || i < nextGroup) && isDataRow(row));
 }
 
-function getActiveSubcategory(rows: PpmpRow[], index: number): PpmpRow | undefined {
-  let active: PpmpRow | undefined;
+// The nearest enclosing group for a data row — a subcategory if one is open,
+// otherwise its category. The group's generalDescription is shared across all of
+// the group's items as one spanning Column-1 cell, like the real DOST form
+// (e.g. "Supply and delivery of office supplies…" spanning every supply item).
+function getActiveGroup(rows: PpmpRow[], index: number): PpmpRow | undefined {
   for (let i = index; i >= 0; i--) {
     const row = rows[i];
-    if (row.isCategory) return undefined;
-    if (row.isSubcategory) {
-      active = row;
-      break;
-    }
+    if (row.isSubcategory || row.isCategory) return row;
   }
-  return active;
+  return undefined;
 }
 
-function countSubcategoryDataRows(rows: PpmpRow[], subcategoryId: string): number {
-  const subIdx = rows.findIndex((row) => row.id === subcategoryId);
-  if (subIdx < 0) return 0;
+// How many data rows sit under a group (category or subcategory), up to the next
+// group boundary — the rowSpan for the group's shared Column-1 description.
+function countGroupDataRows(rows: PpmpRow[], groupId: string): number {
+  const groupIdx = rows.findIndex((row) => row.id === groupId);
+  if (groupIdx < 0) return 0;
   let count = 0;
-  for (let i = subIdx + 1; i < rows.length; i++) {
+  for (let i = groupIdx + 1; i < rows.length; i++) {
     if (rows[i].isCategory || rows[i].isSubcategory) break;
     if (isDataRow(rows[i])) count += 1;
   }
   return count;
 }
 
-function isFirstDataRowInSubcategory(rows: PpmpRow[], index: number, subcategoryId: string): boolean {
-  const subIdx = rows.findIndex((row) => row.id === subcategoryId);
-  if (subIdx < 0 || index <= subIdx) return false;
-  for (let i = subIdx + 1; i < index; i++) {
+// Whether this row is the first data row of its group — the one that carries the
+// spanning Column-1 cell (later rows in the group omit it, covered by the span).
+function isFirstDataRowInGroup(rows: PpmpRow[], index: number, groupId: string): boolean {
+  const groupIdx = rows.findIndex((row) => row.id === groupId);
+  if (groupIdx < 0 || index <= groupIdx) return false;
+  for (let i = groupIdx + 1; i < index; i++) {
     if (rows[i].isCategory || rows[i].isSubcategory) break;
     if (isDataRow(rows[i])) return false;
   }
@@ -660,7 +801,7 @@ function endsCategoryBlock(rows: PpmpRow[], index: number): string | undefined {
   const { categoryId } = currentGroupIds(rows, index);
   if (!categoryId) return undefined;
   const category = rows.find((row) => row.id === categoryId);
-  if (!category || /^\s*[IVXLCDM]+\./i.test(category.categoryLabel)) return undefined;
+  if (!category || isTitleCategory(category)) return undefined;
   const next = rows[index + 1];
   return !next || next.isCategory ? categoryId : undefined;
 }
@@ -684,6 +825,10 @@ function CreatePpmpPage() {
   const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null);
   const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null);
   const loaded = useRef(false);
+  // Rows flagged by a failed save (no description/details): highlighted red and
+  // scrolled into view; a row's flag clears as soon as it is edited.
+  const [missingRowIds, setMissingRowIds] = useState<Set<string>>(new Set());
+  const dataRowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   // Approved accounts (status = Active), offered as signatory choices.
   const [signatories, setSignatories] = useState<SignatoryOption[]>([]);
@@ -692,6 +837,24 @@ function CreatePpmpPage() {
       .then(setSignatories)
       .catch(() => setSignatories([]));
   }, []);
+
+  // Designated Budget Officer — certifies fund availability and reviews submissions.
+  const [budgetOfficer, setBudgetOfficer] = useState<BudgetOfficer | null>(null);
+  useEffect(() => {
+    apiGetBudgetOfficer()
+      .then(setBudgetOfficer)
+      .catch(() => setBudgetOfficer(null));
+  }, []);
+
+  // Budget Officer review state: per-item and overall comments, plus the return reason.
+  const [ownerId, setOwnerId] = useState<number | undefined>(undefined);
+  const [returnReasonMeta, setReturnReasonMeta] = useState("");
+  const [approvalMeta, setApprovalMeta] = useState<{ name: string; at?: string; signature: string }>({ name: "", signature: "" });
+  const [itemComments, setItemComments] = useState<Record<string, string>>({});
+  const [reviewComment, setReviewComment] = useState("");
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false);
+  const [returnReasonDraft, setReturnReasonDraft] = useState("");
+  const [reviewSaving, setReviewSaving] = useState<"return" | "approve" | null>(null);
 
   const [doc, setDoc] = useState<PpmpDoc>({
     ppmpNo: "3",
@@ -734,20 +897,32 @@ function CreatePpmpPage() {
       setWorkflowStatus(existingPpmp.status);
       setRevisionCount(existingPpmp.revisionCount);
       if (existingPpmp.status === "Approved") setMode("preview");
+      setOwnerId(existingPpmp.ownerId);
+      setReturnReasonMeta(existingPpmp.returnReason ?? "");
+      setReviewComment(existingPpmp.reviewComment ?? "");
+      setApprovalMeta({
+        name: existingPpmp.approvedByName ?? "",
+        at: existingPpmp.approvedAt,
+        signature: existingPpmp.approvalSignature ?? "",
+      });
+      setItemComments(
+        Object.fromEntries((existingPpmp.rows ?? []).filter((r) => (r.reviewer_comment ?? "").trim()).map((r) => [r.id, r.reviewer_comment ?? ""])),
+      );
+      // DB JSON can hold null where the form expects strings — guard every field.
       setDoc({
-        ppmpNo: existingPpmp.ppmpNo,
+        ppmpNo: existingPpmp.ppmpNo ?? "",
         fiscalYear: String(existingPpmp.fiscalYear || lib.fiscalYear || "2026"),
-        endUserUnit: existingPpmp.endUserUnit,
-        documentType: existingPpmp.documentType,
-        preparedByName: existingPpmp.preparedByName,
-        preparedByPosition: existingPpmp.preparedByPosition,
-        preparedByDate: existingPpmp.preparedByDate,
-        budgetOfficerName: existingPpmp.budgetOfficerName,
-        budgetOfficerPosition: existingPpmp.budgetOfficerPosition,
-        budgetCertifiedDate: existingPpmp.budgetCertifiedDate,
+        endUserUnit: existingPpmp.endUserUnit ?? "",
+        documentType: existingPpmp.documentType ?? "Final",
+        preparedByName: existingPpmp.preparedByName ?? "",
+        preparedByPosition: existingPpmp.preparedByPosition ?? "",
+        preparedByDate: existingPpmp.preparedByDate ?? "",
+        budgetOfficerName: existingPpmp.budgetOfficerName ?? "",
+        budgetOfficerPosition: existingPpmp.budgetOfficerPosition ?? "",
+        budgetCertifiedDate: existingPpmp.budgetCertifiedDate ?? "",
         rows: Array.isArray(existingPpmp.formRows) && existingPpmp.formRows.length > 0
-          ? (existingPpmp.formRows as unknown as PpmpRow[])
-          : formRowsFromSavedItems(existingPpmp.rows),
+          ? existingPpmp.formRows.map(sanitizeFormRow)
+          : formRowsFromSavedItems(existingPpmp.rows ?? []),
       });
       return;
     }
@@ -756,12 +931,57 @@ function CreatePpmpPage() {
     setDoc((d) => ({ ...d, fiscalYear: lib.fiscalYear || "2026", rows: initialRows }));
   }, [editId, libId, navigate]);
 
+  // "Prepared & Submitted by" is always the signed-in user. On a brand-new PPMP,
+  // auto-fill their name and designation, and stamp today's date — the day they
+  // prepared it. Never overwrite an existing/loaded document.
+  const { user: currentUser } = useCurrentUser();
+  useEffect(() => {
+    if (editId || !currentUser) return;
+    setDoc((d) =>
+      d.preparedByName || d.preparedByPosition || d.preparedByDate
+        ? d
+        : { ...d, preparedByName: currentUser.name, preparedByPosition: currentUser.position, preparedByDate: todayFormatted() },
+    );
+  }, [currentUser, editId]);
+
+  // The Budget Officer certifies fund availability, so "Certified Funds Available"
+  // always reflects the designated officer (the backend enforces this on save too).
+  useEffect(() => {
+    if (!budgetOfficer) return;
+    setDoc((d) =>
+      d.budgetOfficerName === budgetOfficer.name && d.budgetOfficerPosition === budgetOfficer.position
+        ? d
+        : { ...d, budgetOfficerName: budgetOfficer.name, budgetOfficerPosition: budgetOfficer.position },
+    );
+  }, [budgetOfficer]);
+
   const approvedLocked = workflowStatus === "Approved";
-  const editing = mode === "edit" && !approvedLocked;
+
+  // Review roles. The designated Budget Officer reviews any PPMP submitted to them;
+  // the owner sees the officer's comments once it comes back Returned or Approved.
+  const viewerIsBudgetOfficer = Boolean(budgetOfficer?.isCurrentUser);
+  const isOwner = ownerId == null || ownerId === currentUser?.id;
+  const isReviewMode = viewerIsBudgetOfficer && !isOwner && workflowStatus === "Submitted to Budget Officer";
+  const showBudgetOfficerComments = workflowStatus === "Returned" || workflowStatus === "Approved" || isReviewMode;
+
+  // The Budget Officer reviews the read-only document (and comments in the panel),
+  // so keep them out of edit mode on someone else's PPMP.
+  const editing = mode === "edit" && !approvedLocked && !isReviewMode;
+  useEffect(() => {
+    if (isReviewMode) setMode("preview");
+  }, [isReviewMode]);
 
   const set = <K extends keyof PpmpDoc>(key: K, value: PpmpDoc[K]) => setDoc((d) => ({ ...d, [key]: value }));
-  const setRow = (id: string, patch: Partial<PpmpRow>) =>
+  const setRow = (id: string, patch: Partial<PpmpRow>) => {
     setDoc((d) => ({ ...d, rows: d.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+    // Editing a flagged row addresses the "empty row" complaint — unflag it.
+    setMissingRowIds((s) => {
+      if (!s.has(id)) return s;
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  };
   const removeRow = (id: string) => setDoc((d) => ({ ...d, rows: d.rows.filter((r) => r.id !== id) }));
   const duplicateRow = (id: string) =>
     setDoc((d) => {
@@ -876,6 +1096,8 @@ function CreatePpmpPage() {
   }
 
   const libBudgetTotal = useMemo(() => (selectedLib ? currentLibBudgetTotal(selectedLib) : 0), [selectedLib]);
+  // Source of Funds auto-fills with the LIB project name for any filled-in item.
+  const sourceOfFundsProjectName = selectedLib?.projectTitle.trim() ?? "";
   const deliveryMonthYearOptions = useMemo(() => monthYearOptions(doc.fiscalYear), [doc.fiscalYear]);
   const ppmpTotal = useMemo(
     () => doc.rows.filter(isProcurementRow).reduce((sum, r) => sum + parseAmount(r.estimatedBudget), 0),
@@ -908,6 +1130,48 @@ function CreatePpmpPage() {
     toast.success("Revision started. PPMP No. has been incremented.");
   }
 
+  // The reviewable line items (labelled) the Budget Officer can comment on.
+  const reviewItems = useMemo(
+    () =>
+      doc.rows.filter(isProcurementRow).map((r) => ({
+        id: r.id,
+        label: firstTextLine(splitQuantitySize(r.quantitySize).desc) || r.generalDescription || "Untitled item",
+        category: r.categoryLabel || r.subcategoryLabel || "",
+        budget: parseAmount(r.estimatedBudget),
+      })),
+    [doc.rows],
+  );
+
+  async function submitReview(action: "return" | "approve") {
+    if (!editId) return;
+    if (action === "return" && !returnReasonDraft.trim()) {
+      toast.error("Please provide a reason for returning this PPMP.");
+      return;
+    }
+
+    const cleanedComments = Object.fromEntries(
+      Object.entries(itemComments).map(([id, text]) => [id, text.trim()]).filter(([, text]) => text),
+    );
+
+    setReviewSaving(action);
+    try {
+      const payload = { reviewComment: reviewComment.trim(), itemComments: cleanedComments };
+      if (action === "approve") {
+        await approvePpmpAsBudgetOfficer(editId, payload);
+        toast.success("PPMP approved. The requester has been notified and can now create a Purchase Request.");
+      } else {
+        await returnPpmpForRevision(editId, { ...payload, returnReason: returnReasonDraft.trim() });
+        toast.success("PPMP returned. The requester has been notified with your comments.");
+      }
+      setReturnDialogOpen(false);
+      navigate({ to: "/planning/ppmp" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to complete the review action.");
+    } finally {
+      setReviewSaving(null);
+    }
+  }
+
   function persistPpmp(status: PpmpStatus) {
     if (!selectedLib) return;
 
@@ -917,11 +1181,15 @@ function CreatePpmpPage() {
       return;
     }
 
-    const emptyItems = dataRows.filter((r) => !r.generalDescription.trim() && !htmlToPlainText(r.quantitySize));
+    const emptyItems = dataRows.filter((r) => !(r.generalDescription ?? "").trim() && !htmlToPlainText(r.quantitySize ?? ""));
     if (emptyItems.length > 0) {
-      toast.error(`${emptyItems.length} row(s) have no description or item details.`);
+      toast.error(`${emptyItems.length} row(s) have no description or item details — highlighted below. Fill them in or remove them.`);
+      // Show exactly which rows are the problem and bring the first into view.
+      setMissingRowIds(new Set(emptyItems.map((r) => r.id)));
+      requestAnimationFrame(() => dataRowRefs.current[emptyItems[0].id]?.scrollIntoView({ behavior: "smooth", block: "center" }));
       return;
     }
+    setMissingRowIds(new Set());
 
     if (overBudget) {
       toast.error(`Total PPMP usage exceeds the approved LIB (₱${fmtAmount(libBudgetTotal)}).`);
@@ -938,11 +1206,13 @@ function CreatePpmpPage() {
     try {
       const existingPpmp = editId ? getPpmp(editId) : undefined;
       let activeCategory = "";
+      let activeCategoryDescription = "";
       let activeSubcategory = "";
       let activeSubcategoryDescription = "";
       const ppmpRows: PpmpItemRow[] = doc.rows.flatMap((r) => {
         if (r.isCategory) {
           activeCategory = r.categoryLabel;
+          activeCategoryDescription = r.generalDescription;
           activeSubcategory = "";
           activeSubcategoryDescription = "";
           return [];
@@ -954,22 +1224,28 @@ function CreatePpmpPage() {
         }
         const category = activeCategory || r.categoryLabel;
         const subcategory = activeSubcategory || r.subcategoryLabel;
-        const generalDescription = activeSubcategoryDescription || r.generalDescription;
+        // A group's shared description wins (subcategory, then category); fall
+        // back to the row's own text for older per-item data.
+        const generalDescription = activeSubcategoryDescription || activeCategoryDescription || r.generalDescription;
         return [{
           id: r.id,
           expense_category: subcategory ? `${category} - ${subcategory}` : category,
           expense_subcategory: subcategory,
           general_description: generalDescription,
-          item_name: firstTextLine(r.quantitySize) || generalDescription,
+          // The item's name is the first description line — never the
+          // "Quantity: N unit" declaration that may sit above it.
+          item_name: firstTextLine(splitQuantitySize(r.quantitySize).desc) || generalDescription,
           project_type: r.projectType,
           quantity_size: r.quantitySize,
-          quantity: parseAmount(r.quantity) || 1,
+          // Column 3's declared quantity wins (what PRs deduct from); fall back to
+          // the stored per-row quantity for imported/legacy data, then 1.
+          quantity: parseQuantityFromText(r.quantitySize) ?? (parseAmount(r.quantity) || 1),
           recommended_mode: r.recommendedMode,
           pre_procurement_conference: r.preProcConference,
           procurement_start: r.procStart,
           procurement_end: r.procEnd,
           delivery_period: r.deliveryPeriod,
-          source_of_funds: "",
+          source_of_funds: r.sourceOfFunds || (isItemFilled(r) ? sourceOfFundsProjectName : ""),
           estimated_budget: parseAmount(r.estimatedBudget),
           supporting_documents: r.supportingDocs,
           remarks: r.remarks,
@@ -1044,31 +1320,36 @@ function CreatePpmpPage() {
             {editId ? `${workflowStatus}${revisionCount > 0 ? ` · Rev ${revisionCount}` : ""}` : "New PPMP"}
           </span>
 
-          <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                if (approvedLocked) startRevision();
-                else setMode("edit");
-              }}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                mode === "edit" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Pencil className="h-3.5 w-3.5" /> {approvedLocked ? "Revise" : "Edit"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("preview")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                mode === "preview" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Eye className="h-3.5 w-3.5" /> Preview
-            </button>
-          </div>
+          {approvedLocked ? (
+            // Once the Budget Officer certifies funds, the PPMP is final — no edits or revisions.
+            <span className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-success/40 bg-success/10 px-3 py-1.5 text-sm font-medium text-success">
+              <Lock className="h-3.5 w-3.5" /> Approved · Locked
+            </span>
+          ) : (
+            <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
+              <button
+                type="button"
+                onClick={() => setMode("edit")}
+                disabled={isReviewMode}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                  mode === "edit" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("preview")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  mode === "preview" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Eye className="h-3.5 w-3.5" /> Preview
+              </button>
+            </div>
+          )}
 
           <div className="ml-auto flex items-center gap-2">
             {mode === "preview" && (
@@ -1076,26 +1357,39 @@ function CreatePpmpPage() {
                 <Printer className="h-4 w-4" /> Print
               </Button>
             )}
-            {workflowStatus === "Submitted to Budget Officer" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 border-emerald-500/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
-                onClick={() => persistPpmp("Approved")}
-                disabled={savingAction !== null || overBudget || hasBudgetOverages}
-              >
-                {savingAction === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Approve
-              </Button>
+            {isReviewMode ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 border-amber-500/50 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
+                  onClick={() => { setReturnReasonDraft(returnReasonDraft || returnReasonMeta); setReturnDialogOpen(true); }}
+                  disabled={reviewSaving !== null}
+                >
+                  <Undo2 className="h-4 w-4" /> Return for Revision
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-600/90"
+                  onClick={() => submitReview("approve")}
+                  disabled={reviewSaving !== null}
+                >
+                  {reviewSaving === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                  Approve &amp; Certify
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => persistPpmp("Draft")} disabled={approvedLocked || savingAction !== null || overBudget || hasBudgetOverages}>
+                  {savingAction === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Save Draft
+                </Button>
+                <Button size="sm" className="gap-1.5" onClick={() => persistPpmp("Submitted to Budget Officer")} disabled={approvedLocked || savingAction !== null || overBudget || hasBudgetOverages}>
+                  {savingAction === "submit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {workflowStatus === "Returned" ? "Resubmit to Budget Officer" : "Submit to Budget Officer"}
+                </Button>
+              </>
             )}
-            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => persistPpmp("Draft")} disabled={approvedLocked || savingAction !== null || overBudget || hasBudgetOverages}>
-              {savingAction === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save Draft
-            </Button>
-            <Button size="sm" className="gap-1.5" onClick={() => persistPpmp("Submitted to Budget Officer")} disabled={approvedLocked || savingAction !== null || overBudget || hasBudgetOverages}>
-              {savingAction === "submit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Submit to Budget Officer
-            </Button>
           </div>
         </div>
       </div>
@@ -1134,6 +1428,90 @@ function CreatePpmpPage() {
           )}
         </div>
       </div>
+
+      {/* Budget Officer review / feedback panel */}
+      {showBudgetOfficerComments && (
+        <div className="no-print border-b border-border bg-secondary/30">
+          <div className="mx-auto w-full max-w-[1400px] px-3 py-4 sm:px-6">
+            {isReviewMode ? (
+              <div className="flex items-start gap-2">
+                <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <div>
+                  <p className="text-sm font-semibold text-navy">Budget Officer Review</p>
+                  <p className="text-xs text-muted-foreground">
+                    Certify fund availability to approve, or add comments per item and return it for revision.
+                  </p>
+                </div>
+              </div>
+            ) : workflowStatus === "Approved" ? (
+              <div className="flex items-start gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-3">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+                    Funds certified{approvalMeta.name ? ` by ${approvalMeta.name}` : ""}
+                  </p>
+                  {approvalMeta.signature && <p className="mt-0.5 text-xs text-muted-foreground">{approvalMeta.signature}</p>}
+                  {reviewComment && <p className="mt-1 text-xs text-foreground">“{reviewComment}”</p>}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+                <Undo2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">Returned for revision by the Budget Officer</p>
+                  {returnReasonMeta && <p className="mt-0.5 text-xs text-foreground">Reason: {returnReasonMeta}</p>}
+                  {reviewComment && <p className="mt-1 text-xs text-foreground">Note: {reviewComment}</p>}
+                  <p className="mt-1 text-xs text-muted-foreground">Address the comments below, then resubmit.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Overall review note (editable by the Budget Officer during review). */}
+            {isReviewMode && (
+              <div className="mt-3">
+                <label className="label-eyebrow">Overall Comment (optional)</label>
+                <Textarea
+                  rows={2}
+                  value={reviewComment}
+                  onChange={(e) => setReviewComment(e.target.value)}
+                  placeholder="Summary note for the requester…"
+                  className="mt-1 border-border bg-background"
+                />
+              </div>
+            )}
+
+            {/* Per-item comments. */}
+            {(isReviewMode || Object.keys(itemComments).length > 0) && (
+              <div className="mt-3 space-y-2">
+                <p className="label-eyebrow">Per-item Comments</p>
+                {reviewItems.map((item) => {
+                  const value = itemComments[item.id] ?? "";
+                  if (!isReviewMode && !value.trim()) return null;
+                  return (
+                    <div key={item.id} className="rounded-md border border-border bg-background p-2.5">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <p className="text-xs font-semibold text-navy">{item.label}</p>
+                        <p className="text-[10px] text-muted-foreground">{item.category} · ₱{fmtAmount(item.budget)}</p>
+                      </div>
+                      {isReviewMode ? (
+                        <Textarea
+                          rows={2}
+                          value={value}
+                          onChange={(e) => setItemComments((c) => ({ ...c, [item.id]: e.target.value }))}
+                          placeholder="Comment on this item…"
+                          className="mt-1.5 border-border bg-background text-xs"
+                        />
+                      ) : (
+                        <p className="mt-1 text-xs text-foreground">{value}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Document */}
       <div className="w-full overflow-x-auto px-3 py-6 sm:px-6 print:overflow-visible print:p-0">
@@ -1376,20 +1754,36 @@ function CreatePpmpPage() {
                     );
                   }
 
-                  const activeSubcategory = getActiveSubcategory(doc.rows, idx);
-                  const showSharedDescription = Boolean(activeSubcategory && isFirstDataRowInSubcategory(doc.rows, idx, activeSubcategory.id));
-                  const sharedDescriptionRowSpan = activeSubcategory ? countSubcategoryDataRows(doc.rows, activeSubcategory.id) : 1;
+                  const activeGroup = getActiveGroup(doc.rows, idx);
+                  const showSharedDescription = Boolean(activeGroup && isFirstDataRowInGroup(doc.rows, idx, activeGroup.id));
+                  const sharedDescriptionRowSpan = activeGroup ? countGroupDataRows(doc.rows, activeGroup.id) : 1;
+                  // Quantity detected in Column 3 — the number PRs will deduct from.
+                  const detectedQty = parseQuantityFromText(r.quantitySize);
+                  // Structured view of Column 3: qty + unit on the first line, description below.
+                  const quantityParts = splitQuantitySize(r.quantitySize);
+                  const unitOptions =
+                    quantityParts.unit && !QUANTITY_UNITS.includes(quantityParts.unit)
+                      ? [quantityParts.unit, ...QUANTITY_UNITS]
+                      : QUANTITY_UNITS;
 
                   return (
                     <Fragment key={r.id}>
-                      <tr className="group align-top">
-                        {/* Column 1: General Description */}
-                        {activeSubcategory ? (
+                      <tr
+                        ref={(el) => {
+                          dataRowRefs.current[r.id] = el;
+                        }}
+                        className={cn("group align-top", missingRowIds.has(r.id) && "bg-red-50 ring-2 ring-inset ring-red-400")}
+                      >
+                        {/* Column 1: General Description — one cell shared across the
+                            whole group (category or subcategory), spanning its items. */}
+                        {activeGroup ? (
                           showSharedDescription && (
                             <td rowSpan={Math.max(1, sharedDescriptionRowSpan)} className="relative border border-black px-1 py-0.5 align-top">
                               <AutoTextarea
-                                value={activeSubcategory.generalDescription}
-                                onChange={(v) => setRow(activeSubcategory.id, { generalDescription: v })}
+                                // Prefer the group's shared description; fall back to the
+                                // first item's own text for pre-existing per-item data.
+                                value={activeGroup.generalDescription || r.generalDescription}
+                                onChange={(v) => setRow(activeGroup.id, { generalDescription: v })}
                                 editing={editing}
                                 italic
                                 className="min-h-[4.8em]"
@@ -1423,7 +1817,7 @@ function CreatePpmpPage() {
                         )}
                         {/* Column 2: Type (Dropdown) */}
                         <td className="relative border border-black px-0.5 py-0.5 text-center">
-                          {editing && activeSubcategory && (
+                          {editing && activeGroup && (
                             <div className="no-print absolute -left-11 top-1 z-50 flex items-center gap-0.5 rounded-sm bg-white px-1 py-0.5 opacity-0 shadow-sm ring-1 ring-black/15 group-hover:opacity-100">
                               <button
                                 type="button"
@@ -1445,9 +1839,61 @@ function CreatePpmpPage() {
                           )}
                           <SelectField value={r.projectType} onChange={(v) => setRow(r.id, { projectType: v })} options={PROJECT_TYPES} editing={editing} />
                         </td>
-                        {/* Column 3: Quantity and Size */}
+                        {/* Column 3: Quantity and Size — first line is the structured
+                            "Quantity: N unit" declaration (qty box + unit dropdown);
+                            the free-text description goes on the lines below it. */}
                         <td className="border border-black px-1 py-0.5">
-                          <RichTextField value={r.quantitySize} onChange={(v) => setRow(r.id, { quantitySize: v })} editing={editing} italic />
+                          {editing ? (
+                            <>
+                              <div className="no-print mb-0.5 flex items-center gap-1" style={{ fontFamily: "var(--font-sans)" }}>
+                                <span className="shrink-0 text-[9px] font-semibold text-black/60">Qty</span>
+                                <input
+                                  inputMode="decimal"
+                                  value={quantityParts.qty}
+                                  onChange={(e) =>
+                                    setRow(r.id, { quantitySize: composeQuantitySize(e.target.value, quantityParts.unit, quantityParts.desc) })
+                                  }
+                                  placeholder="0"
+                                  className="w-12 rounded-sm border border-black/20 bg-white px-1 py-0.5 text-[10px] tabular-nums outline-none hover:bg-amber-50 focus:bg-amber-100"
+                                />
+                                <select
+                                  value={quantityParts.unit}
+                                  onChange={(e) =>
+                                    setRow(r.id, { quantitySize: composeQuantitySize(quantityParts.qty, e.target.value, quantityParts.desc) })
+                                  }
+                                  className="min-w-0 flex-1 cursor-pointer rounded-sm border border-black/20 bg-white px-0.5 py-0.5 text-[10px] outline-none hover:bg-amber-50 focus:bg-amber-100"
+                                >
+                                  <option value="">unit…</option>
+                                  {unitOptions.map((u) => (
+                                    <option key={u} value={u}>{u}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              {quantityParts.qty && (
+                                <div className="italic">Quantity: {quantityParts.qty}{quantityParts.unit ? ` ${quantityParts.unit}` : ""}</div>
+                              )}
+                              <RichTextField
+                                value={quantityParts.desc}
+                                onChange={(v) => setRow(r.id, { quantitySize: composeQuantitySize(quantityParts.qty, quantityParts.unit, v) })}
+                                editing
+                                italic
+                              />
+                            </>
+                          ) : (
+                            <RichTextField value={r.quantitySize} onChange={(v) => setRow(r.id, { quantitySize: v })} editing={false} italic />
+                          )}
+                          {/* Highlight what the system recognized: this is the quantity
+                              connected PRs will draw down against. */}
+                          {editing && detectedQty != null && (
+                            <span className="no-print mt-0.5 inline-block rounded bg-emerald-100 px-1 text-[9px] font-semibold tabular-nums text-emerald-800 ring-1 ring-emerald-300" style={{ fontFamily: "var(--font-sans)" }}>
+                              Qty: {detectedQty}
+                            </span>
+                          )}
+                          {editing && detectedQty == null && isItemFilled(r) && (
+                            <span className="no-print mt-0.5 inline-block rounded bg-amber-100 px-1 text-[9px] font-semibold text-amber-900 ring-1 ring-amber-300" style={{ fontFamily: "var(--font-sans)" }}>
+                              No “Quantity: N” found — counts as 1
+                            </span>
+                          )}
                         </td>
                         {/* Column 4: Recommended Mode (Dropdown) */}
                         <td className="border border-black px-0.5 py-0.5 text-center">
@@ -1469,8 +1915,16 @@ function CreatePpmpPage() {
                         <td className="border border-black px-1 py-0.5 text-center">
                           <SelectField value={r.deliveryPeriod} onChange={(v) => setRow(r.id, { deliveryPeriod: v })} options={deliveryMonthYearOptions} editing={editing} />
                         </td>
-                        {/* Column 9: Source of Funds */}
-                        <td className="border border-black" />
+                        {/* Column 9: Source of Funds — auto-fills with the LIB project
+                            name once the item is filled in (still editable to override). */}
+                        <td className="border border-black px-1 py-0.5 align-top text-[9px]">
+                          <AutoTextarea
+                            value={r.sourceOfFunds || (isItemFilled(r) ? sourceOfFundsProjectName : "")}
+                            onChange={(v) => setRow(r.id, { sourceOfFunds: v })}
+                            editing={editing}
+                            className="text-[9px]"
+                          />
+                        </td>
                         {/* Column 10: Estimated Budget */}
                         <td
                           className={cn(
@@ -1567,8 +2021,8 @@ function CreatePpmpPage() {
 
             {/* Signatories */}
             <div className="mt-10 grid grid-cols-2 gap-x-12 gap-y-8">
-              <Signatory label="Prepared & Submitted by:" name={doc.preparedByName} position={doc.preparedByPosition} date={doc.preparedByDate} editing={editing} options={signatories} onName={(v) => set("preparedByName", v)} onPosition={(v) => set("preparedByPosition", v)} onDate={(v) => set("preparedByDate", v)} />
-              <Signatory label="Certified Funds Available:" name={doc.budgetOfficerName} position={doc.budgetOfficerPosition} date={doc.budgetCertifiedDate} editing={editing} options={signatories} onName={(v) => set("budgetOfficerName", v)} onPosition={(v) => set("budgetOfficerPosition", v)} onDate={(v) => set("budgetCertifiedDate", v)} />
+              <Signatory label="Prepared & Submitted by:" name={doc.preparedByName} position={doc.preparedByPosition} date={doc.preparedByDate} editing={editing} options={signatories} auto onName={(v) => set("preparedByName", v)} onPosition={(v) => set("preparedByPosition", v)} onDate={(v) => set("preparedByDate", v)} />
+              <Signatory label="Certified Funds Available:" name={doc.budgetOfficerName} position={doc.budgetOfficerPosition} date={formatSignatoryDate(doc.budgetCertifiedDate || approvalMeta.at || "")} editing={editing} options={signatories} auto dateEditable={false} onName={(v) => set("budgetOfficerName", v)} onPosition={(v) => set("budgetOfficerPosition", v)} onDate={(v) => set("budgetCertifiedDate", v)} />
             </div>
           </div>
 
@@ -1580,6 +2034,42 @@ function CreatePpmpPage() {
           )}
         </div>
       </div>
+
+      {/* Return-for-revision dialog (Budget Officer) */}
+      <Dialog open={returnDialogOpen} onOpenChange={(v) => !v && setReturnDialogOpen(false)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Return PPMP for revision</DialogTitle>
+            <DialogDescription>
+              Tell the requester what needs to change. Any per-item comments you added will be sent along, and the requester will be notified.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <label className="label-eyebrow">Reason for return <span className="text-destructive">*</span></label>
+            <Textarea
+              rows={4}
+              value={returnReasonDraft}
+              onChange={(e) => setReturnReasonDraft(e.target.value)}
+              placeholder="e.g. Item 3 exceeds the approved budget line; please adjust the quantity."
+              className="mt-1 border-border"
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="border-border" onClick={() => setReturnDialogOpen(false)} disabled={reviewSaving !== null}>
+              Cancel
+            </Button>
+            <Button
+              className="gap-1.5 bg-amber-600 text-white hover:bg-amber-600/90"
+              onClick={() => submitReview("return")}
+              disabled={reviewSaving !== null || !returnReasonDraft.trim()}
+            >
+              {reviewSaving === "return" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
+              Return to Requester
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1591,6 +2081,8 @@ function Signatory({
   date,
   editing,
   options,
+  auto,
+  dateEditable = true,
   onName,
   onPosition,
   onDate,
@@ -1601,10 +2093,34 @@ function Signatory({
   date: string;
   editing: boolean;
   options: SignatoryOption[];
+  auto?: boolean; // fixed to the signed-in user (Prepared by) — name/designation read-only
+  dateEditable?: boolean; // when false, the date is display-only (e.g. set on approval)
   onName: (v: string) => void;
   onPosition: (v: string) => void;
   onDate: (v: string) => void;
 }) {
+  // "Prepared & Submitted by" is the signed-in user: show the auto-filled name and
+  // designation as plain text (no picker); the date stays editable. For "Certified
+  // Funds Available" the date is stamped on approval, so it is display-only.
+  if (auto) {
+    const dateEditing = editing && dateEditable;
+    return (
+      <div>
+        <p className="text-[11px]">{label}</p>
+        <div className="mt-8">
+          <div className="font-bold">
+            <TextField value={name} onChange={onName} editing={false} bold placeholder="Name" />
+          </div>
+          <div className="text-[10px]">
+            <TextField value={position} onChange={onPosition} editing={false} className="text-[10px]" placeholder="Designation" />
+          </div>
+          <div className={cn("mt-1 text-[10px]", dateEditing && "border-b border-black/20")}>
+            <TextField value={date} onChange={onDate} editing={dateEditing} className="text-[10px]" placeholder="Date" />
+          </div>
+        </div>
+      </div>
+    );
+  }
   // Keep the current name selectable even if that account is no longer among the
   // approved options (e.g. a previously-picked signatory was deactivated).
   const items = name && !options.some((o) => o.name === name) ? [{ id: -1, name, tier: "regular" as const, position: null }, ...options] : options;

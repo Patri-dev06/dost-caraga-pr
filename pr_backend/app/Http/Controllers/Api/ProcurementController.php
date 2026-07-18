@@ -20,12 +20,15 @@ use App\Models\PurchaseRequest;
 use App\Models\Role;
 use App\Models\SystemPreference;
 use App\Models\User;
+use App\Models\UserNotification;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
@@ -123,12 +126,64 @@ class ProcurementController extends Controller
         return response()->json(['data' => $users]);
     }
 
+    /** The designated Budget Officer, for auto-filling PPMP fund-certification signatories. */
+    public function budgetOfficer(Request $request): JsonResponse
+    {
+        $officer = $this->designatedBudgetOfficer();
+
+        return response()->json([
+            'data' => $officer ? [
+                'id' => $officer->id,
+                'name' => $officer->name,
+                'position' => $officer->position ?: 'Budget Officer',
+                'isCurrentUser' => $officer->id === $request->user()?->id,
+            ] : null,
+        ]);
+    }
+
+    public function notifications(Request $request): JsonResponse
+    {
+        $notifications = UserNotification::where('user_id', $request->user()?->id)
+            ->latest()
+            ->limit(50)
+            ->get()
+            ->map(fn (UserNotification $n): array => [
+                'id' => $n->id,
+                'type' => $n->type,
+                'title' => $n->title,
+                'body' => $n->body,
+                'link' => $n->link,
+                'data' => $n->data,
+                'read' => $n->read_at !== null,
+                'createdAt' => $n->created_at?->toISOString(),
+            ]);
+
+        return response()->json([
+            'data' => $notifications,
+            'unread' => UserNotification::where('user_id', $request->user()?->id)->whereNull('read_at')->count(),
+        ]);
+    }
+
+    public function markNotificationRead(Request $request, int $id): JsonResponse
+    {
+        UserNotification::where('user_id', $request->user()?->id)->where('id', $id)->update(['read_at' => now()]);
+
+        return response()->json(['message' => 'Notification marked as read.']);
+    }
+
+    public function markAllNotificationsRead(Request $request): JsonResponse
+    {
+        UserNotification::where('user_id', $request->user()?->id)->whereNull('read_at')->update(['read_at' => now()]);
+
+        return response()->json(['message' => 'All notifications marked as read.']);
+    }
+
     public function planningLibIndex(Request $request): JsonResponse
     {
         $this->guardModule('lib');
 
         $query = LibDocument::with('rows')->latest('updated_at');
-        $this->scopeOwned($query);
+        $this->scopeLibVisibility($query);
 
         return response()->json(['data' => $query->get()->map(fn (LibDocument $document): array => $this->formatLibDocument($document))->all()]);
     }
@@ -137,7 +192,14 @@ class ProcurementController extends Controller
     {
         $this->guardModule('lib');
         $document = LibDocument::with('rows')->where('client_uid', $clientUid)->firstOrFail();
-        $this->abortUnlessOwned($document->owner_id);
+
+        $user = $request->user();
+        $isOwner = $document->owner_id !== null && $document->owner_id === $user?->id;
+        abort_unless(
+            $user?->tier === 'superadmin' || $isOwner || in_array($document->id, $this->budgetOfficerLibIds($user), true),
+            403,
+            'You do not have access to this document.',
+        );
 
         return response()->json(['data' => $this->formatLibDocument($document)]);
     }
@@ -250,7 +312,7 @@ class ProcurementController extends Controller
         $this->guardModule('ppmp');
 
         $query = PpmpDocument::with('items')->whereNotNull('client_uid')->latest('created_at');
-        $this->scopeOwned($query);
+        $this->scopePpmpVisibility($query);
 
         if ($request->query('lib_id')) {
             $query->whereHas('libDocument', fn (Builder $q) => $q->where('client_uid', $request->query('lib_id')));
@@ -263,7 +325,7 @@ class ProcurementController extends Controller
     {
         $this->guardModule('ppmp');
         $document = PpmpDocument::with('items')->where('client_uid', $clientUid)->firstOrFail();
-        $this->abortUnlessOwned($document->owner_id);
+        $this->abortUnlessCanViewPpmp($document);
 
         return response()->json(['data' => $this->formatPlanningPpmp($document)]);
     }
@@ -313,12 +375,26 @@ class ProcurementController extends Controller
         $user = $request->user();
         $uid = $clientUid ?? $data['id'];
         $lib = LibDocument::where('client_uid', $data['libId'])->first();
+        $budgetOfficer = $this->designatedBudgetOfficer();
 
-        $document = DB::transaction(function () use ($data, $uid, $user, $lib): PpmpDocument {
+        [$document, $justSubmitted] = DB::transaction(function () use ($data, $uid, $user, $lib, $budgetOfficer): array {
             $document = PpmpDocument::firstOrNew(['client_uid' => $uid]);
             if ($document->exists) {
                 $this->abortUnlessOwned($document->owner_id);
+                // Once the Budget Officer certifies funds, the PPMP is final and locked.
+                abort_if($document->status === 'Approved', 422, 'This PPMP has been approved by the Budget Officer and can no longer be revised.');
             }
+
+            // Fire a notification only on the transition INTO "Submitted to Budget Officer".
+            $justSubmitted = $data['status'] === 'Submitted to Budget Officer'
+                && $document->status !== 'Submitted to Budget Officer';
+
+            // The Budget Officer certifies fund availability, so their name/position is
+            // server-authoritative — every PPMP is certified by the designated officer.
+            $budgetOfficerName = $budgetOfficer?->name ?? ($data['budgetOfficerName'] ?? null);
+            $budgetOfficerPosition = $budgetOfficer
+                ? ($budgetOfficer->position ?: 'Budget Officer')
+                : ($data['budgetOfficerPosition'] ?? null);
 
             $document->fill([
                 'project_id' => $document->project_id ?? $this->defaultPlanningProjectId(),
@@ -332,8 +408,9 @@ class ProcurementController extends Controller
                 'prepared_submitted_by_name' => $data['preparedByName'] ?? null,
                 'prepared_submitted_by_position' => $data['preparedByPosition'] ?? null,
                 'prepared_submitted_by_date' => $this->dateOrNull($data['preparedByDate'] ?? null),
-                'budget_officer_name' => $data['budgetOfficerName'] ?? null,
-                'budget_officer_position' => $data['budgetOfficerPosition'] ?? null,
+                'budget_officer_id' => $budgetOfficer?->id ?? $document->budget_officer_id,
+                'budget_officer_name' => $budgetOfficerName,
+                'budget_officer_position' => $budgetOfficerPosition,
                 'budget_certified_date' => $this->dateOrNull($data['budgetCertifiedDate'] ?? null),
                 'total_estimated_budget' => $data['totalBudget'],
                 'row_count' => count($data['rows']),
@@ -342,7 +419,11 @@ class ProcurementController extends Controller
                 'owner_name' => $document->owner_name ?? $user?->name,
                 'imported_by' => $document->imported_by ?? $user?->id,
                 'imported_at' => $document->imported_at ?? now(),
+                'submitted_at' => $justSubmitted ? now() : $document->submitted_at,
             ])->save();
+
+            // Preserve any Budget Officer per-item comments across the delete/recreate.
+            $existingComments = $document->items()->pluck('reviewer_comment', 'client_uid');
 
             $document->items()->delete();
             foreach ($data['rows'] as $index => $row) {
@@ -353,7 +434,7 @@ class ProcurementController extends Controller
                     'uom' => 'unit',
                     'is_cse' => false,
                 ]);
-                $quantity = max(0.01, (float) ($row['quantity'] ?? 1));
+                $quantity = $this->quantityFromPpmpRow($row);
                 $budget = (float) ($row['estimated_budget'] ?? 0);
 
                 $document->items()->create([
@@ -378,16 +459,121 @@ class ProcurementController extends Controller
                     'estimated_unit_cost' => $quantity > 0 ? $budget / $quantity : $budget,
                     'supporting_documents' => $row['supporting_documents'] ?? null,
                     'remarks' => $row['remarks'] ?? null,
+                    'reviewer_comment' => $existingComments[$row['id']] ?? null,
                     'schedule' => $this->scheduleFromPpmpRow($row),
                 ]);
             }
 
-            return $document->fresh('items');
+            return [$document->fresh('items'), $justSubmitted];
         });
+
+        if ($justSubmitted && $document->budget_officer_id) {
+            $this->notify(
+                $document->budgetOfficer,
+                'ppmp_submitted',
+                "PPMP {$document->ppmp_no} submitted for fund certification",
+                ($document->owner_name ?: 'A requester').' submitted a PPMP for your review.',
+                $this->ppmpLink($document),
+                ['ppmpId' => $document->client_uid, 'libId' => $document->libDocument?->client_uid],
+            );
+        }
 
         $this->audit($request, 'PPMP', 'Saved PPMP Document', $document->client_uid);
 
         return response()->json(['data' => $this->formatPlanningPpmp($document)], $clientUid ? 200 : 201);
+    }
+
+    public function planningPpmpReturn(Request $request, string $clientUid): JsonResponse
+    {
+        return $this->reviewPlanningPpmp($request, $clientUid, 'return');
+    }
+
+    public function planningPpmpApprove(Request $request, string $clientUid): JsonResponse
+    {
+        return $this->reviewPlanningPpmp($request, $clientUid, 'approve');
+    }
+
+    /**
+     * Budget Officer review action (return or approve). Only the designated
+     * Budget Officer (or a superadmin) may act, and they act across ownership.
+     */
+    private function reviewPlanningPpmp(Request $request, string $clientUid, string $action): JsonResponse
+    {
+        $this->guardModule('ppmp');
+
+        $data = $request->validate([
+            'reviewComment' => ['nullable', 'string'],
+            'returnReason' => ['nullable', 'string'],
+            'itemComments' => ['nullable', 'array'],
+            'itemComments.*' => ['nullable', 'string'],
+        ]);
+
+        $document = PpmpDocument::with('items')->where('client_uid', $clientUid)->firstOrFail();
+        $user = $request->user();
+
+        abort_unless(
+            $user?->tier === 'superadmin' || $this->isDesignatedBudgetOfficer($user, $document),
+            403,
+            'Only the designated Budget Officer can review this PPMP.',
+        );
+
+        if ($action === 'return') {
+            abort_if(trim((string) ($data['returnReason'] ?? '')) === '', 422, 'A reason is required when returning a PPMP.');
+        }
+
+        $document = DB::transaction(function () use ($document, $data, $user, $action): PpmpDocument {
+            foreach (($data['itemComments'] ?? []) as $itemUid => $comment) {
+                $document->items()->where('client_uid', $itemUid)->update(['reviewer_comment' => $comment ?: null]);
+            }
+
+            if ($action === 'approve') {
+                $document->fill([
+                    'status' => 'Approved',
+                    'budget_officer_comment' => $data['reviewComment'] ?? $document->budget_officer_comment,
+                    'return_reason' => null,
+                    'reviewed_at' => now(),
+                    // The certification date shown on the PPMP is the day the officer approved.
+                    'budget_certified_date' => now()->toDateString(),
+                    'approved_by_id' => $user?->id,
+                    'approved_by_name' => $user?->name,
+                    'approved_at' => now(),
+                    // PNPKI digital signature to be wired in later; record a placeholder now.
+                    'approval_signature' => 'Certified electronically by '.($user?->name ?? 'Budget Officer').' on '.now()->toDayDateTimeString(),
+                ]);
+            } else {
+                $document->fill([
+                    'status' => 'Returned',
+                    'budget_officer_comment' => $data['reviewComment'] ?? $document->budget_officer_comment,
+                    'return_reason' => $data['returnReason'] ?? null,
+                    'reviewed_at' => now(),
+                    'revision_count' => (int) $document->revision_count + 1,
+                ]);
+            }
+
+            $document->save();
+
+            return $document->fresh('items');
+        });
+
+        if ($document->owner_id) {
+            $isApprove = $action === 'approve';
+            $this->notify(
+                $document->owner,
+                $isApprove ? 'ppmp_approved' : 'ppmp_returned',
+                $isApprove
+                    ? "PPMP {$document->ppmp_no} approved"
+                    : "PPMP {$document->ppmp_no} returned for revision",
+                $isApprove
+                    ? ($document->budget_officer_name ?: 'The Budget Officer').' certified fund availability. You can now create a Purchase Request against it.'
+                    : ($document->return_reason ?: 'Please review the Budget Officer\'s comments and resubmit.'),
+                $this->ppmpLink($document),
+                ['ppmpId' => $document->client_uid, 'libId' => $document->libDocument?->client_uid],
+            );
+        }
+
+        $this->audit($request, 'PPMP', $action === 'approve' ? 'Approved PPMP (Budget Officer)' : 'Returned PPMP (Budget Officer)', $document->client_uid);
+
+        return response()->json(['data' => $this->formatPlanningPpmp($document)]);
     }
 
     public function planningPpmpDestroy(Request $request, string $clientUid): JsonResponse
@@ -631,7 +817,7 @@ class ProcurementController extends Controller
         }
 
         $quantitySize = (string) ($row['quantity_size'] ?? '');
-        if (preg_match('/quantity\s*:\s*([0-9,]+(?:\.[0-9]+)?)/i', $quantitySize, $matches)) {
+        if (preg_match('/(?:quantity|qty)\s*:\s*([0-9,]+(?:\.[0-9]+)?)/i', $quantitySize, $matches)) {
             return max(0.01, (float) str_replace(',', '', $matches[1]));
         }
 
@@ -656,6 +842,138 @@ class ProcurementController extends Controller
         }
 
         abort_unless($ownerId !== null && $ownerId === $user?->id, 403, 'You do not have access to this document.');
+    }
+
+    /**
+     * PPMP visibility: owners see their own; the designated Budget Officer also
+     * sees PPMPs routed to them for review; superadmins see everything.
+     */
+    private function scopePpmpVisibility(Builder $query): void
+    {
+        $user = request()->user();
+        if ($user?->tier === 'superadmin') {
+            return;
+        }
+
+        $officer = $this->designatedBudgetOfficer();
+        $query->where(function (Builder $q) use ($user, $officer): void {
+            $q->where('owner_id', $user?->id);
+            if ($officer && $officer->id === $user?->id) {
+                $q->orWhere('budget_officer_id', $user->id);
+            }
+        });
+    }
+
+    private function abortUnlessCanViewPpmp(PpmpDocument $document): void
+    {
+        $user = request()->user();
+        if ($user?->tier === 'superadmin') {
+            return;
+        }
+
+        $isOwner = $document->owner_id !== null && $document->owner_id === $user?->id;
+        abort_unless($isOwner || $this->isDesignatedBudgetOfficer($user, $document), 403, 'You do not have access to this document.');
+    }
+
+    /**
+     * LIB visibility mirrors PPMP: owners and superadmins as usual, plus the
+     * designated Budget Officer for any LIB referenced by a PPMP routed to them
+     * (so they can open the source budget while reviewing).
+     */
+    private function scopeLibVisibility(Builder $query): void
+    {
+        $user = request()->user();
+        if ($user?->tier === 'superadmin') {
+            return;
+        }
+
+        $officerLibIds = $this->budgetOfficerLibIds($user);
+        $query->where(function (Builder $q) use ($user, $officerLibIds): void {
+            $q->where('owner_id', $user?->id);
+            if ($officerLibIds !== []) {
+                $q->orWhereIn('id', $officerLibIds);
+            }
+        });
+    }
+
+    /** LIB ids referenced by PPMPs routed to $user as Budget Officer. */
+    private function budgetOfficerLibIds(?User $user): array
+    {
+        if ($user === null || $this->designatedBudgetOfficer()?->id !== $user->id) {
+            return [];
+        }
+
+        return PpmpDocument::where('budget_officer_id', $user->id)
+            ->whereNotNull('lib_document_id')
+            ->pluck('lib_document_id')
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /** The user currently designated as Budget Officer, or null if none is set. */
+    private function designatedBudgetOfficer(): ?User
+    {
+        $id = $this->preferenceValue('budget_officer_user_id', null);
+
+        return $id ? User::find((int) $id) : null;
+    }
+
+    /**
+     * Whether $user is the Budget Officer for $document — either the officer the
+     * document was routed to, or the current global designated officer.
+     */
+    private function isDesignatedBudgetOfficer(?User $user, ?PpmpDocument $document = null): bool
+    {
+        if ($user === null) {
+            return false;
+        }
+
+        if ($document?->budget_officer_id !== null && $document?->budget_officer_id === $user->id) {
+            return true;
+        }
+
+        return $this->designatedBudgetOfficer()?->id === $user->id;
+    }
+
+    private function ppmpLink(PpmpDocument $document): string
+    {
+        $lib = $document->libDocument?->client_uid;
+
+        return $lib
+            ? "/planning/ppmp/new?lib={$lib}&edit={$document->client_uid}"
+            : '/planning/ppmp';
+    }
+
+    /** Persist an in-app notification and, if enabled, best-effort send an email. */
+    private function notify(?User $recipient, string $type, string $title, ?string $body, ?string $link, array $data = []): void
+    {
+        if ($recipient === null) {
+            return;
+        }
+
+        UserNotification::create([
+            'user_id' => $recipient->id,
+            'type' => $type,
+            'title' => $title,
+            'body' => $body,
+            'link' => $link,
+            'data' => $data,
+        ]);
+
+        if (! $this->preferenceValue('email_notifications_enabled', true) || empty($recipient->email)) {
+            return;
+        }
+
+        // Email delivery is best-effort: a missing/unconfigured mailer must never
+        // break the request. Wire up SMTP later and this starts sending for real.
+        try {
+            Mail::raw(trim($title."\n\n".($body ?? '')), function ($message) use ($recipient, $title): void {
+                $message->to($recipient->email)->subject($title);
+            });
+        } catch (\Throwable $e) {
+            Log::warning('Notification email failed', ['recipient' => $recipient->email, 'error' => $e->getMessage()]);
+        }
     }
 
     private function defaultPlanningProjectId(): int
@@ -759,11 +1077,20 @@ class ProcurementController extends Controller
                     'estimated_budget' => (float) ($item->estimated_budget ?? 0),
                     'supporting_documents' => $item->supporting_documents ?? '',
                     'remarks' => $item->remarks ?? '',
+                    'reviewer_comment' => $item->reviewer_comment ?? '',
                 ])->all(),
             'formRows' => $document->form_rows ?? [],
             'totalBudget' => (float) $document->total_estimated_budget,
             'ownerId' => $document->owner_id,
             'ownerName' => $document->owner_name,
+            'budgetOfficerId' => $document->budget_officer_id,
+            'reviewComment' => $document->budget_officer_comment ?? '',
+            'returnReason' => $document->return_reason ?? '',
+            'submittedAt' => $document->submitted_at?->toISOString(),
+            'reviewedAt' => $document->reviewed_at?->toISOString(),
+            'approvedByName' => $document->approved_by_name ?? '',
+            'approvedAt' => $document->approved_at?->toISOString(),
+            'approvalSignature' => $document->approval_signature ?? '',
             'createdAt' => $document->created_at?->toISOString(),
         ];
     }
@@ -1252,15 +1579,31 @@ class ProcurementController extends Controller
 
     private function resolveFundSourceId(mixed $value): ?int
     {
-        if (! $value) {
+        $name = trim((string) ($value ?? ''));
+
+        if ($name === '') {
             return null;
         }
 
-        $needle = mb_strtolower((string) $value);
+        $needle = mb_strtolower($name);
 
-        return FundSource::whereRaw('LOWER(name) = ?', [$needle])
+        $existing = FundSource::whereRaw('LOWER(name) = ?', [$needle])
             ->orWhereRaw('LOWER(fund_type) = ?', [$needle])
             ->value('id');
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        // "Charged to" labels reference a PPMP (e.g. "PPMP 4 — Project title")
+        // rather than a seeded fund source. Register the label so the PR saves
+        // and the exact label round-trips back — the client uses it to re-link
+        // the PR to its charged PPMP.
+        return FundSource::create([
+            'name' => $name,
+            'fund_type' => 'GAA',
+            'description' => 'Auto-created from PR "Charged to"',
+        ])->id;
     }
 
     private function resolveProjectId(mixed $value): ?int
@@ -1680,6 +2023,14 @@ class ProcurementController extends Controller
                 'label' => 'Require Digital Signature',
                 'description' => 'Marks the approval flow as requiring digital signature routing.',
                 'type' => 'boolean',
+            ],
+            [
+                'key' => 'budget_officer_user_id',
+                'value' => ['value' => optional(User::where('status', 'Active')->where('name', 'like', '%Marites%')->first())->id],
+                'category' => 'Workflow',
+                'label' => 'Budget Officer',
+                'description' => 'Account that certifies fund availability on PPMPs. Submissions are routed here for review, return, or approval.',
+                'type' => 'text',
             ],
             [
                 'key' => 'email_notifications_enabled',

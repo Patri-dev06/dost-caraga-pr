@@ -208,6 +208,7 @@ function RegisterCard({ onBack }: { onBack: () => void }) {
   const [show, setShow] = useState(false);
   const [offices, setOffices] = useState<PublicOffice[]>([]);
   const [firstName, setFirstName] = useState("");
+  const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [position, setPosition] = useState("");
@@ -237,7 +238,7 @@ function RegisterCard({ onBack }: { onBack: () => void }) {
           setLoading(true);
           try {
             const result = await register({
-              name: `${firstName.trim()} ${lastName.trim()}`.trim(),
+              name: [firstName, middleName, lastName].map((part) => part.trim()).filter(Boolean).join(" "),
               email: email.trim(),
               password,
               position: position.trim(),
@@ -261,6 +262,10 @@ function RegisterCard({ onBack }: { onBack: () => void }) {
             </div>
           </div>
           <div className="space-y-2">
+            <Label htmlFor="mname" className="text-sm font-semibold text-navy">Middle name <span className="font-normal text-muted-foreground">(optional)</span></Label>
+            <Input id="mname" value={middleName} onChange={(e) => setMiddleName(e.target.value)} placeholder="Santos" className="h-11 border-border bg-background" />
+          </div>
+          <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="lname" className="text-sm font-semibold text-navy">Last name</Label>
             <Input id="lname" required value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Dela Cruz" className="h-11 border-border bg-background" />
           </div>

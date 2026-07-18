@@ -7,6 +7,7 @@ use App\Models\ApiToken;
 use App\Models\AuditLog;
 use App\Models\Office;
 use App\Models\Role;
+use App\Models\SystemPreference;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -50,7 +51,7 @@ class AuthController extends Controller
             'token' => $plainToken,
             'token_type' => 'Bearer',
             'expires_in' => now()->diffInSeconds($expiresAt),
-            'user' => $user->fresh(['roles', 'office']),
+            'user' => $this->serializeUser($user->fresh(['roles', 'office'])),
         ]);
     }
 
@@ -128,7 +129,17 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        return response()->json(['data' => $request->user()->load('roles', 'office')]);
+        return response()->json(['data' => $this->serializeUser($request->user()->load('roles', 'office'))]);
+    }
+
+    /** User payload plus the derived is_budget_officer flag used by the client. */
+    private function serializeUser(User $user): array
+    {
+        $budgetOfficerId = optional(SystemPreference::where('key', 'budget_officer_user_id')->first())->value['value'] ?? null;
+
+        return array_merge($user->toArray(), [
+            'is_budget_officer' => $budgetOfficerId !== null && (int) $budgetOfficerId === $user->id,
+        ]);
     }
 
     private function audit(Request $request, ?User $user, string $module, string $action, ?string $target = null): void

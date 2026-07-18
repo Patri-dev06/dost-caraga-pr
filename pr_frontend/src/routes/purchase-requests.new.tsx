@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Eye, FileSpreadsheet, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { exportPurchaseRequestExcel } from "@/lib/pr-excel";
 import {
   apiCreatePurchaseRequest,
   apiGetPurchaseRequest,
+  apiGetPurchaseRequests,
   apiGetSignatories,
   apiSubmitPurchaseRequest,
   apiUpdatePurchaseRequest,
@@ -17,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useCurrentUser } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { listAllPpmps, syncPpmpsFromDatabase, type PpmpForLib } from "@/lib/ppmp-store";
+import { getLib } from "@/lib/lib-store";
 
 export const Route = createFileRoute("/purchase-requests/new")({
   validateSearch: (search: Record<string, unknown>): { edit?: string; view?: string } => ({
@@ -43,6 +46,65 @@ const OFFICES = [
   { code: "ICTU", name: "ICTU" },
 ];
 const FUND_SOURCES = ["GAA 2026 - MOOE", "Trust Fund - SETUP"];
+
+// "Charged to" identifies the approved PPMP this PR draws its budget from —
+// labelled by PPMP number plus the LIB project it was built for.
+function ppmpChargeLabel(p: PpmpForLib): string {
+  const title = getLib(p.libId)?.projectTitle.trim();
+  const detail = title || p.endUserUnit;
+  return `PPMP ${p.ppmpNo}${detail ? ` — ${detail}` : ""}`;
+}
+
+// PPMP Column 3 is rich text — reduce it to plain text before parsing.
+function stripHtml(value: string): string {
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&");
+}
+
+// Every "Quantity: N unit" declared in a PPMP item's Column 3 — e.g.
+// "Quantity: 5 pax, Quantity: 38 ream" → pax×5 and ream×38. These are the only
+// units (and the quantity ceilings) a PR may draw against for that item.
+function parseQuantityUnits(quantitySize: string): { qty: number; unit: string }[] {
+  const out: { qty: number; unit: string }[] = [];
+  const re = /(?:quantity|qty)\s*:\s*([\d,]+(?:\.\d+)?)\s*([A-Za-z]+)?/gi;
+  for (const m of stripHtml(quantitySize).matchAll(re)) {
+    const qty = Number(m[1].replace(/,/g, ""));
+    if (Number.isFinite(qty) && qty > 0) out.push({ qty, unit: (m[2] ?? "").trim().toLowerCase() });
+  }
+  return out;
+}
+
+// One orderable item from the charged PPMP: its declared units/quantities and
+// its total budget — the ceilings every PR against it must respect.
+type ChargeItem = {
+  name: string;
+  units: { qty: number; unit: string }[];
+  budget: number;
+  unitCost: number;
+};
+
+function buildChargeItems(ppmp: PpmpForLib | undefined): ChargeItem[] {
+  if (!ppmp) return [];
+  const byName = new Map<string, ChargeItem>();
+  for (const row of ppmp.rows) {
+    const name = (row.item_name || row.general_description || "").trim();
+    if (!name) continue;
+    const budget = Number(row.estimated_budget) || 0;
+    const qty = Number(row.quantity) || 0;
+    const units = parseQuantityUnits(row.quantity_size || "").filter((u) => u.unit);
+    const existing = byName.get(name);
+    if (existing) {
+      existing.budget += budget;
+      existing.units.push(...units);
+    } else {
+      byName.set(name, { name, units, budget, unitCost: qty > 0 ? budget / qty : budget });
+    }
+  }
+  return [...byName.values()];
+}
 const MODES = ["Shopping", "Small Value Procurement", "Public Bidding", "Negotiated Procurement"];
 
 type FormItem = { id: string; stockNo: string; unit: string; description: string; qty: string; unitCost: string };
@@ -282,9 +344,115 @@ function NewPR() {
   const [rcc, setRcc] = useState("");
   const [fundSource, setFundSource] = useState(FUND_SOURCES[0]);
   const [modeOfProcurement, setModeOfProcurement] = useState(MODES[0]);
+
+  // "Charged to" lists the user's APPROVED PPMPs. Local cache renders instantly;
+  // the database sync then refreshes the list in the background.
+  const [approvedPpmps, setApprovedPpmps] = useState<PpmpForLib[]>([]);
+  useEffect(() => {
+    const approvedOnly = (list: PpmpForLib[]) => list.filter((p) => p.status === "Approved");
+    setApprovedPpmps(approvedOnly(listAllPpmps()));
+    syncPpmpsFromDatabase()
+      .then((list) => setApprovedPpmps(approvedOnly(list)))
+      .catch(() => {});
+  }, []);
+
+  // A brand-new PR charges to the first approved PPMP once the list arrives
+  // (never overrides a loaded PR or a choice the user already made).
+  useEffect(() => {
+    if (loadId || approvedPpmps.length === 0) return;
+    setFundSource((cur) => (cur === FUND_SOURCES[0] ? ppmpChargeLabel(approvedPpmps[0]) : cur));
+  }, [approvedPpmps, loadId]);
+
+  const chargeToOptions = (() => {
+    const seen = new Set<string>();
+    const opts = approvedPpmps
+      .map((p) => ppmpChargeLabel(p))
+      .filter((label) => !seen.has(label) && (seen.add(label), true))
+      .map((label) => ({ value: label, label }));
+    // Keep a legacy/unknown current value visible (PRs saved before PPMP linking).
+    if (fundSource && !seen.has(fundSource)) opts.unshift({ value: fundSource, label: fundSource });
+    return opts;
+  })();
+
+  // The PPMP being charged, and its orderable items (with budget/qty ceilings).
+  const selectedPpmp = approvedPpmps.find((p) => ppmpChargeLabel(p) === fundSource);
+  const chargeItems = useMemo(() => buildChargeItems(selectedPpmp), [selectedPpmp]);
+
+  // Every other PR already drawn against this PPMP — used to compute what's left
+  // of each item's budget and quantity before this PR takes its share.
+  const { data: allPrs } = useQuery({ queryKey: ["purchase-requests"], queryFn: apiGetPurchaseRequests, enabled: Boolean(selectedPpmp) });
+  const priorUse = useMemo(() => {
+    const byName = new Map<string, { amount: number; qtyByUnit: Map<string, number> }>();
+    if (!selectedPpmp) return byName;
+    for (const pr of allPrs ?? []) {
+      if (loadId && pr.id === String(loadId)) continue; // this PR's own saved rows don't count against it
+      if (pr.status === "Rejected" || pr.status === "Returned") continue;
+      if (pr.fundSource !== fundSource) continue;
+      for (const item of pr.items) {
+        const rec = byName.get(item.name) ?? { amount: 0, qtyByUnit: new Map<string, number>() };
+        rec.amount += item.qty * item.unitCost;
+        const unitKey = item.uom.trim().toLowerCase();
+        rec.qtyByUnit.set(unitKey, (rec.qtyByUnit.get(unitKey) ?? 0) + item.qty);
+        byName.set(item.name, rec);
+      }
+    }
+    return byName;
+  }, [allPrs, fundSource, loadId, selectedPpmp]);
+
+  // Remaining ceilings for one catalog item, after prior PRs and after the OTHER
+  // rows of this form (so two rows drawing the same item share one ceiling).
+  const remainingFor = (chargeItem: ChargeItem, excludeRowId: string) => {
+    const prior = priorUse.get(chargeItem.name);
+    let amount = chargeItem.budget - (prior?.amount ?? 0);
+    const qtyByUnit = new Map(chargeItem.units.map((u) => [u.unit, u.qty - (prior?.qtyByUnit.get(u.unit) ?? 0)]));
+    for (const row of items) {
+      if (row.id === excludeRowId) continue;
+      if (row.description.split("\n")[0]?.trim() !== chargeItem.name) continue;
+      amount -= parseNum(row.qty) * parseNum(row.unitCost);
+      const unitKey = row.unit.trim().toLowerCase();
+      if (qtyByUnit.has(unitKey)) qtyByUnit.set(unitKey, (qtyByUnit.get(unitKey) ?? 0) - parseNum(row.qty));
+    }
+    return { amount, qtyByUnit };
+  };
+
+  const chargeItemForRow = (row: FormItem): ChargeItem | undefined =>
+    chargeItems.find((c) => c.name === row.description.split("\n")[0]?.trim());
+
+  // Picking an item from the charged PPMP fills the description, locks the unit
+  // to the item's declared unit, and seeds the unit cost from the PPMP figures.
+  const pickChargeItem = (rowId: string, name: string) => {
+    const chosen = chargeItems.find((c) => c.name === name);
+    if (!chosen) {
+      updateItem(rowId, { description: name });
+      return;
+    }
+    updateItem(rowId, {
+      description: chosen.name,
+      unit: chosen.units[0]?.unit ?? "",
+      unitCost: chosen.unitCost > 0 ? String(Math.round(chosen.unitCost * 100) / 100) : "",
+    });
+  };
   const [purpose, setPurpose] = useState("");
 
   const [items, setItems] = useState<FormItem[]>(() => [newItem(), newItem(), newItem()]);
+
+  // Fields flagged by a failed save/submit validation: "purpose", "chargedTo",
+  // or "item-<rowId>". Flagged fields get a red highlight and the page scrolls
+  // to the first one; the flag clears as soon as the field is edited.
+  const [missingFields, setMissingFields] = useState<Set<string>>(new Set());
+  const fieldRefs = useRef<Record<string, HTMLElement | null>>({});
+  const flagMissing = (keys: string[]) => {
+    setMissingFields(new Set(keys));
+    const first = keys[0];
+    if (first) requestAnimationFrame(() => fieldRefs.current[first]?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  };
+  const clearMissing = (key: string) =>
+    setMissingFields((s) => {
+      if (!s.has(key)) return s;
+      const next = new Set(s);
+      next.delete(key);
+      return next;
+    });
 
   // Requested by is the signed-in user (auto-filled below). Recommending/Approved
   // are chosen from the approved-accounts dropdowns.
@@ -374,6 +542,7 @@ function NewPR() {
 
   function updateItem(id: string, patch: Partial<FormItem>) {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    clearMissing(`item-${id}`);
   }
   function addItem() {
     setItems((prev) => [...prev, newItem()]);
@@ -402,14 +571,63 @@ function NewPR() {
       })
       .filter((it) => it.name && it.qty > 0);
 
+    setMissingFields(new Set());
+
     if (mapped.length === 0) {
       toast.error("Add at least one item with a description and quantity.");
+      // Flag every row that is started but incomplete (or all rows when none are usable).
+      flagMissing(items.map((it) => `item-${it.id}`));
       return null;
     }
     if (!purpose.trim()) {
       toast.error("Purpose is required.");
+      flagMissing(["purpose"]);
       return null;
     }
+    // The backend requires the charged PPMP (its fund source id) — catch it here
+    // so the field is highlighted instead of a server error after submit.
+    if (approvedPpmps.length > 0 && !selectedPpmp) {
+      toast.error("Charged to must be one of your approved PPMPs — pick one from the list.");
+      flagMissing(["chargedTo"]);
+      return null;
+    }
+
+    // Charged to a PPMP: every line must be one of its items, within what's left
+    // of that item's budget and declared unit quantities after earlier PRs.
+    if (chargeItems.length > 0) {
+      for (const it of items) {
+        const first = it.description.split("\n")[0]?.trim() ?? "";
+        if (!first || parseNum(it.qty) <= 0) continue; // blank rows aren't saved
+        const chargeItem = chargeItems.find((c) => c.name === first);
+        if (!chargeItem) {
+          toast.error(`"${first}" is not an item of the charged PPMP — pick one from the list.`);
+          flagMissing([`item-${it.id}`]);
+          return null;
+        }
+        const remaining = remainingFor(chargeItem, it.id);
+        const rowTotal = parseNum(it.qty) * parseNum(it.unitCost);
+        if (rowTotal > remaining.amount + 0.005) {
+          toast.error(`${chargeItem.name}: only ₱${money(Math.max(0, remaining.amount))} of its PPMP budget remains.`);
+          flagMissing([`item-${it.id}`]);
+          return null;
+        }
+        if (chargeItem.units.length > 0) {
+          const unitKey = it.unit.trim().toLowerCase();
+          if (!chargeItem.units.some((u) => u.unit === unitKey)) {
+            toast.error(`${chargeItem.name}: unit must be ${chargeItem.units.map((u) => u.unit).join(" or ")} (as declared in the PPMP).`);
+            flagMissing([`item-${it.id}`]);
+            return null;
+          }
+          const qtyLeft = remaining.qtyByUnit.get(unitKey);
+          if (qtyLeft != null && parseNum(it.qty) > qtyLeft) {
+            toast.error(`${chargeItem.name}: only ${Math.max(0, qtyLeft)} ${unitKey} remain in the PPMP.`);
+            flagMissing([`item-${it.id}`]);
+            return null;
+          }
+        }
+      }
+    }
+
     return { office, fundSource, modeOfProcurement, purpose: purpose.trim(), items: mapped };
   }
 
@@ -673,24 +891,83 @@ function NewPR() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((it) => (
-                  <tr key={it.id}>
+                {items.map((it) => {
+                  // Ceilings from the charged PPMP: what's left of this item's
+                  // budget and quantity after prior PRs and this form's other rows.
+                  const chargeItem = chargeItemForRow(it);
+                  const remaining = chargeItem ? remainingFor(chargeItem, it.id) : null;
+                  const rowTotal = parseNum(it.qty) * parseNum(it.unitCost);
+                  const amountLeft = remaining ? remaining.amount - rowTotal : null;
+                  const unitKey = it.unit.trim().toLowerCase();
+                  const declaredQtyLeft = remaining && remaining.qtyByUnit.has(unitKey) ? remaining.qtyByUnit.get(unitKey)! - parseNum(it.qty) : null;
+                  const overBudgetRow = amountLeft != null && amountLeft < -0.005;
+                  const overQtyRow = declaredQtyLeft != null && declaredQtyLeft < 0;
+                  const descOptions = (() => {
+                    const first = it.description.split("\n")[0]?.trim() ?? "";
+                    const opts = chargeItems.map((c) => ({ value: c.name, label: c.name }));
+                    if (first && !chargeItems.some((c) => c.name === first)) opts.unshift({ value: first, label: first });
+                    if (!first) opts.unshift({ value: "", label: "Select item from PPMP…" });
+                    return opts;
+                  })();
+                  const unitOptions = (() => {
+                    if (!chargeItem) return [];
+                    const opts = chargeItem.units.map((u) => ({ value: u.unit, label: u.unit }));
+                    if (!opts.some((o) => o.value === it.unit)) opts.unshift({ value: it.unit, label: it.unit || "—" });
+                    return opts;
+                  })();
+                  return (
+                  <tr
+                    key={it.id}
+                    ref={(el) => {
+                      fieldRefs.current[`item-${it.id}`] = el;
+                    }}
+                    className={missingFields.has(`item-${it.id}`) ? "bg-red-50 ring-2 ring-inset ring-red-400" : undefined}
+                  >
                     <td className={cell}>
                       <TextField value={it.stockNo} onChange={(v) => updateItem(it.id, { stockNo: v })} editing={editing} align="center" />
                     </td>
                     <td className={cell}>
-                      <TextField value={it.unit} onChange={(v) => updateItem(it.id, { unit: v })} editing={editing} align="center" />
+                      {editing && chargeItem && chargeItem.units.length > 0 ? (
+                        // Only the units declared in the PPMP item ("Quantity: 5 pax…") are offered.
+                        <BlendSelect value={it.unit} onChange={(v) => updateItem(it.id, { unit: v })} editing align="center" options={unitOptions} />
+                      ) : (
+                        <TextField value={it.unit} onChange={(v) => updateItem(it.id, { unit: v })} editing={editing} align="center" />
+                      )}
                     </td>
                     <td className={cell}>
-                      <AutoTextarea value={it.description} onChange={(v) => updateItem(it.id, { description: v })} editing={editing} />
+                      {editing && chargeItems.length > 0 ? (
+                        <>
+                          {/* Charged to a PPMP: items must come from that PPMP. */}
+                          <BlendSelect
+                            value={it.description.split("\n")[0]?.trim() ?? ""}
+                            onChange={(v) => pickChargeItem(it.id, v)}
+                            editing
+                            options={descOptions}
+                          />
+                          {chargeItem && remaining && (
+                            <div
+                              className={cn(
+                                "no-print px-1 pb-0.5 text-[9px]",
+                                overBudgetRow || overQtyRow ? "font-semibold text-red-600" : "text-emerald-700",
+                              )}
+                              style={{ fontFamily: "var(--font-sans)" }}
+                            >
+                              ₱{money(amountLeft ?? 0)} of ₱{money(chargeItem.budget)} left
+                              {declaredQtyLeft != null && ` · ${declaredQtyLeft} ${unitKey} left`}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <AutoTextarea value={it.description} onChange={(v) => updateItem(it.id, { description: v })} editing={editing} />
+                      )}
                     </td>
-                    <td className={cell}>
+                    <td className={cn(cell, overQtyRow && "bg-red-100 ring-2 ring-inset ring-red-500")}>
                       <NumField value={it.qty} onChange={(v) => updateItem(it.id, { qty: v })} editing={editing} align="center" />
                     </td>
                     <td className={cell}>
                       <NumField value={it.unitCost} onChange={(v) => updateItem(it.id, { unitCost: v })} editing={editing} format />
                     </td>
-                    <td className={cn(cell, "relative")}>
+                    <td className={cn(cell, "relative", overBudgetRow && "bg-red-100 text-red-950 ring-2 ring-inset ring-red-500")}>
                       <div className="min-h-[1.4em] px-1 py-0.5 text-right tabular-nums">
                         {parseNum(it.qty) * parseNum(it.unitCost) ? money(parseNum(it.qty) * parseNum(it.unitCost)) : " "}
                       </div>
@@ -718,7 +995,8 @@ function NewPR() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 <tr>
                   <td className="border border-black" colSpan={4}>
                     {" "}
@@ -750,20 +1028,40 @@ function NewPR() {
               <tbody>
                 <tr>
                   <td className="border border-black px-1 py-1 align-top">
-                    <div className="flex items-baseline gap-1">
-                      <span className="shrink-0 font-semibold">Purpose:</span>
-                    </div>
-                    <div className="mt-1 min-h-[3rem]">
-                      <AutoTextarea value={purpose} onChange={setPurpose} editing={editing} />
+                    <div className="flex items-start gap-1">
+                      <span className="shrink-0 pt-0.5 font-semibold leading-snug">Purpose:</span>
+                      <div
+                        ref={(el) => {
+                          fieldRefs.current["purpose"] = el;
+                        }}
+                        className={cn("min-h-[3rem] min-w-0 flex-1", missingFields.has("purpose") && "rounded-sm bg-red-50 ring-2 ring-inset ring-red-400")}
+                      >
+                        <AutoTextarea
+                          value={purpose}
+                          onChange={(v) => {
+                            setPurpose(v);
+                            if (v.trim()) clearMissing("purpose");
+                          }}
+                          editing={editing}
+                        />
+                      </div>
                     </div>
                     <div className="mt-2 flex items-baseline gap-1">
                       <span className="shrink-0 font-semibold italic">Charged to:</span>
-                      <div className="min-w-0 flex-1 italic">
+                      <div
+                        ref={(el) => {
+                          fieldRefs.current["chargedTo"] = el;
+                        }}
+                        className={cn("min-w-0 flex-1 italic", missingFields.has("chargedTo") && "rounded-sm bg-red-50 ring-2 ring-inset ring-red-400")}
+                      >
                         <BlendSelect
                           value={fundSource}
-                          onChange={setFundSource}
+                          onChange={(v) => {
+                            setFundSource(v);
+                            clearMissing("chargedTo");
+                          }}
                           editing={editing}
-                          options={FUND_SOURCES.map((f) => ({ value: f, label: f }))}
+                          options={chargeToOptions}
                         />
                       </div>
                     </div>

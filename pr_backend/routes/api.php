@@ -16,6 +16,12 @@ Route::prefix('v1')->group(function (): void {
 
         // Approved accounts for signatory pickers (readable by any signed-in user).
         Route::get('/signatories', [ProcurementController::class, 'signatories']);
+        Route::get('/budget-officer', [ProcurementController::class, 'budgetOfficer']);
+
+        // In-app notifications.
+        Route::get('/notifications', [ProcurementController::class, 'notifications']);
+        Route::post('/notifications/read-all', [ProcurementController::class, 'markAllNotificationsRead']);
+        Route::post('/notifications/{notification}/read', [ProcurementController::class, 'markNotificationRead']);
 
         Route::get('/planning-libs', [ProcurementController::class, 'planningLibIndex']);
         Route::post('/planning-libs', [ProcurementController::class, 'planningLibStore']);
@@ -27,6 +33,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/planning-ppmps', [ProcurementController::class, 'planningPpmpStore']);
         Route::get('/planning-ppmps/{clientUid}', [ProcurementController::class, 'planningPpmpShow']);
         Route::put('/planning-ppmps/{clientUid}', [ProcurementController::class, 'planningPpmpStore']);
+        Route::post('/planning-ppmps/{clientUid}/return', [ProcurementController::class, 'planningPpmpReturn']);
+        Route::post('/planning-ppmps/{clientUid}/approve', [ProcurementController::class, 'planningPpmpApprove']);
         Route::delete('/planning-ppmps/{clientUid}', [ProcurementController::class, 'planningPpmpDestroy']);
 
         foreach (['users', 'roles', 'offices', 'fund-sources', 'projects', 'procurement-items'] as $resource) {

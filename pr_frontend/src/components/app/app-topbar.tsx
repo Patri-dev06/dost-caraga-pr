@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Bell, Mail, Settings, LogOut, Moon, Sun } from "lucide-react";
+import { Bell, Mail, Settings, LogOut, Moon, Sun, CheckCheck, ShieldCheck, Undo2, FileText } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { GlobalSearch } from "@/components/app/global-search";
@@ -9,8 +10,9 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { logout } from "@/lib/api";
+import { logout, hasValidToken, apiGetNotifications, apiMarkNotificationRead, apiMarkAllNotificationsRead, type AppNotification } from "@/lib/api";
 import { useCurrentUser } from "@/lib/current-user";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 export function AppTopbar() {
@@ -68,9 +70,7 @@ export function AppTopbar() {
       <GlobalSearch />
 
       <div className="ml-auto flex min-w-0 items-center gap-0.5 sm:gap-1">
-        <IconButton label="Notifications" badge>
-          <Bell className="h-[18px] w-[18px]" />
-        </IconButton>
+        <NotificationsBell />
         <IconButton label="Messages">
           <Mail className="h-[18px] w-[18px]" />
         </IconButton>
@@ -126,6 +126,112 @@ export function AppTopbar() {
         </DropdownMenu>
       </div>
     </header>
+  );
+}
+
+function notificationIcon(type: string) {
+  if (type === "ppmp_approved") return <ShieldCheck className="h-4 w-4 text-success" />;
+  if (type === "ppmp_returned") return <Undo2 className="h-4 w-4 text-amber-500" />;
+  return <FileText className="h-4 w-4 text-primary" />;
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
+function NotificationsBell() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["notifications"],
+    queryFn: apiGetNotifications,
+    enabled: hasValidToken(),
+    refetchInterval: 30000,
+    refetchOnWindowFocus: true,
+  });
+  const items = data?.items ?? [];
+  const unread = data?.unread ?? 0;
+
+  const markRead = useMutation({
+    mutationFn: (id: number) => apiMarkNotificationRead(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+  const markAll = useMutation({
+    mutationFn: apiMarkAllNotificationsRead,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+
+  const open = (n: AppNotification) => {
+    if (!n.read) markRead.mutate(n.id);
+    if (!n.link) return;
+    const [path, qs] = n.link.split("?");
+    const search = qs ? Object.fromEntries(new URLSearchParams(qs).entries()) : undefined;
+    navigate({ to: path, search } as Parameters<typeof navigate>[0]);
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative rounded-full text-navy hover:bg-secondary"
+          aria-label="Notifications"
+          title="Notifications"
+        >
+          <Bell className="h-[18px] w-[18px]" />
+          {unread > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-white ring-2 ring-card">
+              {unread > 9 ? "9+" : unread}
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <div className="flex items-center justify-between px-2 py-1.5">
+          <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
+          {unread > 0 && (
+            <button
+              type="button"
+              onClick={() => markAll.mutate()}
+              className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+            >
+              <CheckCheck className="h-3.5 w-3.5" /> Mark all read
+            </button>
+          )}
+        </div>
+        <DropdownMenuSeparator />
+        {items.length === 0 ? (
+          <p className="px-3 py-6 text-center text-sm text-muted-foreground">You're all caught up.</p>
+        ) : (
+          <div className="max-h-96 overflow-y-auto">
+            {items.map((n) => (
+              <DropdownMenuItem
+                key={n.id}
+                onSelect={(e) => { e.preventDefault(); open(n); }}
+                className={cn("flex items-start gap-2.5 whitespace-normal px-3 py-2.5", !n.read && "bg-primary/5")}
+              >
+                <span className="mt-0.5 shrink-0">{notificationIcon(n.type)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5">
+                    {!n.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
+                    <span className="text-sm font-medium text-navy">{n.title}</span>
+                  </span>
+                  {n.body && <span className="mt-0.5 block text-xs text-muted-foreground">{n.body}</span>}
+                  <span className="mt-0.5 block text-[10px] text-muted-foreground">{timeAgo(n.createdAt)}</span>
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </div>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

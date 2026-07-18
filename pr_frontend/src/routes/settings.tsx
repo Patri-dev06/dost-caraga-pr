@@ -5,8 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
-import { apiGetSystemSettings, apiUpdateSystemSettings, type SystemPreferenceRecord } from "@/lib/api";
+import { apiGetSystemSettings, apiUpdateSystemSettings, apiGetSignatories, type SystemPreferenceRecord, type Signatory } from "@/lib/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
@@ -45,6 +46,10 @@ function SettingsPage() {
   const { data: systemSettings = [], isLoading: settingsLoading } = useQuery({
     queryKey: ["system-settings"],
     queryFn: apiGetSystemSettings,
+  });
+  const { data: signatories = [] } = useQuery({
+    queryKey: ["signatories"],
+    queryFn: apiGetSignatories,
   });
   const updateSettings = useMutation({
     mutationFn: apiUpdateSystemSettings,
@@ -167,6 +172,7 @@ function SettingsPage() {
                       key={setting.key}
                       setting={setting}
                       value={settingValue(setting)}
+                      users={signatories}
                       onChange={(value) => setDraftSettings((current) => ({ ...current, [setting.key]: value }))}
                     />
                   ))}
@@ -228,12 +234,15 @@ function SettingsPage() {
 function SystemPreferenceField({
   setting,
   value,
+  users,
   onChange,
 }: {
   setting: SystemPreferenceRecord;
   value: SystemPreferenceRecord["value"];
+  users: Signatory[];
   onChange: (value: SystemPreferenceRecord["value"]) => void;
 }) {
+  const isBudgetOfficer = setting.key === "budget_officer_user_id";
   return (
     <div className="rounded-md border border-border bg-secondary/20 p-3">
       <div className="flex items-start justify-between gap-4">
@@ -243,13 +252,29 @@ function SystemPreferenceField({
         </div>
         {setting.type === "boolean" && <Switch checked={Boolean(value)} onCheckedChange={onChange} />}
       </div>
-      {setting.type !== "boolean" && (
-        <Input
-          type={setting.type === "number" ? "number" : "text"}
-          value={value == null ? "" : String(value)}
-          onChange={(event) => onChange(setting.type === "number" ? Number(event.target.value) : event.target.value)}
-          className="mt-3 h-10 border-border bg-background"
-        />
+      {isBudgetOfficer ? (
+        <Select value={value == null || value === "" ? "" : String(value)} onValueChange={(v) => onChange(v)}>
+          <SelectTrigger className="mt-3 h-10 border-border bg-background">
+            <SelectValue placeholder="Select the budget officer" />
+          </SelectTrigger>
+          <SelectContent>
+            {users.map((u) => (
+              <SelectItem key={u.id} value={String(u.id)}>
+                {u.name}
+                {u.position ? ` — ${u.position}` : ""}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        setting.type !== "boolean" && (
+          <Input
+            type={setting.type === "number" ? "number" : "text"}
+            value={value == null ? "" : String(value)}
+            onChange={(event) => onChange(setting.type === "number" ? Number(event.target.value) : event.target.value)}
+            className="mt-3 h-10 border-border bg-background"
+          />
+        )
       )}
     </div>
   );
