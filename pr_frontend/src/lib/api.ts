@@ -119,6 +119,8 @@ export type AppCseRecord = {
   uom: string;
   qty: number;
   unitPrice: number;
+  fiscalYear: number | null;
+  isConsolidated: boolean;
 };
 
 export type AppNonCseRecord = {
@@ -128,6 +130,8 @@ export type AppNonCseRecord = {
   category: string;
   qty: number;
   estCost: number;
+  fiscalYear: number | null;
+  isConsolidated: boolean;
 };
 
 export type BudgetRecord = {
@@ -824,6 +828,8 @@ type BackendAppCse = {
   code: string | null;
   quantity: string | number;
   unit_price: string | number;
+  fiscal_year?: number | null;
+  is_consolidated?: boolean;
   item?: { name: string; uom: string } | null;
 };
 
@@ -832,6 +838,8 @@ type BackendAppNonCse = {
   code: string | null;
   quantity: string | number;
   estimated_cost: string | number;
+  fiscal_year?: number | null;
+  is_consolidated?: boolean;
   item?: { name: string; category: string | null } | null;
 };
 
@@ -1027,6 +1035,8 @@ function mapAppCse(row: BackendAppCse): AppCseRecord {
     uom: row.item?.uom ?? "unit",
     qty: Number(row.quantity),
     unitPrice: Number(row.unit_price),
+    fiscalYear: row.fiscal_year ?? null,
+    isConsolidated: Boolean(row.is_consolidated),
   };
 }
 
@@ -1038,6 +1048,8 @@ function mapAppNonCse(row: BackendAppNonCse): AppNonCseRecord {
     category: row.item?.category ?? "N/A",
     qty: Number(row.quantity),
     estCost: Number(row.estimated_cost),
+    fiscalYear: row.fiscal_year ?? null,
+    isConsolidated: Boolean(row.is_consolidated),
   };
 }
 

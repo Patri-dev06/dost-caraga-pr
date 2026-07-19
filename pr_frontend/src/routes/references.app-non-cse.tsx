@@ -39,18 +39,26 @@ function AppNonCsePage() {
             <TableHead className="label-eyebrow">Code</TableHead>
             <TableHead className="label-eyebrow">Item</TableHead>
             <TableHead className="label-eyebrow">Category</TableHead>
+            <TableHead className="label-eyebrow text-right">Year</TableHead>
             <TableHead className="label-eyebrow text-right">Qty</TableHead>
             <TableHead className="label-eyebrow text-right">Estimated Cost</TableHead>
+            <TableHead className="label-eyebrow">Source</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {isLoading && <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Fetching data, kindly wait.</TableCell></TableRow>}
+            {isLoading && <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Fetching data, kindly wait.</TableCell></TableRow>}
             {appNonCseEntries.map((e) => (
               <TableRow key={e.id}>
                 <TableCell className="font-semibold text-navy">{e.code}</TableCell>
                 <TableCell>{e.item}</TableCell>
                 <TableCell className="text-muted-foreground">{e.category}</TableCell>
+                <TableCell className="text-right tabular-nums">{e.fiscalYear ?? "—"}</TableCell>
                 <TableCell className="text-right tabular-nums">{e.qty}</TableCell>
                 <TableCell className="text-right font-medium tabular-nums">{fmtPHP(e.estCost)}</TableCell>
+                <TableCell>
+                  <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                    {e.isConsolidated ? "From PPMP" : "Manual"}
+                  </span>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

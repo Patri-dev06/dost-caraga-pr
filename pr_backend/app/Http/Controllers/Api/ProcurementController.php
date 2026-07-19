@@ -552,6 +552,11 @@ class ProcurementController extends Controller
 
             $document->save();
 
+            // Once approved, roll this PPMP's items up into the year's consolidated APP.
+            if ($action === 'approve' && $document->fiscal_year) {
+                $this->consolidateAppForYear((int) $document->fiscal_year);
+            }
+
             return $document->fresh('items');
         });
 
@@ -574,6 +579,102 @@ class ProcurementController extends Controller
         $this->audit($request, 'PPMP', $action === 'approve' ? 'Approved PPMP (Budget Officer)' : 'Returned PPMP (Budget Officer)', $document->client_uid);
 
         return response()->json(['data' => $this->formatPlanningPpmp($document)]);
+    }
+
+    /**
+     * Rebuild the consolidated APP (CSE + Non-CSE) for a fiscal year from every approved PPMP.
+     *
+     * Items are grouped by procurement item and summed across all projects; CSE vs Non-CSE is
+     * decided by the item's expense-category text. Only auto-generated (is_consolidated) rows are
+     * rebuilt — manually encoded reference rows are left untouched.
+     */
+    private function consolidateAppForYear(int $fiscalYear): void
+    {
+        AppCseItem::where('is_consolidated', true)->where('fiscal_year', $fiscalYear)->delete();
+        AppNonCseItem::where('is_consolidated', true)->where('fiscal_year', $fiscalYear)->delete();
+
+        $items = PpmpItem::query()
+            ->whereHas('document', fn ($query) => $query->where('status', 'Approved')->where('fiscal_year', $fiscalYear))
+            ->get();
+
+        // Group by procurement item so the same supply requested by many projects becomes one APP line.
+        $cse = [];
+        $nonCse = [];
+        foreach ($items as $item) {
+            $key = $item->procurement_item_id ?: 'name:'.mb_strtolower((string) $item->item_name);
+            $isCse = $this->isCseExpense($item->expense_category, $item->expense_subcategory);
+            $group = $isCse ? $cse : $nonCse;
+
+            if (! isset($group[$key])) {
+                $group[$key] = [
+                    'procurement_item_id' => $item->procurement_item_id,
+                    'code' => $item->code,
+                    'quantity' => 0.0,
+                    'budget' => 0.0,
+                ];
+            }
+
+            $group[$key]['quantity'] += (float) $item->quantity;
+            $group[$key]['budget'] += (float) $item->estimated_budget;
+            $group[$key]['code'] = $group[$key]['code'] ?: $item->code;
+
+            if ($isCse) {
+                $cse = $group;
+            } else {
+                $nonCse = $group;
+            }
+        }
+
+        foreach ($cse as $row) {
+            if (! $row['procurement_item_id']) {
+                continue;
+            }
+            AppCseItem::create([
+                'project_id' => null,
+                'fiscal_year' => $fiscalYear,
+                'is_consolidated' => true,
+                'procurement_item_id' => $row['procurement_item_id'],
+                'code' => $row['code'],
+                'quantity' => $row['quantity'],
+                'unit_price' => $row['quantity'] > 0 ? round($row['budget'] / $row['quantity'], 2) : 0,
+            ]);
+        }
+
+        foreach ($nonCse as $row) {
+            if (! $row['procurement_item_id']) {
+                continue;
+            }
+            AppNonCseItem::create([
+                'project_id' => null,
+                'fiscal_year' => $fiscalYear,
+                'is_consolidated' => true,
+                'procurement_item_id' => $row['procurement_item_id'],
+                'code' => $row['code'],
+                'quantity' => $row['quantity'],
+                'estimated_cost' => round($row['budget'], 2),
+            ]);
+        }
+    }
+
+    /**
+     * Classify a PPMP line as Common-Use Supplies & Equipment (APP-CSE) from its expense labels.
+     */
+    private function isCseExpense(?string ...$labels): bool
+    {
+        $needles = ['common-use', 'common use', 'cse', 'office supplies', 'office supply'];
+        foreach ($labels as $label) {
+            $text = mb_strtolower(trim((string) $label));
+            if ($text === '') {
+                continue;
+            }
+            foreach ($needles as $needle) {
+                if (str_contains($text, $needle)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public function planningPpmpDestroy(Request $request, string $clientUid): JsonResponse
@@ -1187,7 +1288,7 @@ class ProcurementController extends Controller
     public function appCseIndex(?Project $project = null): JsonResponse
     {
         $this->guardModule('references');
-        $query = AppCseItem::with('item');
+        $query = AppCseItem::with('item')->orderByDesc('fiscal_year');
         $project ? $query->whereBelongsTo($project) : $query->whereNull('project_id');
 
         return response()->json(['data' => $query->get()]);
@@ -1209,7 +1310,7 @@ class ProcurementController extends Controller
     public function appNonCseIndex(?Project $project = null): JsonResponse
     {
         $this->guardModule('references');
-        $query = AppNonCseItem::with('item');
+        $query = AppNonCseItem::with('item')->orderByDesc('fiscal_year');
         $project ? $query->whereBelongsTo($project) : $query->whereNull('project_id');
 
         return response()->json(['data' => $query->get()]);

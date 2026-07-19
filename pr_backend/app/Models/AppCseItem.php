@@ -7,7 +7,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AppCseItem extends Model
 {
-    protected $fillable = ['project_id', 'procurement_item_id', 'code', 'quantity', 'unit_price'];
+    protected $fillable = ['project_id', 'fiscal_year', 'is_consolidated', 'procurement_item_id', 'code', 'quantity', 'unit_price'];
+
+    protected function casts(): array
+    {
+        return ['is_consolidated' => 'boolean', 'fiscal_year' => 'integer'];
+    }
 
     public function item(): BelongsTo
     {
