@@ -173,7 +173,9 @@ function AddRowMenu({
   const [open, setOpen] = useState(false);
   const canBranch = !(row.header && row.indent === 1);
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    // Non-modal: a modal menu locks body scroll and sets pointer-events:none,
+    // which shifts the page and drops the row hover this toolbar depends on.
+    <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -184,7 +186,12 @@ function AddRowMenu({
           <Plus className="h-3.5 w-3.5" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" onMouseLeave={() => setOpen(false)} style={{ fontFamily: "var(--font-sans)" }}>
+      <DropdownMenuContent
+        align="start"
+        onMouseLeave={() => setOpen(false)}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        style={{ fontFamily: "var(--font-sans)" }}
+      >
         <DropdownMenuItem onClick={onLine}>
           <Plus className="h-3.5 w-3.5" /> Add Line
         </DropdownMenuItem>
@@ -659,7 +666,7 @@ function LibForm() {
                     >
                       <td className={cn(gl, "relative py-1.5 pr-2")}>
                         {editing && (
-                          <div className="no-print absolute -left-12 top-1 flex items-center gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+                          <div className="no-print absolute -left-12 top-1 z-20 flex items-center gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 has-[[data-state=open]]:opacity-100">
                             <AddRowMenu
                               row={r}
                               onLine={() => addLineAfter(r.id)}
