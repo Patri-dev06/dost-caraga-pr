@@ -141,6 +141,26 @@ class ProcurementController extends Controller
         ]);
     }
 
+    /** The designated routing signatories (Supervisor, Budget Officer, Regional Director). */
+    public function workflowSignatories(Request $request): JsonResponse
+    {
+        $me = $request->user()?->id;
+        $fmt = fn (?User $u, string $fallback): ?array => $u ? [
+            'id' => $u->id,
+            'name' => $u->name,
+            'position' => $u->position ?: $fallback,
+            'isCurrentUser' => $u->id === $me,
+        ] : null;
+
+        return response()->json([
+            'data' => [
+                'supervisor' => $fmt($this->designatedSupervisor(), 'Supervisor'),
+                'budgetOfficer' => $fmt($this->designatedBudgetOfficer(), 'Budget Officer'),
+                'regionalDirector' => $fmt($this->designatedRegionalDirector(), 'Regional Director'),
+            ],
+        ]);
+    }
+
     public function notifications(Request $request): JsonResponse
     {
         $notifications = UserNotification::where('user_id', $request->user()?->id)
@@ -593,7 +613,8 @@ class ProcurementController extends Controller
             $document->fill([
                 'project_id' => $document->project_id ?? $this->defaultPlanningProjectId(),
                 'lib_document_id' => $lib?->id,
-                'ppmp_no' => $data['ppmpNo'] ?? null,
+                // Auto-assign a unique PPMP number on first save; never overwrite an assigned one.
+                'ppmp_no' => $document->ppmp_no ?: ($data['ppmpNo'] ?: $this->nextPpmpNo((int) $data['fiscalYear'])),
                 'status' => $data['status'],
                 'revision_count' => $data['revisionCount'] ?? 0,
                 'fiscal_year' => $data['fiscalYear'],
@@ -2399,5 +2420,17 @@ class ProcurementController extends Controller
         $lastSeq = $lastNo ? (int) preg_replace('/\D/', '', substr((string) $lastNo, strlen("PR-{$year}-"))) : 0;
 
         return sprintf('PR-%d-%04d', $year, $lastSeq + 1);
+    }
+
+    /** Continuous, collision-safe PPMP number for a fiscal year (unique across projects). */
+    private function nextPpmpNo(int $fiscalYear): string
+    {
+        $year = $fiscalYear ?: now()->year;
+        $lastNo = PpmpDocument::where('ppmp_no', 'like', "PPMP-{$year}-%")
+            ->orderByRaw('CAST(SUBSTRING(ppmp_no FROM \'[0-9]+$\') AS INTEGER) DESC')
+            ->value('ppmp_no');
+        $lastSeq = $lastNo ? (int) preg_replace('/\D/', '', substr((string) $lastNo, strlen("PPMP-{$year}-"))) : 0;
+
+        return sprintf('PPMP-%d-%04d', $year, $lastSeq + 1);
     }
 }

@@ -101,6 +101,7 @@ function TextField({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
+      spellCheck
       className={cn(shared, "rounded-sm px-0.5 outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100")}
     />
   );
@@ -126,6 +127,7 @@ function AmountField({
       value={focused || value === "" ? value : fmtAmount(parseAmount(value))}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
+      spellCheck={false}
       // Numbers only: keep digits, commas and the decimal point; drop anything else.
       onChange={(e) => onChange(e.target.value.replace(/[^0-9.,]/g, ""))}
       className={cn(shared, "rounded-sm px-0.5 outline-none hover:bg-amber-50 focus:bg-amber-100")}
@@ -137,11 +139,13 @@ function AutoTextarea({
   value,
   onChange,
   editing,
+  placeholder,
   className,
 }: {
   value: string;
   onChange: (v: string) => void;
   editing: boolean;
+  placeholder?: string;
   className?: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -158,7 +162,9 @@ function AutoTextarea({
       rows={1}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={cn("w-full resize-none overflow-hidden rounded-sm bg-transparent px-0.5 leading-snug outline-none hover:bg-amber-50 focus:bg-amber-100", className)}
+      placeholder={placeholder}
+      spellCheck
+      className={cn("w-full resize-none overflow-hidden rounded-sm bg-transparent px-0.5 leading-snug outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100", className)}
     />
   );
 }
@@ -642,23 +648,23 @@ function LibForm() {
             <div className="space-y-0.5">
               {(
                 [
-                  ["Program Title", "programTitle"],
-                  ["Project Title", "projectTitle"],
-                  ["Implementing Agency", "implementingAgency"],
-                  ["Total Duration", "totalDuration"],
-                  ["Cooperating Agency", "cooperatingAgency"],
-                  ["Project Leader", "projectLeader"],
-                  ["Monitoring Agency", "monitoringAgency"],
-                ] as [string, keyof LibDoc][]
-              ).map(([label, key]) => (
+                  ["Program Title", "programTitle", "e.g. Community Empowerment through S&T Program"],
+                  ["Project Title", "projectTitle", "e.g. Smart Farming Solutions for Caraga MSMEs"],
+                  ["Implementing Agency", "implementingAgency", "e.g. DOST Caraga Regional Office"],
+                  ["Total Duration", "totalDuration", "e.g. 12 months (Jan–Dec 2026)"],
+                  ["Cooperating Agency", "cooperatingAgency", "e.g. LGUs, SUCs, and partner agencies"],
+                  ["Project Leader", "projectLeader", "Full name of the project leader"],
+                  ["Monitoring Agency", "monitoringAgency", "e.g. DOST Caraga PMEU"],
+                ] as [string, keyof LibDoc, string][]
+              ).map(([label, key, placeholder]) => (
                 <div key={key} className="flex items-start gap-2">
                   <span className="w-36 shrink-0 font-bold">{label}</span>
                   <span className="shrink-0 font-bold">:</span>
                   <div className={cn("min-w-0 flex-1", fullEdit && "border-b border-black/20")}>
                     {key === "cooperatingAgency" || key === "projectTitle" ? (
-                      <AutoTextarea value={String(doc[key])} onChange={(v) => set(key, v as LibDoc[typeof key])} editing={fullEdit} className={key === "projectTitle" ? "underline" : ""} />
+                      <AutoTextarea value={String(doc[key])} onChange={(v) => set(key, v as LibDoc[typeof key])} editing={fullEdit} placeholder={placeholder} className={key === "projectTitle" ? "underline" : ""} />
                     ) : (
-                      <TextField value={String(doc[key])} onChange={(v) => set(key, v as LibDoc[typeof key])} editing={fullEdit} />
+                      <TextField value={String(doc[key])} onChange={(v) => set(key, v as LibDoc[typeof key])} editing={fullEdit} placeholder={placeholder} />
                     )}
                   </div>
                 </div>

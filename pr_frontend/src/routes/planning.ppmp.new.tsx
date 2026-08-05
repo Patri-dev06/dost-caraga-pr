@@ -6,7 +6,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { apiGetSignatories, apiGetBudgetOfficer, type Signatory as SignatoryOption, type BudgetOfficer } from "@/lib/api";
+import { apiGetSignatories, apiGetBudgetOfficer, apiGetWorkflowSignatories, type Signatory as SignatoryOption, type BudgetOfficer, type WorkflowSignatory } from "@/lib/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { currentLibBudgetTotal, getLib, listLibs, fmtAmount, parseAmount, type LibDoc } from "@/lib/lib-store";
@@ -102,6 +102,7 @@ function TextField({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
+      spellCheck
       className={cn(shared, "rounded-sm px-0.5 outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100")}
     />
   );
@@ -134,6 +135,7 @@ function MainItemField({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder="CATEGORY NAME"
+      spellCheck
       className="w-full rounded-sm bg-transparent px-0.5 uppercase leading-snug outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100"
       style={style}
     />
@@ -192,6 +194,7 @@ function AmountField({
       value={value}
       onChange={(e) => onChange(formatTypedAmount(e.target.value))}
       placeholder="0.00"
+      spellCheck={false}
       className={cn(shared, "rounded-sm px-0.5 outline-none placeholder:text-black/20 hover:bg-amber-50 focus:bg-amber-100")}
     />
   );
@@ -339,12 +342,14 @@ function AutoTextarea({
   onChange,
   editing,
   italic,
+  placeholder,
   className,
 }: {
   value: string;
   onChange: (v: string) => void;
   editing: boolean;
   italic?: boolean;
+  placeholder?: string;
   className?: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -361,7 +366,9 @@ function AutoTextarea({
       rows={1}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={cn("w-full resize-none overflow-hidden rounded-sm bg-transparent px-0.5 leading-snug outline-none hover:bg-amber-50 focus:bg-amber-100", italic && "italic", className)}
+      placeholder={placeholder}
+      spellCheck
+      className={cn("w-full resize-none overflow-hidden rounded-sm bg-transparent px-0.5 leading-snug outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100", italic && "italic", className)}
     />
   );
 }
@@ -848,6 +855,14 @@ function CreatePpmpPage() {
       .catch(() => setBudgetOfficer(null));
   }, []);
 
+  // Designated Regional Director — the approving authority shown as "Approved by".
+  const [regionalDirector, setRegionalDirector] = useState<WorkflowSignatory | null>(null);
+  useEffect(() => {
+    apiGetWorkflowSignatories()
+      .then((s) => setRegionalDirector(s.regionalDirector))
+      .catch(() => setRegionalDirector(null));
+  }, []);
+
   // Budget Officer review state: per-item and overall comments, plus the return reason.
   const [ownerId, setOwnerId] = useState<number | undefined>(undefined);
   const [returnReasonMeta, setReturnReasonMeta] = useState("");
@@ -859,7 +874,7 @@ function CreatePpmpPage() {
   const [reviewSaving, setReviewSaving] = useState<"return" | "approve" | null>(null);
 
   const [doc, setDoc] = useState<PpmpDoc>({
-    ppmpNo: "3",
+    ppmpNo: "",
     fiscalYear: "2026",
     endUserUnit: "MIS",
     documentType: "Final",
@@ -1261,7 +1276,7 @@ function CreatePpmpPage() {
       savePpmp({
         id: existingPpmp?.id ?? `ppmp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         libId: selectedLib.id,
-        ppmpNo: doc.ppmpNo.trim() || "1",
+        ppmpNo: doc.ppmpNo.trim(), // empty → server auto-assigns a unique PPMP number
         status,
         revisionCount,
         fiscalYear: Number(doc.fiscalYear) || 2026,
@@ -1532,7 +1547,8 @@ function CreatePpmpPage() {
             <div className="text-center">
               <p className="text-[14px] font-bold">
                 PROJECT PROCUREMENT MANAGEMENT PLAN (PPMP) NO.{" "}
-                <TextField value={doc.ppmpNo} onChange={(v) => set("ppmpNo", v)} editing={editing} className="inline w-12 text-center" />
+                {/* Auto-assigned by the server on first save; read-only. */}
+                <TextField value={doc.ppmpNo || "(auto-assigned on save)"} onChange={() => {}} editing={false} className="inline w-56 text-center" />
               </p>
               <div className="mt-2 flex items-center justify-center gap-12">
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -1554,7 +1570,7 @@ function CreatePpmpPage() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="shrink-0 font-bold">End-User or Implementing Unit :</span>
-                <TextField value={doc.endUserUnit} onChange={(v) => set("endUserUnit", v)} editing={editing} className="w-48" bold />
+                <TextField value={doc.endUserUnit} onChange={(v) => set("endUserUnit", v)} editing={editing} className="w-48" bold placeholder="e.g. MIS / STSD" />
               </div>
               <div className="flex items-center gap-6">
                 <span className="shrink-0 font-bold">Classification :</span>
@@ -1569,7 +1585,7 @@ function CreatePpmpPage() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="shrink-0 font-bold">Chargeable to :</span>
-                <TextField value={doc.chargeableTo} onChange={(v) => set("chargeableTo", v)} editing={editing} className="w-64" bold />
+                <TextField value={doc.chargeableTo} onChange={(v) => set("chargeableTo", v)} editing={editing} className="w-64" bold placeholder="e.g. GAA 2026 MOOE / SETUP Fund" />
               </div>
             </div>
 
@@ -1809,6 +1825,7 @@ function CreatePpmpPage() {
                                 onChange={(v) => setRow(activeGroup.id, { generalDescription: v })}
                                 editing={editing}
                                 italic
+                                placeholder="Describe this procurement group"
                                 className="min-h-[4.8em]"
                               />
                             </td>
@@ -1835,7 +1852,7 @@ function CreatePpmpPage() {
                                 </button>
                               </div>
                             )}
-                            <AutoTextarea value={r.generalDescription} onChange={(v) => setRow(r.id, { generalDescription: v })} editing={editing} />
+                            <AutoTextarea value={r.generalDescription} onChange={(v) => setRow(r.id, { generalDescription: v })} editing={editing} placeholder="Item / description" />
                           </td>
                         )}
                         {/* Column 2: Type (Dropdown) */}
@@ -1945,6 +1962,7 @@ function CreatePpmpPage() {
                             value={r.sourceOfFunds || (isItemFilled(r) ? sourceOfFundsProjectName : "")}
                             onChange={(v) => setRow(r.id, { sourceOfFunds: v })}
                             editing={editing}
+                            placeholder="Source of funds"
                             className="text-[9px]"
                           />
                         </td>
@@ -2046,6 +2064,8 @@ function CreatePpmpPage() {
             <div className="mt-10 grid grid-cols-2 gap-x-12 gap-y-8">
               <Signatory label="Prepared & Submitted by:" name={doc.preparedByName} position={doc.preparedByPosition} date={doc.preparedByDate} editing={editing} options={signatories} auto onName={(v) => set("preparedByName", v)} onPosition={(v) => set("preparedByPosition", v)} onDate={(v) => set("preparedByDate", v)} />
               <Signatory label="Certified Funds Available:" name={doc.budgetOfficerName} position={doc.budgetOfficerPosition} date={formatSignatoryDate(doc.budgetCertifiedDate || approvalMeta.at || "")} editing={editing} options={signatories} auto dateEditable={false} onName={(v) => set("budgetOfficerName", v)} onPosition={(v) => set("budgetOfficerPosition", v)} onDate={(v) => set("budgetCertifiedDate", v)} />
+              {/* Approving authority is the designated Regional Director (server-authoritative, read-only). */}
+              <Signatory label="Approved by:" name={regionalDirector?.name ?? ""} position={regionalDirector?.position ?? "Regional Director"} date="" editing={false} options={signatories} auto onName={() => {}} onPosition={() => {}} onDate={() => {}} />
             </div>
           </div>
 

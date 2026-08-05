@@ -17,6 +17,7 @@ Route::prefix('v1')->group(function (): void {
         // Approved accounts for signatory pickers (readable by any signed-in user).
         Route::get('/signatories', [ProcurementController::class, 'signatories']);
         Route::get('/budget-officer', [ProcurementController::class, 'budgetOfficer']);
+        Route::get('/workflow-signatories', [ProcurementController::class, 'workflowSignatories']);
 
         // In-app notifications.
         Route::get('/notifications', [ProcurementController::class, 'notifications']);

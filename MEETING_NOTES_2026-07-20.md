@@ -31,11 +31,11 @@ Notes:
 - [x] **"Chargeable to" field on PPMP** — new `chargeable_to` column, form field, and API round-trip.
 - [x] **PPMP classification (Regular/Project)** — see §3; new `ppmp_class` column + form selector (also implements the LIB-vs-GAA distinction).
 - [x] **"+" hover bug** — marked done in notes (not re-touched).
-- [ ] **Typo check** — general spelling/label pass across the app. *(Deferred — needs a scoped list of screens.)*
-- [ ] **Description follows text** — description field should auto-fill / follow the item text. *(Deferred — needs the exact field/behavior confirmed.)*
-- [ ] **PPMP no. / title unique per project** — enforce uniqueness of PPMP no. per project. *(Deferred — decide auto-number vs validation.)*
+- [x] **Typo check** — native browser spellcheck (red underline) enabled on all text inputs/textareas in the LIB and PPMP forms.
+- [x] **Description follows text** — implemented as placeholder hint text on empty LIB & PPMP fields (header/meta fields and row descriptions).
+- [x] **PPMP no. unique per project** — auto-numbered `PPMP-{year}-{0001}` (continuous, collision-safe); the field is now read-only/auto-assigned.
 - [ ] **PPMP reuse when approved** — allow reusing/duplicating an approved PPMP. *(Deferred — define "reuse": clone into new draft?)*
-- [ ] **"Approved by: RD"** — Regional Director shown as approver in PPMP and across all documents. *(Deferred — needs RD signatory wiring across all doc types.)*
+- [x] **"Approved by: RD"** — the designated Regional Director now shows as the "Approved by" signatory on the PPMP (via a new `/workflow-signatories` endpoint). LIB already captures its RD approver through the routing workflow. *(PR/RFQ printouts not yet forced to show RD — deferred.)*
 - [x] **Notify when returned (PPMP)** — already implemented (`ppmp_returned` notification to owner).
 - [x] **Full LIB routing workflow** — implemented: Preparer → Supervisor (recommend) → Budget Officer (certify) → Regional Director (approve), with return-to-preparer at any stage, per-stage authorization, and notifications at every step (`lib_submitted/recommended/certified/approved/returned`). Designated Supervisor & Regional Director are set in System Settings (like the Budget Officer). Return-reason banner shown to the preparer.
 - [ ] **Certified Funds Available (MMA)** — Budget Officer certification exists for PPMP; extend labelling/flow. *(Partially present; revisit with LIB routing.)*

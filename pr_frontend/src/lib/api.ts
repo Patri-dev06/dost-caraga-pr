@@ -450,6 +450,19 @@ export async function apiGetBudgetOfficer(): Promise<BudgetOfficer | null> {
   return result.data;
 }
 
+export type WorkflowSignatory = { id: number; name: string; position: string; isCurrentUser: boolean };
+export type WorkflowSignatories = {
+  supervisor: WorkflowSignatory | null;
+  budgetOfficer: WorkflowSignatory | null;
+  regionalDirector: WorkflowSignatory | null;
+};
+
+/** The designated routing signatories (Supervisor, Budget Officer, Regional Director). */
+export async function apiGetWorkflowSignatories(): Promise<WorkflowSignatories> {
+  const result = await request<{ data: WorkflowSignatories }>("/workflow-signatories");
+  return result.data;
+}
+
 export type AppNotification = {
   id: number;
   type: string;
