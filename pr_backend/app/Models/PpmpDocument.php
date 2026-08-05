@@ -18,6 +18,8 @@ class PpmpDocument extends Model
         'fiscal_year',
         'end_user_unit',
         'document_type',
+        'ppmp_class',
+        'chargeable_to',
         'source_filename',
         'prepared_submitted_by_name',
         'prepared_submitted_by_position',

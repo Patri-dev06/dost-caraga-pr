@@ -213,6 +213,7 @@ function NumField({
   align = "right",
   format = false,
   placeholder,
+  integer = false,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -220,6 +221,7 @@ function NumField({
   align?: Align;
   format?: boolean;
   placeholder?: string;
+  integer?: boolean;
 }) {
   const shared = cn("w-full bg-transparent px-1 py-0.5 leading-snug tabular-nums", alignClass[align]);
   if (!editing) {
@@ -229,9 +231,10 @@ function NumField({
   }
   return (
     <input
-      inputMode="decimal"
+      inputMode={integer ? "numeric" : "decimal"}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      // Quantity is whole units only — strip anything that isn't a digit.
+      onChange={(e) => onChange(integer ? e.target.value.replace(/\D/g, "") : e.target.value)}
       placeholder={placeholder}
       className={cn(
         shared,
@@ -962,7 +965,7 @@ function NewPR() {
                       )}
                     </td>
                     <td className={cn(cell, overQtyRow && "bg-red-100 ring-2 ring-inset ring-red-500")}>
-                      <NumField value={it.qty} onChange={(v) => updateItem(it.id, { qty: v })} editing={editing} align="center" />
+                      <NumField value={it.qty} onChange={(v) => updateItem(it.id, { qty: v })} editing={editing} align="center" integer />
                     </td>
                     <td className={cell}>
                       <NumField value={it.unitCost} onChange={(v) => updateItem(it.id, { unitCost: v })} editing={editing} format />

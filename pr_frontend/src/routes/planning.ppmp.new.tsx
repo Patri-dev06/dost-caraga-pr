@@ -392,6 +392,8 @@ interface PpmpDoc {
   fiscalYear: string;
   endUserUnit: string;
   documentType: string;
+  ppmpClass: "Regular" | "Project";
+  chargeableTo: string;
   preparedByName: string;
   preparedByPosition: string;
   preparedByDate: string;
@@ -861,6 +863,8 @@ function CreatePpmpPage() {
     fiscalYear: "2026",
     endUserUnit: "MIS",
     documentType: "Final",
+    ppmpClass: "Project",
+    chargeableTo: "",
     preparedByName: "",
     preparedByPosition: "",
     preparedByDate: "",
@@ -914,6 +918,8 @@ function CreatePpmpPage() {
         fiscalYear: String(existingPpmp.fiscalYear || lib.fiscalYear || "2026"),
         endUserUnit: existingPpmp.endUserUnit ?? "",
         documentType: existingPpmp.documentType ?? "Final",
+        ppmpClass: existingPpmp.ppmpClass ?? (existingPpmp.libId ? "Project" : "Regular"),
+        chargeableTo: existingPpmp.chargeableTo ?? "",
         preparedByName: existingPpmp.preparedByName ?? "",
         preparedByPosition: existingPpmp.preparedByPosition ?? "",
         preparedByDate: existingPpmp.preparedByDate ?? "",
@@ -1261,6 +1267,8 @@ function CreatePpmpPage() {
         fiscalYear: Number(doc.fiscalYear) || 2026,
         endUserUnit: doc.endUserUnit.trim(),
         documentType: doc.documentType as "Indicative" | "Final",
+        ppmpClass: doc.ppmpClass,
+        chargeableTo: doc.chargeableTo.trim(),
         preparedByName: doc.preparedByName.trim(),
         preparedByPosition: doc.preparedByPosition.trim(),
         preparedByDate: doc.preparedByDate,
@@ -1547,6 +1555,21 @@ function CreatePpmpPage() {
               <div className="flex items-center gap-2">
                 <span className="shrink-0 font-bold">End-User or Implementing Unit :</span>
                 <TextField value={doc.endUserUnit} onChange={(v) => set("endUserUnit", v)} editing={editing} className="w-48" bold />
+              </div>
+              <div className="flex items-center gap-6">
+                <span className="shrink-0 font-bold">Classification :</span>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={doc.ppmpClass === "Regular"} onChange={() => set("ppmpClass", "Regular")} disabled={!editing} className="h-3.5 w-3.5" />
+                  <span className="text-[12px] font-semibold">REGULAR (GAA)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={doc.ppmpClass === "Project"} onChange={() => set("ppmpClass", "Project")} disabled={!editing} className="h-3.5 w-3.5" />
+                  <span className="text-[12px] font-semibold">PROJECT (LIB)</span>
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 font-bold">Chargeable to :</span>
+                <TextField value={doc.chargeableTo} onChange={(v) => set("chargeableTo", v)} editing={editing} className="w-64" bold />
               </div>
             </div>
 

@@ -336,7 +336,10 @@ class ProcurementController extends Controller
 
         $data = $request->validate([
             'id' => ['required', 'string'],
-            'libId' => ['required', 'string'],
+            'ppmpClass' => ['nullable', 'string', Rule::in(['Regular', 'Project'])],
+            // A Project PPMP must reference a LIB; a Regular (GAA) PPMP may omit it.
+            'libId' => ['nullable', 'string', 'required_if:ppmpClass,Project'],
+            'chargeableTo' => ['nullable', 'string'],
             'ppmpNo' => ['nullable', 'string'],
             'status' => ['required', 'string'],
             'revisionCount' => ['nullable', 'integer', 'min:0'],
@@ -374,7 +377,7 @@ class ProcurementController extends Controller
 
         $user = $request->user();
         $uid = $clientUid ?? $data['id'];
-        $lib = LibDocument::where('client_uid', $data['libId'])->first();
+        $lib = ! empty($data['libId']) ? LibDocument::where('client_uid', $data['libId'])->first() : null;
         $budgetOfficer = $this->designatedBudgetOfficer();
 
         [$document, $justSubmitted] = DB::transaction(function () use ($data, $uid, $user, $lib, $budgetOfficer): array {
@@ -405,6 +408,8 @@ class ProcurementController extends Controller
                 'fiscal_year' => $data['fiscalYear'],
                 'end_user_unit' => $data['endUserUnit'] ?? null,
                 'document_type' => $data['documentType'],
+                'ppmp_class' => $data['ppmpClass'] ?? ($lib ? 'Project' : 'Regular'),
+                'chargeable_to' => $data['chargeableTo'] ?? null,
                 'prepared_submitted_by_name' => $data['preparedByName'] ?? null,
                 'prepared_submitted_by_position' => $data['preparedByPosition'] ?? null,
                 'prepared_submitted_by_date' => $this->dateOrNull($data['preparedByDate'] ?? null),
@@ -1151,6 +1156,8 @@ class ProcurementController extends Controller
             'fiscalYear' => $document->fiscal_year,
             'endUserUnit' => $document->end_user_unit ?? '',
             'documentType' => $document->document_type,
+            'ppmpClass' => $document->ppmp_class ?? 'Project',
+            'chargeableTo' => $document->chargeable_to ?? '',
             'preparedByName' => $document->prepared_submitted_by_name ?? '',
             'preparedByPosition' => $document->prepared_submitted_by_position ?? '',
             'preparedByDate' => $document->prepared_submitted_by_date?->toDateString() ?? '',
@@ -1589,7 +1596,7 @@ class ProcurementController extends Controller
             'items.*.name' => ['required', 'string'],
             'items.*.description' => ['nullable', 'string'],
             'items.*.uom' => ['required', 'string'],
-            'items.*.quantity' => ['required', 'numeric', 'min:0.01'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
             'items.*.unit_cost' => ['required', 'numeric', 'min:0'],
             'submit' => ['sometimes', 'boolean'],
         ])->validate();
@@ -1769,7 +1776,7 @@ class ProcurementController extends Controller
             'items.*.name' => ['required_with:items', 'string'],
             'items.*.description' => ['nullable', 'string'],
             'items.*.uom' => ['required_with:items', 'string'],
-            'items.*.quantity' => ['required_with:items', 'numeric', 'min:0.01'],
+            'items.*.quantity' => ['required_with:items', 'integer', 'min:1'],
             'items.*.unit_cost' => ['required_with:items', 'numeric', 'min:0'],
         ])->validate();
 
@@ -2147,8 +2154,13 @@ class ProcurementController extends Controller
     private function nextPrNo(): string
     {
         $year = now()->year;
-        $count = PurchaseRequest::whereYear('created_at', $year)->count() + 1;
+        // Continuous numbering: take the highest sequence already used this year and add one,
+        // so deleting a PR never causes a duplicate PR number (count()+1 would).
+        $lastNo = PurchaseRequest::where('pr_no', 'like', "PR-{$year}-%")
+            ->orderByRaw('CAST(SUBSTRING(pr_no FROM \'[0-9]+$\') AS INTEGER) DESC')
+            ->value('pr_no');
+        $lastSeq = $lastNo ? (int) preg_replace('/\D/', '', substr((string) $lastNo, strlen("PR-{$year}-"))) : 0;
 
-        return sprintf('PR-%d-%04d', $year, $count);
+        return sprintf('PR-%d-%04d', $year, $lastSeq + 1);
     }
 }

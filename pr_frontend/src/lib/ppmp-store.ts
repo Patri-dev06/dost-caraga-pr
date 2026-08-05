@@ -49,6 +49,8 @@ export interface PpmpForLib {
   fiscalYear: number;
   endUserUnit: string;
   documentType: "Indicative" | "Final";
+  ppmpClass: "Regular" | "Project"; // Regular = GAA-funded; Project = backed by a LIB
+  chargeableTo: string; // what the PPMP is charged against (GAA line / project fund)
   preparedByName: string;
   preparedByPosition: string;
   preparedByDate: string;
@@ -94,8 +96,16 @@ function migratePpmp(doc: Record<string, unknown>): PpmpForLib {
       : "Draft";
 
   const revisionCount = typeof doc.revisionCount === "number" ? doc.revisionCount : 0;
+  // Older PPMPs predate classification: infer Project when a LIB is linked, else Regular.
+  const ppmpClass: PpmpForLib["ppmpClass"] =
+    doc.ppmpClass === "Regular" || doc.ppmpClass === "Project"
+      ? doc.ppmpClass
+      : doc.libId
+        ? "Project"
+        : "Regular";
+  const chargeableTo = typeof doc.chargeableTo === "string" ? doc.chargeableTo : "";
 
-  return { ...(doc as unknown as PpmpForLib), status: validStatus, revisionCount };
+  return { ...(doc as unknown as PpmpForLib), status: validStatus, revisionCount, ppmpClass, chargeableTo };
 }
 
 /**
