@@ -32,6 +32,16 @@ class LibDocument extends Model
         'history',
         'owner_id',
         'owner_name',
+        'supervisor_id',
+        'budget_officer_id',
+        'approved_by_id',
+        'submitted_at',
+        'recommended_at',
+        'certified_at',
+        'approved_at',
+        'return_reason',
+        'review_comment',
+        'approval_signature',
     ];
 
     protected function casts(): array
@@ -39,12 +49,31 @@ class LibDocument extends Model
         return [
             'revision' => 'integer',
             'history' => 'array',
+            'submitted_at' => 'datetime',
+            'recommended_at' => 'datetime',
+            'certified_at' => 'datetime',
+            'approved_at' => 'datetime',
         ];
     }
 
     public function owner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'owner_id');
+    }
+
+    public function supervisor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'supervisor_id');
+    }
+
+    public function budgetOfficer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'budget_officer_id');
+    }
+
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by_id');
     }
 
     public function rows(): HasMany

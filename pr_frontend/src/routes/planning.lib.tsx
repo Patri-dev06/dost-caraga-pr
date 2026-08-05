@@ -1,9 +1,9 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { CheckCircle2, FilePlus2, FileText, Trash2 } from "lucide-react";
+import { FilePlus2, FileText, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
-import { currentLibBudgetTotal, deleteLib, fmtAmount, isApprovedReprogrammedLib, listLibs, saveLib, syncLibsFromDatabase, type LibDoc } from "@/lib/lib-store";
+import { currentLibBudgetTotal, deleteLib, fmtAmount, isApprovedReprogrammedLib, listLibs, syncLibsFromDatabase, type LibDoc } from "@/lib/lib-store";
 
 export const Route = createFileRoute("/planning/lib")({
   head: () => ({
@@ -40,13 +40,6 @@ function LibListPage() {
     e.preventDefault();
     e.stopPropagation();
     deleteLib(id);
-    setLibs(listLibs());
-  }
-
-  function onApprove(lib: LibDoc, e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    saveLib({ ...lib, status: "Approved" });
     setLibs(listLibs());
   }
 
@@ -116,17 +109,6 @@ function LibListPage() {
                   <span className="hidden w-28 shrink-0 text-right text-xs text-muted-foreground md:block">
                     {new Date(lib.updatedAt).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" })}
                   </span>
-                  {lib.status !== "Approved" && (
-                    <button
-                      type="button"
-                      onClick={(e) => onApprove(lib, e)}
-                      title="Manually approve LIB"
-                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-1 text-xs font-semibold text-success hover:bg-success/15"
-                    >
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      Approve
-                    </button>
-                  )}
                   <button
                     type="button"
                     onClick={(e) => onDelete(lib.id, e)}

@@ -27,6 +27,11 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/planning-libs', [ProcurementController::class, 'planningLibStore']);
         Route::get('/planning-libs/{clientUid}', [ProcurementController::class, 'planningLibShow']);
         Route::put('/planning-libs/{clientUid}', [ProcurementController::class, 'planningLibStore']);
+        Route::post('/planning-libs/{clientUid}/submit', [ProcurementController::class, 'planningLibSubmit']);
+        Route::post('/planning-libs/{clientUid}/recommend', [ProcurementController::class, 'planningLibRecommend']);
+        Route::post('/planning-libs/{clientUid}/certify', [ProcurementController::class, 'planningLibCertify']);
+        Route::post('/planning-libs/{clientUid}/approve', [ProcurementController::class, 'planningLibApprove']);
+        Route::post('/planning-libs/{clientUid}/return', [ProcurementController::class, 'planningLibReturn']);
         Route::delete('/planning-libs/{clientUid}', [ProcurementController::class, 'planningLibDestroy']);
 
         Route::get('/planning-ppmps', [ProcurementController::class, 'planningPpmpIndex']);

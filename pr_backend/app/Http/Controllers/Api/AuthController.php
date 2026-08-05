@@ -135,10 +135,15 @@ class AuthController extends Controller
     /** User payload plus the derived is_budget_officer flag used by the client. */
     private function serializeUser(User $user): array
     {
-        $budgetOfficerId = optional(SystemPreference::where('key', 'budget_officer_user_id')->first())->value['value'] ?? null;
+        $pref = fn (string $key) => optional(SystemPreference::where('key', $key)->first())->value['value'] ?? null;
+        $budgetOfficerId = $pref('budget_officer_user_id');
+        $supervisorId = $pref('supervisor_user_id');
+        $regionalDirectorId = $pref('regional_director_user_id');
 
         return array_merge($user->toArray(), [
             'is_budget_officer' => $budgetOfficerId !== null && (int) $budgetOfficerId === $user->id,
+            'is_supervisor' => $supervisorId !== null && (int) $supervisorId === $user->id,
+            'is_regional_director' => $regionalDirectorId !== null && (int) $regionalDirectorId === $user->id,
         ]);
     }
 

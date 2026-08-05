@@ -195,8 +195,11 @@ class ProcurementController extends Controller
 
         $user = $request->user();
         $isOwner = $document->owner_id !== null && $document->owner_id === $user?->id;
+        $isSignatory = $user !== null && in_array($user->id, [
+            $document->supervisor_id, $document->budget_officer_id, $document->approved_by_id,
+        ], true);
         abort_unless(
-            $user?->tier === 'superadmin' || $isOwner || in_array($document->id, $this->budgetOfficerLibIds($user), true),
+            $user?->tier === 'superadmin' || $isOwner || $isSignatory || in_array($document->id, $this->budgetOfficerLibIds($user), true),
             403,
             'You do not have access to this document.',
         );
@@ -305,6 +308,194 @@ class ProcurementController extends Controller
         $document->delete();
 
         return response()->json(['message' => 'LIB document removed.']);
+    }
+
+    /** Preparer submits a Draft LIB into the routing chain (→ Supervisor). */
+    public function planningLibSubmit(Request $request, string $clientUid): JsonResponse
+    {
+        $this->guardModule('lib');
+        $document = LibDocument::where('client_uid', $clientUid)->firstOrFail();
+        $user = $request->user();
+
+        abort_unless(
+            $user?->tier === 'superadmin' || ($document->owner_id !== null && $document->owner_id === $user?->id),
+            403,
+            'Only the preparer can submit this LIB.',
+        );
+        abort_unless(in_array($document->status, ['Draft', ''], true) || $document->status === null, 422, 'This LIB has already been submitted.');
+
+        $supervisor = $this->designatedSupervisor();
+        abort_if($supervisor === null, 422, 'No Supervisor is designated. Set one in System Settings first.');
+
+        $document->forceFill([
+            'status' => 'Pending Supervisor Review',
+            'supervisor_id' => $supervisor->id,
+            'submitted_at' => now(),
+            'return_reason' => null,
+        ])->save();
+
+        $this->notify(
+            $supervisor,
+            'lib_submitted',
+            'LIB awaiting your recommendation',
+            ($document->project_title ?: 'A LIB').' has been submitted for your recommending approval.',
+            $this->libLink($document),
+            ['libId' => $document->client_uid],
+        );
+        $this->audit($request, 'LIB', 'Submitted LIB', $document->client_uid);
+
+        return response()->json(['data' => $this->formatLibDocument($document->fresh('rows'))]);
+    }
+
+    /** Supervisor recommends a LIB (→ Budget Officer). */
+    public function planningLibRecommend(Request $request, string $clientUid): JsonResponse
+    {
+        return $this->advanceLib($request, $clientUid, 'recommend');
+    }
+
+    /** Budget Officer certifies fund availability on a LIB (→ Regional Director). */
+    public function planningLibCertify(Request $request, string $clientUid): JsonResponse
+    {
+        return $this->advanceLib($request, $clientUid, 'certify');
+    }
+
+    /** Regional Director gives final approval on a LIB. */
+    public function planningLibApprove(Request $request, string $clientUid): JsonResponse
+    {
+        return $this->advanceLib($request, $clientUid, 'approve');
+    }
+
+    /** Any current-stage signatory returns a LIB to the preparer for revision. */
+    public function planningLibReturn(Request $request, string $clientUid): JsonResponse
+    {
+        $this->guardModule('lib');
+        $data = $request->validate([
+            'reason' => ['required', 'string'],
+            'comment' => ['nullable', 'string'],
+        ]);
+
+        $document = LibDocument::where('client_uid', $clientUid)->firstOrFail();
+        $user = $request->user();
+        [$stampedId, $designated] = $this->libStageParticipants($document);
+
+        $this->abortUnlessLibActor($user, $document, $stampedId, $designated);
+
+        $document->forceFill([
+            'status' => 'Draft',
+            'return_reason' => $data['reason'],
+            'review_comment' => $data['comment'] ?? $document->review_comment,
+        ])->save();
+
+        if ($document->owner) {
+            $this->notify(
+                $document->owner,
+                'lib_returned',
+                'LIB returned for revision',
+                ($document->project_title ?: 'Your LIB').' was returned: '.$data['reason'],
+                $this->libLink($document),
+                ['libId' => $document->client_uid],
+            );
+        }
+        $this->audit($request, 'LIB', 'Returned LIB', $document->client_uid);
+
+        return response()->json(['data' => $this->formatLibDocument($document->fresh('rows'))]);
+    }
+
+    /**
+     * Shared forward transition (recommend → certify → approve). Each step verifies the
+     * acting user is the designated signatory for the current stage, advances the status,
+     * stamps the signatory + timestamp, and notifies the next actor (or the owner on approve).
+     */
+    private function advanceLib(Request $request, string $clientUid, string $action): JsonResponse
+    {
+        $this->guardModule('lib');
+        $data = $request->validate(['comment' => ['nullable', 'string']]);
+
+        $document = LibDocument::where('client_uid', $clientUid)->firstOrFail();
+        $user = $request->user();
+        [$stampedId, $designated] = $this->libStageParticipants($document);
+
+        $this->abortUnlessLibActor($user, $document, $stampedId, $designated);
+
+        $expected = [
+            'recommend' => 'Pending Supervisor Review',
+            'certify' => 'Forwarded to Budget Officer',
+            'approve' => 'Pending Regional Director Approval',
+        ][$action];
+        abort_unless($document->status === $expected, 422, 'This LIB is not awaiting this action.');
+
+        if ($action === 'recommend') {
+            $nextOfficer = $this->designatedBudgetOfficer();
+            abort_if($nextOfficer === null, 422, 'No Budget Officer is designated. Set one in System Settings first.');
+            $document->forceFill([
+                'status' => 'Forwarded to Budget Officer',
+                'recommending_name' => $user?->name,
+                'recommending_position' => $user?->position,
+                'recommended_at' => now(),
+                'budget_officer_id' => $nextOfficer->id,
+                'review_comment' => $data['comment'] ?? $document->review_comment,
+            ])->save();
+            $this->notify($nextOfficer, 'lib_recommended', 'LIB awaiting fund certification',
+                ($document->project_title ?: 'A LIB').' was recommended and needs your fund certification.',
+                $this->libLink($document), ['libId' => $document->client_uid]);
+        } elseif ($action === 'certify') {
+            $rd = $this->designatedRegionalDirector();
+            abort_if($rd === null, 422, 'No Regional Director is designated. Set one in System Settings first.');
+            $document->forceFill([
+                'status' => 'Pending Regional Director Approval',
+                'certified_name' => $user?->name,
+                'certified_position' => $user?->position,
+                'certified_at' => now(),
+                'approved_by_id' => $rd->id,
+                'review_comment' => $data['comment'] ?? $document->review_comment,
+            ])->save();
+            $this->notify($rd, 'lib_certified', 'LIB awaiting your approval',
+                ($document->project_title ?: 'A LIB').' has certified funds and awaits your approval.',
+                $this->libLink($document), ['libId' => $document->client_uid]);
+        } else { // approve
+            $document->forceFill([
+                'status' => 'Approved',
+                'approved_name' => $user?->name,
+                'approved_position' => $user?->position,
+                'approved_at' => now(),
+                'approval_signature' => 'Approved electronically by '.($user?->name ?? 'Regional Director').' on '.now()->toDayDateTimeString(),
+                'review_comment' => $data['comment'] ?? $document->review_comment,
+            ])->save();
+            if ($document->owner) {
+                $this->notify($document->owner, 'lib_approved', 'LIB approved',
+                    ($document->project_title ?: 'Your LIB').' has been approved by '.($user?->name ?? 'the Regional Director').'.',
+                    $this->libLink($document), ['libId' => $document->client_uid]);
+            }
+        }
+
+        $this->audit($request, 'LIB', ucfirst($action).'d LIB', $document->client_uid);
+
+        return response()->json(['data' => $this->formatLibDocument($document->fresh('rows'))]);
+    }
+
+    /** [stamped signatory id, currently-designated user] for the LIB's current stage. */
+    private function libStageParticipants(LibDocument $document): array
+    {
+        return match ($document->status) {
+            'Pending Supervisor Review' => [$document->supervisor_id, $this->designatedSupervisor()],
+            'Forwarded to Budget Officer' => [$document->budget_officer_id, $this->designatedBudgetOfficer()],
+            'Pending Regional Director Approval' => [$document->approved_by_id, $this->designatedRegionalDirector()],
+            default => [null, null],
+        };
+    }
+
+    private function abortUnlessLibActor(?User $user, LibDocument $document, ?int $stampedId, ?User $designated): void
+    {
+        if ($user?->tier === 'superadmin') {
+            return;
+        }
+        $ok = $user !== null && (($stampedId !== null && $stampedId === $user->id) || $designated?->id === $user->id);
+        abort_unless($ok, 403, 'You are not the designated signatory for this LIB stage.');
+    }
+
+    private function libLink(LibDocument $document): string
+    {
+        return "/planning/lib/new?edit={$document->client_uid}";
     }
 
     public function planningPpmpIndex(Request $request): JsonResponse
@@ -995,7 +1186,11 @@ class ProcurementController extends Controller
 
         $officerLibIds = $this->budgetOfficerLibIds($user);
         $query->where(function (Builder $q) use ($user, $officerLibIds): void {
-            $q->where('owner_id', $user?->id);
+            $q->where('owner_id', $user?->id)
+                // Signatories see LIBs routed to them at any stage of the workflow.
+                ->orWhere('supervisor_id', $user?->id)
+                ->orWhere('budget_officer_id', $user?->id)
+                ->orWhere('approved_by_id', $user?->id);
             if ($officerLibIds !== []) {
                 $q->orWhereIn('id', $officerLibIds);
             }
@@ -1021,6 +1216,22 @@ class ProcurementController extends Controller
     private function designatedBudgetOfficer(): ?User
     {
         $id = $this->preferenceValue('budget_officer_user_id', null);
+
+        return $id ? User::find((int) $id) : null;
+    }
+
+    /** The user currently designated as Supervisor (recommends approval on LIBs). */
+    private function designatedSupervisor(): ?User
+    {
+        $id = $this->preferenceValue('supervisor_user_id', null);
+
+        return $id ? User::find((int) $id) : null;
+    }
+
+    /** The user currently designated as Regional Director (final LIB approver). */
+    private function designatedRegionalDirector(): ?User
+    {
+        $id = $this->preferenceValue('regional_director_user_id', null);
 
         return $id ? User::find((int) $id) : null;
     }
@@ -1138,6 +1349,16 @@ class ProcurementController extends Controller
             'history' => $document->history ?? [],
             'ownerId' => $document->owner_id,
             'ownerName' => $document->owner_name,
+            'supervisorId' => $document->supervisor_id,
+            'budgetOfficerId' => $document->budget_officer_id,
+            'approvedById' => $document->approved_by_id,
+            'submittedAt' => $document->submitted_at?->toISOString(),
+            'recommendedAt' => $document->recommended_at?->toISOString(),
+            'certifiedAt' => $document->certified_at?->toISOString(),
+            'approvedAt' => $document->approved_at?->toISOString(),
+            'returnReason' => $document->return_reason ?? '',
+            'reviewComment' => $document->review_comment ?? '',
+            'approvalSignature' => $document->approval_signature ?? '',
             'createdAt' => $document->created_at?->toISOString(),
             'updatedAt' => $document->updated_at?->toISOString(),
         ];
@@ -2137,7 +2358,23 @@ class ProcurementController extends Controller
                 'value' => ['value' => optional(User::where('status', 'Active')->where('name', 'like', '%Marites%')->first())->id],
                 'category' => 'Workflow',
                 'label' => 'Budget Officer',
-                'description' => 'Account that certifies fund availability on PPMPs. Submissions are routed here for review, return, or approval.',
+                'description' => 'Account that certifies fund availability on PPMPs and LIBs. Submissions are routed here for review, return, or approval.',
+                'type' => 'text',
+            ],
+            [
+                'key' => 'supervisor_user_id',
+                'value' => ['value' => null],
+                'category' => 'Workflow',
+                'label' => 'Supervisor (Recommending Approval)',
+                'description' => 'Account that recommends approval on LIBs. Submitted LIBs are routed here first.',
+                'type' => 'text',
+            ],
+            [
+                'key' => 'regional_director_user_id',
+                'value' => ['value' => null],
+                'category' => 'Workflow',
+                'label' => 'Regional Director (Approving Authority)',
+                'description' => 'Account that gives final approval on LIBs after fund certification.',
                 'type' => 'text',
             ],
             [

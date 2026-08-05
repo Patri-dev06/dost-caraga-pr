@@ -38,7 +38,9 @@ export type CurrentUser = {
   modules: string[]; // effective modules (access_modules)
   office: string;
   position: string;
-  isBudgetOfficer: boolean; // designated Budget Officer for PPMP fund certification
+  isBudgetOfficer: boolean; // designated Budget Officer for PPMP/LIB fund certification
+  isSupervisor: boolean; // designated Supervisor for LIB recommending approval
+  isRegionalDirector: boolean; // designated Regional Director for LIB final approval
 };
 
 export type RoleRecord = {
@@ -568,6 +570,32 @@ export async function apiDeletePlanningLib(id: string): Promise<void> {
   await request<{ message: string }>(`/planning-libs/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+// --- LIB routing workflow: preparer → supervisor → budget officer → regional director ---
+export async function apiSubmitPlanningLib<T = unknown>(id: string): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-libs/${encodeURIComponent(id)}/submit`, { method: "POST" });
+  return result.data;
+}
+
+export async function apiRecommendPlanningLib<T = unknown>(id: string, comment?: string): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-libs/${encodeURIComponent(id)}/recommend`, { method: "POST", body: { comment } });
+  return result.data;
+}
+
+export async function apiCertifyPlanningLib<T = unknown>(id: string, comment?: string): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-libs/${encodeURIComponent(id)}/certify`, { method: "POST", body: { comment } });
+  return result.data;
+}
+
+export async function apiApprovePlanningLib<T = unknown>(id: string, comment?: string): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-libs/${encodeURIComponent(id)}/approve`, { method: "POST", body: { comment } });
+  return result.data;
+}
+
+export async function apiReturnPlanningLib<T = unknown>(id: string, reason: string, comment?: string): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-libs/${encodeURIComponent(id)}/return`, { method: "POST", body: { reason, comment } });
+  return result.data;
+}
+
 export async function apiGetPlanningPpmps<T = unknown>(libId?: string): Promise<T[]> {
   const query = libId ? `?lib_id=${encodeURIComponent(libId)}` : "";
   const result = await request<ApiList<T>>(`/planning-ppmps${query}`);
@@ -743,6 +771,8 @@ type BackendUser = {
   modules?: string[] | null;
   access_modules?: string[];
   is_budget_officer?: boolean;
+  is_supervisor?: boolean;
+  is_regional_director?: boolean;
   last_login_at: string | null;
 };
 
@@ -919,6 +949,8 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     office: user.office?.name ?? "Unassigned",
     position: user.position ?? "",
     isBudgetOfficer: Boolean(user.is_budget_officer),
+    isSupervisor: Boolean(user.is_supervisor),
+    isRegionalDirector: Boolean(user.is_regional_director),
   };
 }
 

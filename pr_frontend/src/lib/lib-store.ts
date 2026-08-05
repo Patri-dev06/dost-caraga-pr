@@ -1,7 +1,17 @@
 // Line Item Budgets (DOST Form 4). PostgreSQL is the source of truth; localStorage
 // is retained as a browser cache/fallback while the API is unavailable.
 
-import { apiDeletePlanningLib, apiGetPlanningLibs, apiUpsertPlanningLib, getCurrentUser } from "./api";
+import {
+  apiApprovePlanningLib,
+  apiCertifyPlanningLib,
+  apiDeletePlanningLib,
+  apiGetPlanningLibs,
+  apiRecommendPlanningLib,
+  apiReturnPlanningLib,
+  apiSubmitPlanningLib,
+  apiUpsertPlanningLib,
+  getCurrentUser,
+} from "./api";
 
 export type LibStatus =
   | "Draft"
@@ -70,6 +80,17 @@ export interface LibDoc {
   history?: LibSnapshot[]; // snapshots captured on each revision
   ownerId?: number; // account that created this LIB (visibility scope)
   ownerName?: string; // creator's name, for display
+  // Routing workflow (preparer → supervisor → budget officer → regional director)
+  supervisorId?: number;
+  budgetOfficerId?: number;
+  approvedById?: number;
+  submittedAt?: string;
+  recommendedAt?: string;
+  certifiedAt?: string;
+  approvedAt?: string;
+  returnReason?: string; // reason captured when a signatory returns it for revision
+  reviewComment?: string; // latest signatory comment
+  approvalSignature?: string; // e-signature text on final approval
   createdAt: string;
   updatedAt: string;
 }
@@ -349,11 +370,14 @@ function budgetOfficerLibIds(): Set<string> {
   }
 }
 
-/** Whether the current user may view a LIB (owner/superadmin, or Budget Officer for a routed LIB). */
-export function canViewLib(doc: Pick<LibDoc, "id" | "ownerId">): boolean {
+/** Whether the current user may view a LIB (owner/superadmin, a routing signatory, or Budget Officer for a PPMP-linked LIB). */
+export function canViewLib(doc: Pick<LibDoc, "id" | "ownerId" | "supervisorId" | "budgetOfficerId" | "approvedById">): boolean {
   if (canViewOwned(doc.ownerId)) return true;
   const me = getCurrentUser();
-  return Boolean(me?.isBudgetOfficer) && budgetOfficerLibIds().has(doc.id);
+  if (!me) return false;
+  // A LIB routed to me at any stage is visible.
+  if (doc.supervisorId === me.id || doc.budgetOfficerId === me.id || doc.approvedById === me.id) return true;
+  return Boolean(me.isBudgetOfficer) && budgetOfficerLibIds().has(doc.id);
 }
 
 export function listLibs(): LibDoc[] {
@@ -367,7 +391,7 @@ export function getLib(id: string): LibDoc | undefined {
   return doc && canViewLib(doc) ? doc : undefined;
 }
 
-export function saveLib(doc: LibDoc): LibDoc {
+function writeLibToCache(doc: LibDoc): LibDoc {
   const list = read();
   const idx = list.findIndex((d) => d.id === doc.id);
   const me = getCurrentUser();
@@ -381,13 +405,70 @@ export function saveLib(doc: LibDoc): LibDoc {
   if (idx >= 0) list[idx] = updated;
   else list.unshift(updated);
   write(list);
+  return updated;
+}
+
+export function saveLib(doc: LibDoc): LibDoc {
+  const updated = writeLibToCache(doc);
   void apiUpsertPlanningLib<LibDoc>(updated).catch(() => undefined);
+  return updated;
+}
+
+/** Save and AWAIT the server write — use before a workflow transition so content
+ * lands before the status change (a fire-and-forget PUT could otherwise overwrite it). */
+export async function saveLibNow(doc: LibDoc): Promise<LibDoc> {
+  const updated = writeLibToCache(doc);
+  await apiUpsertPlanningLib<LibDoc>(updated);
   return updated;
 }
 
 export function deleteLib(id: string) {
   write(read().filter((d) => d.id !== id));
   void apiDeletePlanningLib(id).catch(() => undefined);
+}
+
+/** Merge a server copy of a LIB into the local cache (used after workflow actions). */
+function mergeLib(doc: LibDoc) {
+  const list = read();
+  const idx = list.findIndex((d) => d.id === doc.id);
+  if (idx >= 0) list[idx] = doc;
+  else list.unshift(doc);
+  write(list);
+}
+
+/** Preparer submits a Draft LIB into the routing chain (→ Supervisor). */
+export async function submitLib(id: string): Promise<LibDoc> {
+  const doc = migrateDoc((await apiSubmitPlanningLib<LibDoc>(id)) as unknown as Record<string, unknown>);
+  mergeLib(doc);
+  return doc;
+}
+
+/** Supervisor recommends a LIB (→ Budget Officer). */
+export async function recommendLib(id: string, comment?: string): Promise<LibDoc> {
+  const doc = migrateDoc((await apiRecommendPlanningLib<LibDoc>(id, comment)) as unknown as Record<string, unknown>);
+  mergeLib(doc);
+  return doc;
+}
+
+/** Budget Officer certifies fund availability on a LIB (→ Regional Director). */
+export async function certifyLib(id: string, comment?: string): Promise<LibDoc> {
+  const doc = migrateDoc((await apiCertifyPlanningLib<LibDoc>(id, comment)) as unknown as Record<string, unknown>);
+  mergeLib(doc);
+  return doc;
+}
+
+/** Regional Director gives final approval on a LIB. */
+export async function approveLib(id: string, comment?: string): Promise<LibDoc> {
+  const doc = migrateDoc((await apiApprovePlanningLib<LibDoc>(id, comment)) as unknown as Record<string, unknown>);
+  mergeLib(doc);
+  return doc;
+}
+
+/** Current-stage signatory returns a LIB to the preparer for revision. */
+export async function returnLib(id: string, reason: string, comment?: string): Promise<LibDoc> {
+  const doc = migrateDoc((await apiReturnPlanningLib<LibDoc>(id, reason, comment)) as unknown as Record<string, unknown>);
+  mergeLib(doc);
+  return doc;
 }
 
 export async function syncLibsFromDatabase(): Promise<LibDoc[]> {

@@ -242,7 +242,7 @@ function SystemPreferenceField({
   users: Signatory[];
   onChange: (value: SystemPreferenceRecord["value"]) => void;
 }) {
-  const isBudgetOfficer = setting.key === "budget_officer_user_id";
+  const isUserPicker = setting.key.endsWith("_user_id");
   return (
     <div className="rounded-md border border-border bg-secondary/20 p-3">
       <div className="flex items-start justify-between gap-4">
@@ -252,10 +252,10 @@ function SystemPreferenceField({
         </div>
         {setting.type === "boolean" && <Switch checked={Boolean(value)} onCheckedChange={onChange} />}
       </div>
-      {isBudgetOfficer ? (
+      {isUserPicker ? (
         <Select value={value == null || value === "" ? "" : String(value)} onValueChange={(v) => onChange(v)}>
           <SelectTrigger className="mt-3 h-10 border-border bg-background">
-            <SelectValue placeholder="Select the budget officer" />
+            <SelectValue placeholder="Select an account" />
           </SelectTrigger>
           <SelectContent>
             {users.map((u) => (

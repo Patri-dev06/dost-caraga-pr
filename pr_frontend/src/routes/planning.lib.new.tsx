@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, CheckCircle2, Eye, FileSpreadsheet, History, ListOrdered, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
+import { ArrowLeft, Eye, FileSpreadsheet, History, ListOrdered, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -21,6 +21,12 @@ import {
   reprogrammingTotalDifference,
   reprogLabel,
   saveLib,
+  saveLibNow,
+  submitLib,
+  recommendLib,
+  certifyLib,
+  approveLib,
+  returnLib,
   type LibDoc,
   type LibReprogramming,
   type LibRow,
@@ -372,28 +378,41 @@ function LibForm() {
     }
   }
 
-  function approveCurrentLib() {
-    // A LIB can only be approved when every reprogramming round still totals the
-    // Approved LIB figure — reprogramming reallocates line items, it must never
-    // change the grand total. Block approval (and report each offending round).
-    if (unbalancedReprogrammings.length > 0) {
-      const detail = unbalancedReprogrammings
-        .map((r) => `${reprogLabel(r.roundIndex)} is ${reprogrammingDifferenceText(r.difference).toLowerCase()}`)
-        .join("; ");
-      toast.error(`Cannot approve — every reprogramming must equal the Approved LIB total of ₱${fmtAmount(totals.approved)}. ${detail}.`);
-      return;
-    }
-    setAction("Approved");
+  // --- Routing workflow: preparer → supervisor → budget officer → regional director ---
+  const isOwner = currentUser != null && doc.ownerId != null && currentUser.id === doc.ownerId;
+  const isSuperadmin = currentUser?.tier === "superadmin";
+  const canSubmit = (isOwner || isSuperadmin) && doc.status === "Draft";
+  const canRecommend = (Boolean(currentUser?.isSupervisor) || isSuperadmin) && doc.status === "Pending Supervisor Review";
+  const canCertify = (Boolean(currentUser?.isBudgetOfficer) || isSuperadmin) && doc.status === "Forwarded to Budget Officer";
+  const canApprove = (Boolean(currentUser?.isRegionalDirector) || isSuperadmin) && doc.status === "Pending Regional Director Approval";
+  const canReturn = canRecommend || canCertify || canApprove;
+
+  async function runWorkflow(label: LibStatus | "return", fn: () => Promise<LibDoc>, message: string, stay = false) {
+    setAction(label === "return" ? "draft" : label);
     try {
-      const approved = saveLib({ ...doc, status: "Approved" });
-      setDoc(approved);
-      setMode("preview");
-      toast.success("Line Item Budget approved.");
-    } catch {
-      toast.error("Unable to approve the Line Item Budget.");
+      const updated = await fn();
+      setDoc(updated);
+      toast.success(message);
+      if (!stay) navigate({ to: "/planning/lib" });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "The action could not be completed.");
     } finally {
       setAction(null);
     }
+  }
+
+  async function submitForRouting() {
+    // Persist the latest content to the server BEFORE routing so the status change sticks.
+    await runWorkflow("Pending Supervisor Review", async () => {
+      await saveLibNow({ ...doc, status: "Draft" });
+      return submitLib(doc.id);
+    }, "LIB submitted for recommending approval.");
+  }
+
+  function returnForRevision() {
+    const reason = window.prompt("Reason for returning this LIB to the preparer:")?.trim();
+    if (!reason) return;
+    void runWorkflow("return", () => returnLib(doc.id, reason), "LIB returned to the preparer.");
   }
 
   // Begin a new reprogramming round: add a column pre-filled from the previous
@@ -533,50 +552,71 @@ function LibForm() {
             <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={handleExport}>
               <FileSpreadsheet className="h-4 w-4" /> Export Excel
             </Button>
-            {submitted && doc.status !== "Approved" && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 border-emerald-500/50 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
-                onClick={approveCurrentLib}
-                disabled={action !== null || unbalancedReprogrammings.length > 0}
-                title={
-                  unbalancedReprogrammings.length > 0
-                    ? `Reprogramming must equal the Approved LIB total of ₱${fmtAmount(totals.approved)} before this can be approved.`
-                    : undefined
-                }
-              >
-                {action === "Approved" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Approve
-              </Button>
-            )}
             {mode === "preview" && (
               <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
                 <Printer className="h-4 w-4" /> Print
               </Button>
             )}
             {submitted ? (
-              reviseRound !== null && (
-                <Button size="sm" className="gap-1.5" onClick={saveRevision} disabled={action !== null}>
-                  {action === "revision" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Save Revision
-                </Button>
-              )
+              <>
+                {reviseRound !== null && (
+                  <Button size="sm" className="gap-1.5" onClick={saveRevision} disabled={action !== null}>
+                    {action === "revision" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Save Revision
+                  </Button>
+                )}
+                {canRecommend && (
+                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Forwarded to Budget Officer", () => recommendLib(doc.id), "LIB recommended and forwarded to the Budget Officer.")} disabled={action !== null}>
+                    <Send className="h-4 w-4" /> Recommend
+                  </Button>
+                )}
+                {canCertify && (
+                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Pending Regional Director Approval", () => certifyLib(doc.id), "Funds certified; forwarded to the Regional Director.")} disabled={action !== null}>
+                    <Send className="h-4 w-4" /> Certify Funds
+                  </Button>
+                )}
+                {canApprove && (
+                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Approved", () => approveLib(doc.id), "Line Item Budget approved.", true)} disabled={action !== null}>
+                    <Send className="h-4 w-4" /> Approve
+                  </Button>
+                )}
+                {canReturn && (
+                  <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={returnForRevision} disabled={action !== null}>
+                    Return
+                  </Button>
+                )}
+              </>
             ) : (
               <>
                 <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => persist("Draft")} disabled={action !== null}>
                   {action === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   {isEditing ? "Save Changes" : "Save as Draft"}
                 </Button>
-                <Button size="sm" className="gap-1.5" onClick={() => persist("Pending Supervisor Review")} disabled={action !== null}>
-                  {action === "Pending Supervisor Review" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  Submit for Approval
-                </Button>
+                {canSubmit && (
+                  <Button size="sm" className="gap-1.5" onClick={submitForRouting} disabled={action !== null}>
+                    {action === "Pending Supervisor Review" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    Submit for Recommendation
+                  </Button>
+                )}
               </>
             )}
           </div>
         </div>
       </div>
+
+      {/* Returned-for-revision notice for the preparer. */}
+      {doc.status === "Draft" && (doc.returnReason ?? "").trim() !== "" && (
+        <div className="no-print mx-auto mt-3 w-[820px] max-w-full rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+          <span className="font-semibold">Returned for revision:</span> {doc.returnReason}
+        </div>
+      )}
+
+      {/* Current routing status badge (visible once submitted). */}
+      {doc.status !== "Draft" && (
+        <div className="no-print mx-auto mt-3 w-[820px] max-w-full text-sm text-muted-foreground">
+          Status: <span className="font-semibold text-foreground">{doc.status}</span>
+        </div>
+      )}
 
       {/* Document */}
       <div className="w-full overflow-x-auto px-3 py-6 sm:px-6 print:overflow-visible print:p-0">
@@ -844,10 +884,12 @@ function LibForm() {
                 {action === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 {isEditing ? "Save Changes" : "Save as Draft"}
               </Button>
-              <Button size="sm" className="gap-1.5" onClick={() => persist("Pending Supervisor Review")} disabled={action !== null}>
-                {action === "Pending Supervisor Review" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Submit for Approval
-              </Button>
+              {canSubmit && (
+                <Button size="sm" className="gap-1.5" onClick={submitForRouting} disabled={action !== null}>
+                  {action === "Pending Supervisor Review" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Submit for Recommendation
+                </Button>
+              )}
             </div>
           )}
 

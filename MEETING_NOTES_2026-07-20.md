@@ -37,7 +37,7 @@ Notes:
 - [ ] **PPMP reuse when approved** — allow reusing/duplicating an approved PPMP. *(Deferred — define "reuse": clone into new draft?)*
 - [ ] **"Approved by: RD"** — Regional Director shown as approver in PPMP and across all documents. *(Deferred — needs RD signatory wiring across all doc types.)*
 - [x] **Notify when returned (PPMP)** — already implemented (`ppmp_returned` notification to owner).
-- [ ] **Notify when returned (LIB)** — depends on the full LIB routing workflow, which isn't built yet (LIB has no submit/return/approve endpoints). *(Deferred — larger feature.)*
+- [x] **Full LIB routing workflow** — implemented: Preparer → Supervisor (recommend) → Budget Officer (certify) → Regional Director (approve), with return-to-preparer at any stage, per-stage authorization, and notifications at every step (`lib_submitted/recommended/certified/approved/returned`). Designated Supervisor & Regional Director are set in System Settings (like the Budget Officer). Return-reason banner shown to the preparer.
 - [ ] **Certified Funds Available (MMA)** — Budget Officer certification exists for PPMP; extend labelling/flow. *(Partially present; revisit with LIB routing.)*
 - [ ] **PR Purpose auto-generated but editable** — auto-fill purpose yet keep it editable. *(Deferred — confirm the auto-generation source/template.)*
 
