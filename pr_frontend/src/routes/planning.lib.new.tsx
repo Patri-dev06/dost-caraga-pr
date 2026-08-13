@@ -739,7 +739,7 @@ function LibForm() {
                           creatable
                           placeholder="Select or type the project leader"
                           searchPlaceholder="Search accounts…"
-                          triggerClassName="h-7 border-0 px-0.5"
+                          triggerClassName="h-7 border-0 bg-transparent px-0.5 text-black hover:bg-amber-50 hover:text-black dark:bg-transparent dark:text-black dark:hover:bg-amber-50"
                         />
                       ) : (
                         <TextField value={doc.projectLeader} onChange={(v) => set("projectLeader", v)} editing={false} />
@@ -827,7 +827,7 @@ function LibForm() {
                               creatable
                               placeholder="Select or type a title"
                               searchPlaceholder="Capital Outlay / MOOE…"
-                              triggerClassName="h-7 border-0 px-0.5 font-bold"
+                              triggerClassName="h-7 border-0 bg-transparent px-0.5 font-bold text-black hover:bg-amber-50 hover:text-black dark:bg-transparent dark:text-black dark:hover:bg-amber-50"
                             />
                           ) : (
                             <TextField value={r.label} onChange={(v) => setRow(r.id, { label: v })} editing={editing} bold={r.header && r.indent === 0} />
@@ -882,33 +882,7 @@ function LibForm() {
                   );
                 })}
 
-                {/* Totals */}
-                <tr className="align-top font-bold">
-                  <td className={cn(gl, "pt-4 pl-9")}>GRAND TOTAL</td>
-                  <td className={cn(gl, "px-2 pt-4 text-center tabular-nums")}>P&nbsp;&nbsp;{fmtAmount(totals.approved)}</td>
-                  {roundIdx.map((i) => {
-                    const balance = reprogrammingBalance[i];
-                    const unbalanced = balance && !balance.balanced;
-                    return (
-                      <td
-                        key={i}
-                        className={cn(
-                          gl,
-                          "px-2 pt-4 text-center tabular-nums",
-                          unbalanced && "bg-red-50 text-red-700",
-                        )}
-                      >
-                        {fmtAmount(totals.reprogrammings[i] ?? 0)}
-                        {unbalanced && (
-                          <div className="no-print mt-0.5 text-[9px] font-normal leading-tight">
-                            {reprogrammingDifferenceText(balance.difference)}
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                  {rounds > 0 && <td className={gl} />}
-                </tr>
+                {/* Grand total across all Titles */}
                 <tr className="align-top font-bold">
                   <td className={cn(gl, "pt-3 pl-9")}>GRAND TOTAL:</td>
                   <td className={cn("px-2 pt-3 text-center tabular-nums", editing ? "border border-black/20 border-t-black" : "border-t border-black")}>P&nbsp;&nbsp;{fmtAmount(totals.approved)}</td>
@@ -950,7 +924,7 @@ function LibForm() {
                 {categories.length > 0 ? (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-7 gap-1.5 border-border">
+                      <Button variant="outline" size="sm" className="h-7 gap-1.5 border-black/20 bg-white text-black hover:bg-amber-50 hover:text-black dark:bg-white dark:text-black dark:hover:bg-amber-50">
                         <Plus className="h-3.5 w-3.5" /> Add Line
                       </Button>
                     </DropdownMenuTrigger>
@@ -966,14 +940,14 @@ function LibForm() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 ) : (
-                  <Button variant="outline" size="sm" onClick={() => addRow(false)} className="h-7 gap-1.5 border-border">
+                  <Button variant="outline" size="sm" onClick={() => addRow(false)} className="h-7 gap-1.5 border-black/20 bg-white text-black hover:bg-amber-50 hover:text-black dark:bg-white dark:text-black dark:hover:bg-amber-50">
                     <Plus className="h-3.5 w-3.5" /> Add Line
                   </Button>
                 )}
-                <Button variant="outline" size="sm" onClick={() => addRow(true)} className="h-7 gap-1.5 border-border">
+                <Button variant="outline" size="sm" onClick={() => addRow(true)} className="h-7 gap-1.5 border-black/20 bg-white text-black hover:bg-amber-50 hover:text-black dark:bg-white dark:text-black dark:hover:bg-amber-50">
                   <Plus className="h-3.5 w-3.5" /> Add Category
                 </Button>
-                <Button variant="outline" size="sm" onClick={addSection} className="h-7 gap-1.5 border-border">
+                <Button variant="outline" size="sm" onClick={addSection} className="h-7 gap-1.5 border-black/20 bg-white text-black hover:bg-amber-50 hover:text-black dark:bg-white dark:text-black dark:hover:bg-amber-50">
                   <ListOrdered className="h-3.5 w-3.5" /> Add Title
                 </Button>
               </div>
@@ -1178,7 +1152,7 @@ function Signatory({
               placeholder="Select signatory…"
               searchPlaceholder="Search accounts…"
               emptyText="No approved accounts yet"
-              triggerClassName="border-black/20 font-bold"
+              triggerClassName="border-black/20 bg-white font-bold text-black hover:bg-amber-50 hover:text-black dark:bg-white dark:text-black dark:hover:bg-amber-50"
             />
             <div className="mt-1 border-b border-black/20 text-[11px]">
               <TextField value={position} onChange={onPosition} editing placeholder="Position" className="text-[11px]" />
