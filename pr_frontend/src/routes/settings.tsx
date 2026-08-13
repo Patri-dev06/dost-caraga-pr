@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
 import { apiGetSystemSettings, apiUpdateSystemSettings, apiGetSignatories, type SystemPreferenceRecord, type Signatory } from "@/lib/api";
+import { useCanAccess } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
@@ -32,6 +33,13 @@ export const Route = createFileRoute("/settings")({
 });
 
 function SettingsPage() {
+  const navigate = useNavigate();
+  const canAccess = useCanAccess();
+  // Settings is admin-only; bounce anyone who reaches it without access back to the dashboard.
+  useEffect(() => {
+    if (!canAccess("settings")) navigate({ to: "/" });
+  }, [canAccess, navigate]);
+
   const queryClient = useQueryClient();
   const [draftSettings, setDraftSettings] = useState<Record<string, SystemPreferenceRecord["value"]>>({});
   const [profile, setProfile] = useState({
