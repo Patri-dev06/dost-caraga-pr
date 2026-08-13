@@ -15,6 +15,8 @@ class LibDocument extends Model
         'project_title',
         'implementing_agency',
         'total_duration',
+        'duration_from',
+        'duration_to',
         'cooperating_agency',
         'project_leader',
         'monitoring_agency',
@@ -49,6 +51,8 @@ class LibDocument extends Model
         return [
             'revision' => 'integer',
             'history' => 'array',
+            'duration_from' => 'date',
+            'duration_to' => 'date',
             'submitted_at' => 'datetime',
             'recommended_at' => 'datetime',
             'certified_at' => 'datetime',

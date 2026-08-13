@@ -1,10 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Eye, FileSpreadsheet, History, ListOrdered, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowLeft, CalendarIcon, Eye, FileSpreadsheet, History, ListOrdered, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
+import { format as formatDate } from "date-fns";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Combobox } from "@/components/ui/combobox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { apiGetSignatories, type Signatory as SignatoryOption } from "@/lib/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -20,6 +23,7 @@ import {
   parseAmount,
   reprogrammingTotalDifference,
   reprogLabel,
+  subtotalsByTitle,
   saveLib,
   saveLibNow,
   submitLib,
@@ -166,6 +170,54 @@ function AutoTextarea({
       spellCheck
       className={cn("w-full resize-none overflow-hidden rounded-sm bg-transparent px-0.5 leading-snug outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100", className)}
     />
+  );
+}
+
+const toISODate = (d: Date): string => formatDate(d, "yyyy-MM-dd");
+function rangeLabel(from?: string, to?: string): string {
+  if (!from && !to) return "";
+  const f = from ? formatDate(new Date(from), "MMM d, yyyy") : "…";
+  const t = to ? formatDate(new Date(to), "MMM d, yyyy") : "…";
+  return `${f} – ${t}`;
+}
+
+/* Project duration as a From/To calendar range. Shows the formatted range as
+   plain text in preview, and a two-month range calendar (popover) while editing. */
+function DateRangeField({
+  from,
+  to,
+  editing,
+  fallback,
+  onChange,
+}: {
+  from?: string;
+  to?: string;
+  editing: boolean;
+  fallback?: string;
+  onChange: (from?: string, to?: string) => void;
+}) {
+  const fromDate = from ? new Date(from) : undefined;
+  const toDate = to ? new Date(to) : undefined;
+  const label = rangeLabel(from, to) || (fallback ?? "");
+  if (!editing) return <span className="inline-block min-h-[1.2em]">{label || " "}</span>;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="flex w-full items-center gap-2 rounded-sm px-0.5 text-left leading-snug hover:bg-amber-50">
+          <CalendarIcon className="h-3.5 w-3.5 shrink-0 opacity-60" />
+          <span className={cn("truncate", !label && "italic text-black/30")}>{label || "Select start and end dates"}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start" style={{ fontFamily: "var(--font-sans)" }}>
+        <Calendar
+          mode="range"
+          numberOfMonths={2}
+          defaultMonth={fromDate}
+          selected={{ from: fromDate, to: toDate }}
+          onSelect={(r) => onChange(r?.from ? toISODate(r.from) : undefined, r?.to ? toISODate(r.to) : undefined)}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -359,6 +411,15 @@ function LibForm() {
   const categories = doc.rows.filter((r) => r.header);
 
   const totals = libTotals(doc.rows);
+  // Per-Title sub-totals + the row→title mapping used to place a sub-total row at the
+  // end of each Title's block during rendering.
+  const titleSubtotals = subtotalsByTitle(doc.rows);
+  const subtotalByTitleId = new Map(titleSubtotals.map((s) => [s.titleId, s]));
+  let runningTitleId: string | null = null;
+  const titleIdForRow = doc.rows.map((r) => {
+    if (r.header && r.indent === 0) runningTitleId = r.id;
+    return runningTitleId;
+  });
   const reprogrammingBalance = roundIdx.map((i) => {
     const difference = reprogrammingTotalDifference(doc.rows, i);
     return {
@@ -661,7 +722,29 @@ function LibForm() {
                   <span className="w-36 shrink-0 font-bold">{label}</span>
                   <span className="shrink-0 font-bold">:</span>
                   <div className={cn("min-w-0 flex-1", fullEdit && "border-b border-black/20")}>
-                    {key === "cooperatingAgency" || key === "projectTitle" ? (
+                    {key === "totalDuration" ? (
+                      <DateRangeField
+                        from={doc.durationFrom}
+                        to={doc.durationTo}
+                        editing={fullEdit}
+                        fallback={doc.totalDuration}
+                        onChange={(f, t) => setDoc((d) => ({ ...d, durationFrom: f, durationTo: t, totalDuration: rangeLabel(f, t) || d.totalDuration }))}
+                      />
+                    ) : key === "projectLeader" ? (
+                      fullEdit ? (
+                        <Combobox
+                          value={doc.projectLeader}
+                          onChange={(v) => set("projectLeader", v)}
+                          options={signatories.map((o) => ({ value: o.name, hint: o.position ?? undefined }))}
+                          creatable
+                          placeholder="Select or type the project leader"
+                          searchPlaceholder="Search accounts…"
+                          triggerClassName="h-7 border-0 px-0.5"
+                        />
+                      ) : (
+                        <TextField value={doc.projectLeader} onChange={(v) => set("projectLeader", v)} editing={false} />
+                      )
+                    ) : key === "cooperatingAgency" || key === "projectTitle" ? (
                       <AutoTextarea value={String(doc[key])} onChange={(v) => set(key, v as LibDoc[typeof key])} editing={fullEdit} placeholder={placeholder} className={key === "projectTitle" ? "underline" : ""} />
                     ) : (
                       <TextField value={String(doc[key])} onChange={(v) => set(key, v as LibDoc[typeof key])} editing={fullEdit} placeholder={placeholder} />
@@ -694,7 +777,7 @@ function LibForm() {
                 </tr>
               </thead>
               <tbody>
-                {doc.rows.map((r) => {
+                {doc.rows.map((r, idx) => {
                   const pad = r.indent === 0 ? "pl-0" : r.indent === 1 ? "pl-4" : "pl-9";
                   const labelCls = cn(
                     pad,
@@ -702,9 +785,14 @@ function LibForm() {
                     r.header && r.indent === 1 && "font-semibold",
                     !r.header && r.indent === 2 && "italic",
                   );
+                  // Emit this Title's sub-total after its last member row (before the next Title / end).
+                  const titleId = titleIdForRow[idx];
+                  const nextRow = doc.rows[idx + 1];
+                  const emitSubtotal = titleId != null && (idx === doc.rows.length - 1 || (nextRow?.header && nextRow.indent === 0));
+                  const subtotal = titleId != null ? subtotalByTitleId.get(titleId) : undefined;
                   return (
+                    <Fragment key={r.id}>
                     <tr
-                      key={r.id}
                       ref={(el) => {
                         rowRefs.current[r.id] = el;
                       }}
@@ -730,7 +818,20 @@ function LibForm() {
                           </div>
                         )}
                         <div className={labelCls}>
-                          <TextField value={r.label} onChange={(v) => setRow(r.id, { label: v })} editing={editing} bold={r.header && r.indent === 0} />
+                          {r.header && r.indent === 0 && fullEdit ? (
+                            // Title name: pick Capital Outlay / MOOE, or type a custom title.
+                            <Combobox
+                              value={r.label}
+                              onChange={(v) => setRow(r.id, { label: v })}
+                              options={[{ value: "Capital Outlay" }, { value: "MOOE" }]}
+                              creatable
+                              placeholder="Select or type a title"
+                              searchPlaceholder="Capital Outlay / MOOE…"
+                              triggerClassName="h-7 border-0 px-0.5 font-bold"
+                            />
+                          ) : (
+                            <TextField value={r.label} onChange={(v) => setRow(r.id, { label: v })} editing={editing} bold={r.header && r.indent === 0} />
+                          )}
                         </div>
                       </td>
                       <td className={cn(gl, "px-2 py-1.5")}>
@@ -765,12 +866,25 @@ function LibForm() {
                         </td>
                       )}
                     </tr>
+                    {emitSubtotal && subtotal && (
+                      <tr className="align-top font-semibold text-black/80">
+                        <td className={cn(gl, "py-1.5 pl-4 italic")}>Sub-total of {subtotal.title.trim() || "(untitled)"}</td>
+                        <td className={cn(gl, "px-2 py-1.5 text-center tabular-nums")}>P&nbsp;&nbsp;{fmtAmount(subtotal.approved)}</td>
+                        {roundIdx.map((i) => (
+                          <td key={i} className={cn(gl, "px-2 py-1.5 text-center tabular-nums")}>
+                            {fmtAmount(subtotal.reprogrammings[i] ?? 0)}
+                          </td>
+                        ))}
+                        {rounds > 0 && <td className={cn(gl, "px-2 py-1.5")} />}
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
 
                 {/* Totals */}
                 <tr className="align-top font-bold">
-                  <td className={cn(gl, "pt-4 pl-9")}>Sub-Total for MOOE</td>
+                  <td className={cn(gl, "pt-4 pl-9")}>GRAND TOTAL</td>
                   <td className={cn(gl, "px-2 pt-4 text-center tabular-nums")}>P&nbsp;&nbsp;{fmtAmount(totals.approved)}</td>
                   {roundIdx.map((i) => {
                     const balance = reprogrammingBalance[i];
@@ -1057,22 +1171,15 @@ function Signatory({
       <div className="mt-8">
         {editing ? (
           <div style={{ fontFamily: "var(--font-sans)" }}>
-            <Select value={name || undefined} onValueChange={pick}>
-              <SelectTrigger className="h-8 border-black/20 font-bold">
-                <SelectValue placeholder="Select signatory…" />
-              </SelectTrigger>
-              <SelectContent>
-                {items.length === 0 ? (
-                  <div className="px-2 py-1.5 text-sm text-muted-foreground">No approved accounts yet</div>
-                ) : (
-                  items.map((o) => (
-                    <SelectItem key={o.name} value={o.name}>
-                      {o.name}
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
+            <Combobox
+              value={name}
+              onChange={pick}
+              options={items.map((o) => ({ value: o.name, hint: o.position ?? undefined }))}
+              placeholder="Select signatory…"
+              searchPlaceholder="Search accounts…"
+              emptyText="No approved accounts yet"
+              triggerClassName="border-black/20 font-bold"
+            />
             <div className="mt-1 border-b border-black/20 text-[11px]">
               <TextField value={position} onChange={onPosition} editing placeholder="Position" className="text-[11px]" />
             </div>

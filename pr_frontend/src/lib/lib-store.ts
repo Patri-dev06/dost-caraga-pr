@@ -65,6 +65,8 @@ export interface LibDoc {
   cooperatingAgency: string;
   projectLeader: string;
   monitoringAgency: string;
+  durationFrom?: string; // ISO date (YYYY-MM-DD) — structured project duration range
+  durationTo?: string;
   rows: LibRow[];
   chargeableNote: string;
   preparedByName: string;
@@ -125,6 +127,37 @@ export function libTotals(rows: LibRow[]): { approved: number; reprogrammings: n
     });
   }
   return { approved, reprogrammings };
+}
+
+export interface LibTitleSubtotal {
+  titleId: string;
+  title: string;
+  approved: number;
+  reprogrammings: number[];
+}
+
+/**
+ * Sub-total each Title (indent-0 header) group: sum the approved amount and every
+ * reprogramming round across the rows that belong to it (up to the next Title).
+ */
+export function subtotalsByTitle(rows: LibRow[]): LibTitleSubtotal[] {
+  const rounds = maxRounds(rows);
+  const out: LibTitleSubtotal[] = [];
+  let current: LibTitleSubtotal | null = null;
+  for (const r of rows) {
+    if (r.header && r.indent === 0) {
+      current = { titleId: r.id, title: r.label, approved: 0, reprogrammings: new Array(rounds).fill(0) as number[] };
+      out.push(current);
+      continue;
+    }
+    if (current) {
+      current.approved += parseAmount(r.approved);
+      (r.reprogrammings ?? []).forEach((rp, i) => {
+        if (i < rounds) current!.reprogrammings[i] += parseAmount(rp.amount);
+      });
+    }
+  }
+  return out;
 }
 
 export const LIB_TOTAL_TOLERANCE = 0.005;

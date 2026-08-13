@@ -2,7 +2,7 @@
 // on-screen preview: centered header, label/value fields, an indented budget
 // table with Approved LIB / (First…Third) Reprogramming columns, totals, and signatories.
 
-import { fmtAmount, libTotals, maxRounds, parseAmount, reprogLabel, type LibDoc } from "@/lib/lib-store";
+import { fmtAmount, libTotals, maxRounds, parseAmount, reprogLabel, subtotalsByTitle, type LibDoc } from "@/lib/lib-store";
 
 export async function exportLibExcel(doc: LibDoc) {
   const ExcelJS = (await import("exceljs")).default;
@@ -63,7 +63,7 @@ export async function exportLibExcel(doc: LibDoc) {
   field("Program Title", doc.programTitle);
   field("Project Title", doc.projectTitle);
   field("Implementing Agency", doc.implementingAgency);
-  field("Total Duration", doc.totalDuration);
+  field("Total Duration", doc.totalDuration || [doc.durationFrom, doc.durationTo].filter(Boolean).join(" – "));
   field("Cooperating Agency", doc.cooperatingAgency);
   field("Project Leader", doc.projectLeader);
   field("Monitoring Agency", doc.monitoringAgency);
@@ -88,7 +88,32 @@ export async function exportLibExcel(doc: LibDoc) {
   }
   r++;
 
-  for (const row of doc.rows) {
+  // Title (indent-0) sub-totals, keyed by title id, emitted after each Title's block.
+  const subtotals = subtotalsByTitle(doc.rows);
+  const subtotalById = new Map(subtotals.map((s) => [s.titleId, s]));
+  let runningTitleId: string | null = null;
+
+  const writeSubtotalRow = (title: string, approved: number, reprogrammings: number[]) => {
+    const l = ws.getCell(r, 1);
+    l.value = `Sub-total of ${title.trim() || "(untitled)"}`;
+    l.font = font({ bold: true, italic: true });
+    l.alignment = { horizontal: "left", indent: 2 };
+    const a = ws.getCell(r, approvedCol);
+    a.value = `P  ${fmtAmount(approved)}`;
+    a.font = font({ bold: true });
+    a.alignment = { horizontal: "right" };
+    roundCols.forEach((col, i) => {
+      const b = ws.getCell(r, col);
+      b.value = fmtAmount(reprogrammings[i] ?? 0);
+      b.font = font({ bold: true });
+      b.alignment = { horizontal: "right" };
+    });
+    r++;
+  };
+
+  doc.rows.forEach((row, idx) => {
+    if (row.header && row.indent === 0) runningTitleId = row.id;
+
     const label = ws.getCell(r, 1);
     label.value = row.label;
     label.font = font({ bold: row.header && row.indent === 0, italic: !row.header && row.indent === 2 });
@@ -121,7 +146,15 @@ export async function exportLibExcel(doc: LibDoc) {
       j.alignment = { horizontal: "left", wrapText: true, vertical: "top" };
     }
     r++;
-  }
+
+    // Emit the current Title's sub-total after its last member row.
+    const nextRow = doc.rows[idx + 1];
+    const isLastOfTitle = runningTitleId != null && (idx === doc.rows.length - 1 || (nextRow?.header && nextRow.indent === 0));
+    if (isLastOfTitle) {
+      const s = subtotalById.get(runningTitleId!);
+      if (s) writeSubtotalRow(s.title, s.approved, s.reprogrammings);
+    }
+  });
 
   const totals = libTotals(doc.rows);
   const thin = { style: "thin" as const, color: { argb: "FF000000" } };
@@ -144,7 +177,6 @@ export async function exportLibExcel(doc: LibDoc) {
     });
     r++;
   };
-  totalRow("Sub-Total for MOOE", false);
   totalRow("GRAND TOTAL:", true);
   r++;
 
