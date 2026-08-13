@@ -4,6 +4,20 @@
 
 import { fmtAmount, libTotals, maxRounds, parseAmount, reprogLabel, subtotalsByTitle, type LibDoc } from "@/lib/lib-store";
 
+function toRoman(num: number): string {
+  const map: [number, string][] = [
+    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"],
+    [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
+  ];
+  let out = "";
+  let n = num;
+  for (const [value, sym] of map) {
+    while (n >= value) { out += sym; n -= value; }
+  }
+  return out;
+}
+const stripLeadingNumeral = (label: string) => label.replace(/^\s*[IVXLCDM]+\.\s*/i, "");
+
 export async function exportLibExcel(doc: LibDoc) {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
@@ -91,11 +105,12 @@ export async function exportLibExcel(doc: LibDoc) {
   // Title (indent-0) sub-totals, keyed by title id, emitted after each Title's block.
   const subtotals = subtotalsByTitle(doc.rows);
   const subtotalById = new Map(subtotals.map((s) => [s.titleId, s]));
+  const titleOrdinal = new Map(subtotals.map((s, i) => [s.titleId, i + 1]));
   let runningTitleId: string | null = null;
 
   const writeSubtotalRow = (title: string, approved: number, reprogrammings: number[]) => {
     const l = ws.getCell(r, 1);
-    l.value = `Sub-total of ${title.trim() || "(untitled)"}`;
+    l.value = `Sub-total of ${stripLeadingNumeral(title).trim() || "(untitled)"}`;
     l.font = font({ bold: true, italic: true });
     l.alignment = { horizontal: "left", indent: 2 };
     const a = ws.getCell(r, approvedCol);
@@ -114,9 +129,11 @@ export async function exportLibExcel(doc: LibDoc) {
   doc.rows.forEach((row, idx) => {
     if (row.header && row.indent === 0) runningTitleId = row.id;
 
+    const isTitle = row.header && row.indent === 0;
     const label = ws.getCell(r, 1);
-    label.value = row.label;
-    label.font = font({ bold: row.header && row.indent === 0, italic: !row.header && row.indent === 2 });
+    // Titles are auto-numbered (I., II., …); other rows keep their label as-is.
+    label.value = isTitle ? `${toRoman(titleOrdinal.get(row.id) ?? 1)}. ${stripLeadingNumeral(row.label)}` : row.label;
+    label.font = font({ bold: isTitle, italic: !row.header && row.indent === 2 });
     label.alignment = { horizontal: "left", indent: row.indent * 2, wrapText: true, vertical: "top" };
 
     if (row.note) {

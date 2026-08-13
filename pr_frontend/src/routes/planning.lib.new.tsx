@@ -74,6 +74,12 @@ function toRoman(num: number): string {
   return out;
 }
 
+// Drop any leading Roman-numeral prefix ("I. ", "II. ") so the auto-computed
+// title number is never doubled up on legacy labels that already embed one.
+function stripLeadingNumeral(label: string): string {
+  return label.replace(/^\s*[IVXLCDM]+\.\s*/i, "");
+}
+
 /* ---- inline editable primitives (amber highlight while editing, plain in preview) ---- */
 
 type Align = "left" | "center" | "right";
@@ -366,11 +372,8 @@ function LibForm() {
     reprogrammings: Array.from({ length: rounds }, () => ({ amount: "", justification: "" })),
   });
   const addRow = (header: boolean) => setDoc((d) => ({ ...d, rows: [...d.rows, blankRow(header, header ? 1 : 2)] }));
-  const addSection = () =>
-    setDoc((d) => {
-      const count = d.rows.filter((r) => r.header && r.indent === 0).length;
-      return { ...d, rows: [...d.rows, blankRow(true, 0, `${toRoman(count + 1)}. `)] };
-    });
+  // Title numbering (I., II., …) is computed at render time, so the label is just the name.
+  const addSection = () => setDoc((d) => ({ ...d, rows: [...d.rows, blankRow(true, 0, "")] }));
   const addLineToCategory = (categoryId: string) =>
     setDoc((d) => {
       const rows = [...d.rows];
@@ -403,11 +406,7 @@ function LibForm() {
   const addLineAfter = (id: string) =>
     insertAfter(id, (ref) => blankRow(false, ref.header ? (Math.min(2, ref.indent + 1) as 0 | 1 | 2) : ref.indent));
   const addCategoryAfter = (id: string) => insertAfter(id, () => blankRow(true, 1));
-  const addTitleAfter = (id: string) =>
-    insertAfter(id, (_ref, all) => {
-      const count = all.filter((r) => r.header && r.indent === 0).length;
-      return blankRow(true, 0, `${toRoman(count + 1)}. `);
-    });
+  const addTitleAfter = (id: string) => insertAfter(id, () => blankRow(true, 0, ""));
   const categories = doc.rows.filter((r) => r.header);
 
   const totals = libTotals(doc.rows);
@@ -415,6 +414,8 @@ function LibForm() {
   // end of each Title's block during rendering.
   const titleSubtotals = subtotalsByTitle(doc.rows);
   const subtotalByTitleId = new Map(titleSubtotals.map((s) => [s.titleId, s]));
+  // 1-based ordinal per Title (in document order) → rendered as I., II., III. …
+  const titleOrdinal = new Map(titleSubtotals.map((s, i) => [s.titleId, i + 1]));
   let runningTitleId: string | null = null;
   const titleIdForRow = doc.rows.map((r) => {
     if (r.header && r.indent === 0) runningTitleId = r.id;
@@ -818,19 +819,26 @@ function LibForm() {
                           </div>
                         )}
                         <div className={labelCls}>
-                          {r.header && r.indent === 0 && fullEdit ? (
-                            // Title name: pick Capital Outlay / MOOE, or type a custom title.
-                            <Combobox
-                              value={r.label}
-                              onChange={(v) => setRow(r.id, { label: v })}
-                              options={[{ value: "Capital Outlay" }, { value: "MOOE" }]}
-                              creatable
-                              placeholder="Select or type a title"
-                              searchPlaceholder="Capital Outlay / MOOE…"
-                              triggerClassName="h-7 border-0 bg-transparent px-0.5 font-bold text-black hover:bg-amber-50 hover:text-black dark:bg-transparent dark:text-black dark:hover:bg-amber-50"
-                            />
+                          {r.header && r.indent === 0 ? (
+                            // Title: auto-numbered (I., II., …) with the name from a combobox.
+                            <div className="flex items-center gap-1 font-bold">
+                              <span className="shrink-0">{toRoman(titleOrdinal.get(r.id) ?? 1)}.</span>
+                              {fullEdit ? (
+                                <Combobox
+                                  value={stripLeadingNumeral(r.label)}
+                                  onChange={(v) => setRow(r.id, { label: stripLeadingNumeral(v) })}
+                                  options={[{ value: "Capital Outlay" }, { value: "MOOE" }]}
+                                  creatable
+                                  placeholder="Select or type a title"
+                                  searchPlaceholder="Capital Outlay / MOOE…"
+                                  triggerClassName="h-7 flex-1 border-0 bg-transparent px-0.5 font-bold text-black hover:bg-amber-50 hover:text-black dark:bg-transparent dark:text-black dark:hover:bg-amber-50"
+                                />
+                              ) : (
+                                <span>{stripLeadingNumeral(r.label)}</span>
+                              )}
+                            </div>
                           ) : (
-                            <TextField value={r.label} onChange={(v) => setRow(r.id, { label: v })} editing={editing} bold={r.header && r.indent === 0} />
+                            <TextField value={r.label} onChange={(v) => setRow(r.id, { label: v })} editing={editing} bold={false} />
                           )}
                         </div>
                       </td>
@@ -868,7 +876,7 @@ function LibForm() {
                     </tr>
                     {emitSubtotal && subtotal && (
                       <tr className="align-top font-semibold text-black/80">
-                        <td className={cn(gl, "py-1.5 pl-4 italic")}>Sub-total of {subtotal.title.trim() || "(untitled)"}</td>
+                        <td className={cn(gl, "py-1.5 pl-4 italic")}>Sub-total of {stripLeadingNumeral(subtotal.title).trim() || "(untitled)"}</td>
                         <td className={cn(gl, "px-2 py-1.5 text-center tabular-nums")}>P&nbsp;&nbsp;{fmtAmount(subtotal.approved)}</td>
                         {roundIdx.map((i) => (
                           <td key={i} className={cn(gl, "px-2 py-1.5 text-center tabular-nums")}>
