@@ -80,12 +80,12 @@ function Dashboard() {
 
       {/* Stat cards — live counts */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard label="Line Item Budgets" value={libs.length} />
-        <StatCard label="PPMP" value={ppmps.length} />
-        <StatCard label="Purchase Requests" value={prs.length} />
-        <StatCard label="RFQ" value={rfqs.length} />
-        <StatCard label="Pending Approval" value={prPending} icon={Clock} accent />
-        <StatCard label="Approved PR" value={prApproved} icon={CheckCircle2} />
+        <StatCard label="Line Item Budgets" value={libs.length} to="/planning/lib" />
+        <StatCard label="PPMP" value={ppmps.length} to="/planning/ppmp" />
+        <StatCard label="Purchase Requests" value={prs.length} to="/purchase-requests" />
+        <StatCard label="RFQ" value={rfqs.length} to="/rfq" />
+        <StatCard label="Pending Approval" value={prPending} icon={Clock} accent to="/approval-inbox" />
+        <StatCard label="Approved PR" value={prApproved} icon={CheckCircle2} to="/purchase-requests" />
       </div>
 
       {/* Module tiles — the heart of the dashboard */}

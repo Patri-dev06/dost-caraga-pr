@@ -318,6 +318,9 @@ function LibForm() {
   const submitted = doc.status !== "Draft"; // approved/submitted — the Approved LIB figures and labels are locked
   const preview = mode === "preview";
   const fullEdit = !submitted && !preview; // draft: every field is editable
+  // Only Draft (edit) or Approved (reprogramming/revise) may be modified. In-review
+  // LIBs are locked read-only until the current signatory acts.
+  const canModify = doc.status === "Draft" || doc.status === "Approved";
   const revising = submitted && reviseRound !== null && !preview; // a reprogramming round is open for editing
   const editing = fullEdit || revising; // any input-editing view (drives the faint guide grid)
   const rounds = maxRounds(doc.rows); // number of reprogramming columns currently shown
@@ -454,6 +457,9 @@ function LibForm() {
   const canCertify = (Boolean(currentUser?.isBudgetOfficer) || isSuperadmin) && doc.status === "Forwarded to Budget Officer";
   const canApprove = (Boolean(currentUser?.isRegionalDirector) || isSuperadmin) && doc.status === "Pending Regional Director Approval";
   const canReturn = canRecommend || canCertify || canApprove;
+  // Signing/approving requires an uploaded e-signature (also enforced server-side).
+  const noSignature = !currentUser?.hasSignature;
+  const signatureHint = noSignature ? "Upload your e-signature first (account menu → My E-Signature)." : undefined;
 
   async function runWorkflow(label: LibStatus | "return", fn: () => Promise<LibDoc>, message: string, stay = false) {
     setAction(label === "return" ? "draft" : label);
@@ -486,6 +492,11 @@ function LibForm() {
   // Begin a new reprogramming round: add a column pre-filled from the previous
   // figures (Approved for the first round) so unchanged lines simply carry over.
   function startRevision() {
+    // Reprogramming only applies to an approved LIB; in-review ones stay locked.
+    if (doc.status !== "Approved") {
+      toast.error("Only an approved LIB can be revised.");
+      return;
+    }
     if (doc.revision >= MAX_REVISIONS) {
       toast.error(`This LIB has reached the maximum of ${MAX_REVISIONS} revisions.`);
       return;
@@ -580,6 +591,7 @@ function LibForm() {
           )}
 
           <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
+            {canModify && (
             <button
               type="button"
               onClick={() => {
@@ -598,6 +610,7 @@ function LibForm() {
             >
               <Pencil className="h-3.5 w-3.5" /> {submitted ? "Revise" : "Edit"}
             </button>
+            )}
             <button
               type="button"
               onClick={() => setMode("preview")}
@@ -634,17 +647,17 @@ function LibForm() {
                   </Button>
                 )}
                 {canRecommend && (
-                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Forwarded to Budget Officer", () => recommendLib(doc.id), "LIB recommended and forwarded to the Budget Officer.")} disabled={action !== null}>
+                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Forwarded to Budget Officer", () => recommendLib(doc.id), "LIB recommended and forwarded to the Budget Officer.")} disabled={action !== null || noSignature} title={signatureHint}>
                     <Send className="h-4 w-4" /> Recommend
                   </Button>
                 )}
                 {canCertify && (
-                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Pending Regional Director Approval", () => certifyLib(doc.id), "Funds certified; forwarded to the Regional Director.")} disabled={action !== null}>
+                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Pending Regional Director Approval", () => certifyLib(doc.id), "Funds certified; forwarded to the Regional Director.")} disabled={action !== null || noSignature} title={signatureHint}>
                     <Send className="h-4 w-4" /> Certify Funds
                   </Button>
                 )}
                 {canApprove && (
-                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Approved", () => approveLib(doc.id), "Line Item Budget approved.", true)} disabled={action !== null}>
+                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Approved", () => approveLib(doc.id), "Line Item Budget approved.", true)} disabled={action !== null || noSignature} title={signatureHint}>
                     <Send className="h-4 w-4" /> Approve
                   </Button>
                 )}
@@ -661,7 +674,7 @@ function LibForm() {
                   {isEditing ? "Save Changes" : "Save as Draft"}
                 </Button>
                 {canSubmit && (
-                  <Button size="sm" className="gap-1.5" onClick={submitForRouting} disabled={action !== null}>
+                  <Button size="sm" className="gap-1.5" onClick={submitForRouting} disabled={action !== null || noSignature} title={signatureHint}>
                     {action === "Pending Supervisor Review" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                     Submit for Recommendation
                   </Button>

@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { LucideIcon, TrendingUp, TrendingDown, Minus } from "lucide-react";
@@ -11,6 +12,7 @@ export function StatCard({
   trend = "neutral",
   icon: Icon,
   accent,
+  to,
 }: {
   label: string;
   value: string | number;
@@ -18,6 +20,7 @@ export function StatCard({
   trend?: Trend;
   icon?: LucideIcon;
   accent?: boolean;
+  to?: string;
 }) {
   const TrendIcon = trend === "up" ? TrendingUp : trend === "down" ? TrendingDown : Minus;
   const trendColor =
@@ -27,10 +30,11 @@ export function StatCard({
         ? "text-destructive"
         : "text-muted-foreground";
 
-  return (
+  const card = (
     <Card
       className={cn(
         "flex min-h-[104px] flex-col justify-between gap-2 rounded-xl border border-border bg-card p-4 shadow-card transition-shadow hover:shadow-md",
+        to && "cursor-pointer hover:border-primary/40",
         accent && "border-warning/50 bg-warning/10",
       )}
     >
@@ -57,5 +61,13 @@ export function StatCard({
         </p>
       )}
     </Card>
+  );
+
+  return to ? (
+    <Link to={to} className="block">
+      {card}
+    </Link>
+  ) : (
+    card
   );
 }

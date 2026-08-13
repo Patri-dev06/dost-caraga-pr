@@ -7,6 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { apiGetPurchaseRequests, apiGetRoles, apiGetUsers, apiUpdateUser, type UserRecord, type UserTier } from "@/lib/api";
@@ -32,7 +34,7 @@ const TIERS: { value: UserTier; label: string; desc: string }[] = [
   { value: "regular", label: "Regular", desc: "Only the modules you grant below" },
 ];
 
-const STATUSES = ["Active", "Pending", "Inactive"] as const;
+const STATUSES = ["Active", "Pending", "Deactivated"] as const;
 
 const tierBadge: Record<UserTier, string> = {
   superadmin: "bg-destructive/10 text-destructive border-destructive/30",
@@ -193,14 +195,23 @@ function ManageAccessBody({
   const [tier, setTier] = useState<UserTier>(user.tier);
   const [status, setStatus] = useState<string>(user.status);
   const [granted, setGranted] = useState<string[]>(user.modules.length ? user.modules : ["pr", "lib", "ppmp"]);
+  const [newPassword, setNewPassword] = useState("");
 
   const works = prs.filter((p) => p.requestedBy === user.name);
   const effective = effectiveModules(tier, granted);
 
   const mutation = useMutation({
-    mutationFn: () => apiUpdateUser(user.id, { tier, status, modules: tier === "regular" ? granted : null }),
+    mutationFn: () =>
+      apiUpdateUser(user.id, {
+        tier,
+        status,
+        modules: tier === "regular" ? granted : null,
+        // Only send a password when the admin actually typed a new one.
+        ...(newPassword.trim() ? { password: newPassword.trim() } : {}),
+      }),
     onSuccess: () => {
-      toast.success(`Access updated for ${user.name}.`);
+      toast.success(newPassword.trim() ? `Access & password updated for ${user.name}.` : `Access updated for ${user.name}.`);
+      setNewPassword("");
       onSaved();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Unable to update access."),
@@ -238,6 +249,20 @@ function ManageAccessBody({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Reset password (Superadmin) */}
+      <div className="space-y-2">
+        <Label className="label-eyebrow" htmlFor="reset-pw">Reset password</Label>
+        <Input
+          id="reset-pw"
+          type="password"
+          autoComplete="new-password"
+          placeholder="Type a new password (min 8 chars) to reset"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">Leave blank to keep the current password. Saving with a value here immediately resets this user's password.</p>
       </div>
 
       {/* Tier */}

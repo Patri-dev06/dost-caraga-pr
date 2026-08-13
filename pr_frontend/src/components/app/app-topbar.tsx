@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Bell, Mail, Settings, LogOut, Moon, Sun, CheckCheck, ShieldCheck, Undo2, FileText } from "lucide-react";
+import { Bell, Mail, Settings, LogOut, Moon, Sun, CheckCheck, ShieldCheck, Undo2, FileText, PenLine } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
@@ -12,14 +12,16 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { logout, hasValidToken, apiGetNotifications, apiMarkNotificationRead, apiMarkAllNotificationsRead, type AppNotification } from "@/lib/api";
 import { useCurrentUser } from "@/lib/current-user";
+import { SignatureDialog } from "@/components/app/signature-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 export function AppTopbar() {
   const navigate = useNavigate();
-  const { user } = useCurrentUser();
+  const { user, refresh } = useCurrentUser();
   const [signingOut, setSigningOut] = useState(false);
   const [isDark, setIsDark] = useState(false);
+  const [sigOpen, setSigOpen] = useState(false);
 
   const initials = (user?.name ?? "")
     .split(" ")
@@ -111,6 +113,10 @@ export function AppTopbar() {
               )}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setSigOpen(true); }}>
+              <PenLine className="h-4 w-4" /> My E-Signature
+              {user && !user.hasSignature && <span className="ml-auto text-[10px] font-semibold text-destructive">Required</span>}
+            </DropdownMenuItem>
             <DropdownMenuItem asChild><Link to="/settings">Settings</Link></DropdownMenuItem>
             <DropdownMenuItem
               disabled={signingOut}
@@ -125,6 +131,7 @@ export function AppTopbar() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <SignatureDialog open={sigOpen} onOpenChange={setSigOpen} onChanged={refresh} />
     </header>
   );
 }

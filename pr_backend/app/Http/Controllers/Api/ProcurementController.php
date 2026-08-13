@@ -161,6 +161,43 @@ class ProcurementController extends Controller
         ]);
     }
 
+    /** Current user's uploaded e-signature (base64 data URL), for preview in Settings. */
+    public function showSignature(Request $request): JsonResponse
+    {
+        return response()->json(['data' => ['signature' => $request->user()?->signature]]);
+    }
+
+    /** Upload / replace the current user's e-signature image (base64 data URL). */
+    public function storeSignature(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'signature' => ['required', 'string', 'starts_with:data:image/', 'max:2000000'],
+        ]);
+        $user = $request->user();
+        $user->forceFill(['signature' => $data['signature']])->save();
+        $this->audit($request, 'Account', 'Uploaded e-signature', $user->email);
+
+        return response()->json(['data' => ['has_signature' => true]]);
+    }
+
+    /** Remove the current user's e-signature. */
+    public function destroySignature(Request $request): JsonResponse
+    {
+        $request->user()->forceFill(['signature' => null])->save();
+
+        return response()->json(['data' => ['has_signature' => false]]);
+    }
+
+    /** Block a signing/approval action when the acting user has no e-signature on file. */
+    private function requireSignature(?User $user): void
+    {
+        abort_if(
+            $user === null || empty($user->signature),
+            422,
+            'Upload your e-signature first (top-right account menu → My E-Signature) before you can sign or approve documents.',
+        );
+    }
+
     public function notifications(Request $request): JsonResponse
     {
         $notifications = UserNotification::where('user_id', $request->user()?->id)
@@ -347,6 +384,7 @@ class ProcurementController extends Controller
             'Only the preparer can submit this LIB.',
         );
         abort_unless(in_array($document->status, ['Draft', ''], true) || $document->status === null, 422, 'This LIB has already been submitted.');
+        $this->requireSignature($user);
 
         $supervisor = $this->designatedSupervisor();
         abort_if($supervisor === null, 422, 'No Supervisor is designated. Set one in System Settings first.');
@@ -440,6 +478,8 @@ class ProcurementController extends Controller
         [$stampedId, $designated] = $this->libStageParticipants($document);
 
         $this->abortUnlessLibActor($user, $document, $stampedId, $designated);
+        // Signing steps (recommend/certify/approve) require the signatory's e-signature.
+        $this->requireSignature($user);
 
         $expected = [
             'recommend' => 'Pending Supervisor Review',
@@ -592,6 +632,10 @@ class ProcurementController extends Controller
 
         $user = $request->user();
         $uid = $clientUid ?? $data['id'];
+        // Submitting a PPMP for certification is a signing action — require an e-signature.
+        if (($data['status'] ?? null) === 'Submitted to Budget Officer') {
+            $this->requireSignature($user);
+        }
         $lib = ! empty($data['libId']) ? LibDocument::where('client_uid', $data['libId'])->first() : null;
         $budgetOfficer = $this->designatedBudgetOfficer();
 
@@ -740,6 +784,9 @@ class ProcurementController extends Controller
 
         if ($action === 'return') {
             abort_if(trim((string) ($data['returnReason'] ?? '')) === '', 422, 'A reason is required when returning a PPMP.');
+        } else {
+            // Approving (certifying) stamps the officer's signature — require one.
+            $this->requireSignature($user);
         }
 
         $document = DB::transaction(function () use ($document, $data, $user, $action): PpmpDocument {
@@ -965,7 +1012,7 @@ class ProcurementController extends Controller
         $record = $this->query($resource)->findOrFail($resourceId);
 
         if ($record instanceof User) {
-            $record->forceFill(['status' => 'Inactive'])->save();
+            $record->forceFill(['status' => 'Deactivated'])->save();
         } else {
             $record->delete();
         }
@@ -2208,7 +2255,7 @@ class ProcurementController extends Controller
             'fund-sources' => $request->validate(['name' => [$required, 'string'], 'fund_type' => [$required, 'string'], 'description' => ['nullable', 'string'], 'active' => ['sometimes', 'boolean']]),
             'projects' => $request->validate(['office_id' => ['nullable', 'exists:offices,id'], 'fund_source_id' => ['nullable', 'exists:fund_sources,id'], 'code' => [$required, 'string'], 'title' => [$required, 'string'], 'description' => ['nullable', 'string'], 'fiscal_year' => [$required, 'integer'], 'status' => ['sometimes', 'string']]),
             'procurement-items' => $request->validate(['name' => [$required, 'string'], 'description' => ['nullable', 'string'], 'category' => ['nullable', 'string'], 'uom' => [$required, 'string'], 'is_cse' => ['sometimes', 'boolean'], 'active' => ['sometimes', 'boolean']]),
-            'users' => $request->validate(['name' => ['sometimes', 'string'], 'email' => ['sometimes', 'email'], 'office_id' => ['nullable', 'exists:offices,id'], 'role_ids' => ['array'], 'role_ids.*' => ['exists:roles,id'], 'status' => ['sometimes', 'string'], 'tier' => ['sometimes', Rule::in(['superadmin', 'admin', 'regular'])], 'modules' => ['sometimes', 'nullable', 'array'], 'modules.*' => ['string', Rule::in(User::TOGGLEABLE_MODULES)]]),
+            'users' => $request->validate(['name' => ['sometimes', 'string'], 'email' => ['sometimes', 'email'], 'office_id' => ['nullable', 'exists:offices,id'], 'role_ids' => ['array'], 'role_ids.*' => ['exists:roles,id'], 'status' => ['sometimes', 'string'], 'password' => ['sometimes', 'string', 'min:8'], 'tier' => ['sometimes', Rule::in(['superadmin', 'admin', 'regular'])], 'modules' => ['sometimes', 'nullable', 'array'], 'modules.*' => ['string', Rule::in(User::TOGGLEABLE_MODULES)]]),
             default => [],
         };
     }

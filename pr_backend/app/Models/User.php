@@ -37,16 +37,24 @@ class User extends Authenticatable
         'status',
         'tier',
         'modules',
+        'signature',
         'last_login_at',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        // Large base64 image — never ship it in generic user payloads; use has_signature.
+        'signature',
     ];
 
-    /** Expose the computed effective module list to the API. */
-    protected $appends = ['access_modules'];
+    /** Expose the computed effective module list + signature presence to the API. */
+    protected $appends = ['access_modules', 'has_signature'];
+
+    public function getHasSignatureAttribute(): bool
+    {
+        return ! empty($this->signature);
+    }
 
     public function office(): BelongsTo
     {

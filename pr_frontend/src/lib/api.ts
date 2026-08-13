@@ -41,6 +41,7 @@ export type CurrentUser = {
   isBudgetOfficer: boolean; // designated Budget Officer for PPMP/LIB fund certification
   isSupervisor: boolean; // designated Supervisor for LIB recommending approval
   isRegionalDirector: boolean; // designated Regional Director for LIB final approval
+  hasSignature: boolean; // an e-signature is uploaded (required to sign/approve)
 };
 
 export type RoleRecord = {
@@ -507,7 +508,7 @@ export async function apiApprovePlanningPpmp<T = unknown>(id: string, payload: P
 
 export async function apiUpdateUser(
   id: number,
-  payload: { tier?: UserTier; modules?: string[] | null; status?: string; role_ids?: number[] },
+  payload: { tier?: UserTier; modules?: string[] | null; status?: string; role_ids?: number[]; password?: string },
 ) {
   const result = await request<ApiRecord<BackendUser>>(`/users/${id}`, { method: "PUT", body: payload });
   return mapUser(result.data);
@@ -786,6 +787,7 @@ type BackendUser = {
   is_budget_officer?: boolean;
   is_supervisor?: boolean;
   is_regional_director?: boolean;
+  has_signature?: boolean;
   last_login_at: string | null;
 };
 
@@ -964,7 +966,24 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     isBudgetOfficer: Boolean(user.is_budget_officer),
     isSupervisor: Boolean(user.is_supervisor),
     isRegionalDirector: Boolean(user.is_regional_director),
+    hasSignature: Boolean(user.has_signature),
   };
+}
+
+/** Current user's uploaded e-signature (base64 data URL) or null. */
+export async function apiGetMySignature(): Promise<string | null> {
+  const result = await request<{ data: { signature: string | null } }>("/me/signature");
+  return result.data.signature;
+}
+
+/** Upload / replace the current user's e-signature (base64 data URL). */
+export async function apiSetMySignature(signature: string): Promise<void> {
+  await request<{ data: { has_signature: boolean } }>("/me/signature", { method: "POST", body: { signature } });
+}
+
+/** Remove the current user's e-signature. */
+export async function apiDeleteMySignature(): Promise<void> {
+  await request<{ data: { has_signature: boolean } }>("/me/signature", { method: "DELETE" });
 }
 
 function mapRole(role: BackendRole): RoleRecord {

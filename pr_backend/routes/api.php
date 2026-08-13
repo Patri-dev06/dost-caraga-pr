@@ -19,6 +19,11 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/budget-officer', [ProcurementController::class, 'budgetOfficer']);
         Route::get('/workflow-signatories', [ProcurementController::class, 'workflowSignatories']);
 
+        // Current user's e-signature (required before signing/approving).
+        Route::get('/me/signature', [ProcurementController::class, 'showSignature']);
+        Route::post('/me/signature', [ProcurementController::class, 'storeSignature']);
+        Route::delete('/me/signature', [ProcurementController::class, 'destroySignature']);
+
         // In-app notifications.
         Route::get('/notifications', [ProcurementController::class, 'notifications']);
         Route::post('/notifications/read-all', [ProcurementController::class, 'markAllNotificationsRead']);
