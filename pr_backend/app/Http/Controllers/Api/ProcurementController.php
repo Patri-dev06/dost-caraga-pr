@@ -333,7 +333,11 @@ class ProcurementController extends Controller
                 'certified_position' => $data['certifiedPosition'] ?? null,
                 'approved_name' => $data['approvedName'] ?? null,
                 'approved_position' => $data['approvedPosition'] ?? null,
-                'status' => $data['status'],
+                // Status is server-controlled: a save never advances it. New docs start
+                // as Draft; existing docs keep their current status (which only changes
+                // through the submit/recommend/certify/approve/return endpoints). This
+                // stops an owner from self-approving via a raw save payload.
+                'status' => $document->exists ? $document->status : 'Draft',
                 'history' => $data['history'] ?? [],
                 'owner_id' => $document->owner_id ?? $user?->id,
                 'owner_name' => $document->owner_name ?? $user?->name,
@@ -596,7 +600,10 @@ class ProcurementController extends Controller
             'libId' => ['nullable', 'string', 'required_if:ppmpClass,Project'],
             'chargeableTo' => ['nullable', 'string'],
             'ppmpNo' => ['nullable', 'string'],
-            'status' => ['required', 'string'],
+            // A save may only draft or submit. Approval/return happen through the
+            // dedicated review endpoints (which enforce Budget Officer auth + signature),
+            // so 'Approved'/'Returned' can never be set via a raw save payload.
+            'status' => ['required', Rule::in(['Draft', 'Submitted to Budget Officer'])],
             'revisionCount' => ['nullable', 'integer', 'min:0'],
             'fiscalYear' => ['required', 'integer', 'between:2000,2100'],
             'endUserUnit' => ['nullable', 'string'],
