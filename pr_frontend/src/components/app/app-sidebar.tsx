@@ -122,7 +122,7 @@ export function AppSidebar() {
 
       <SidebarFooter className="border-t border-sidebar-border p-2 group-data-[collapsible=icon]:items-center">
         <SidebarMenu className="gap-0.5">
-          {FOOTER.filter((f) => f.url !== "/settings" || canAccess("settings")).map((f) => (
+          {FOOTER.map((f) => (
             <SidebarMenuItem key={f.title}>
               <SidebarMenuButton asChild tooltip={f.title} className="h-9 rounded-lg px-3 text-muted-foreground">
                 <Link to={f.url} className="flex items-center gap-2.5">

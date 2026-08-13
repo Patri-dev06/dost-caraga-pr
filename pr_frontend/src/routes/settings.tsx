@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
 import { apiGetSystemSettings, apiUpdateSystemSettings, apiGetSignatories, type SystemPreferenceRecord, type Signatory } from "@/lib/api";
-import { useCanAccess } from "@/lib/current-user";
+import { useCanAccess, useCurrentUser } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
@@ -33,31 +33,36 @@ export const Route = createFileRoute("/settings")({
 });
 
 function SettingsPage() {
-  const navigate = useNavigate();
   const canAccess = useCanAccess();
-  // Settings is admin-only; bounce anyone who reaches it without access back to the dashboard.
-  useEffect(() => {
-    if (!canAccess("settings")) navigate({ to: "/" });
-  }, [canAccess, navigate]);
+  // Everyone can open Settings for their profile; only accounts with the "settings"
+  // module (admin/superadmin) see and manage the system-wide preferences.
+  const canManageSystem = canAccess("settings");
+  const { user } = useCurrentUser();
 
   const queryClient = useQueryClient();
   const [draftSettings, setDraftSettings] = useState<Record<string, SystemPreferenceRecord["value"]>>({});
-  const [profile, setProfile] = useState({
-    name: "Maria Dela Cruz",
-    email: "mdelacruz@dost.gov.ph",
-    office: "Regional Office",
-    position: "Administrative Officer V",
-  });
+  const [profile, setProfile] = useState({ name: "", email: "", office: "", position: "" });
   const [draftProfile, setDraftProfile] = useState(profile);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [confirmProfileSave, setConfirmProfileSave] = useState(false);
+
+  // Show the signed-in user's real account details.
+  useEffect(() => {
+    if (!user) return;
+    const p = { name: user.name, email: user.email, office: user.office, position: user.position };
+    setProfile(p);
+    setDraftProfile(p);
+  }, [user]);
+
   const { data: systemSettings = [], isLoading: settingsLoading } = useQuery({
     queryKey: ["system-settings"],
     queryFn: apiGetSystemSettings,
+    enabled: canManageSystem, // avoids a 403 for regular users
   });
   const { data: signatories = [] } = useQuery({
     queryKey: ["signatories"],
     queryFn: apiGetSignatories,
+    enabled: canManageSystem,
   });
   const updateSettings = useMutation({
     mutationFn: apiUpdateSystemSettings,
@@ -151,6 +156,7 @@ function SettingsPage() {
         )}
       </Card>
 
+      {canManageSystem && (
       <Card className="border border-border bg-card p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -190,6 +196,7 @@ function SettingsPage() {
           </div>
         )}
       </Card>
+      )}
 
       <Card className="border border-border bg-card p-6">
         <p className="label-eyebrow">Notifications</p>
