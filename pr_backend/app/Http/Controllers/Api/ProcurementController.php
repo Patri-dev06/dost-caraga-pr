@@ -305,6 +305,9 @@ class ProcurementController extends Controller
 
         $user = $request->user();
         $uid = $clientUid ?? $data['id'];
+        // Reprogramming may only reallocate line items — reject a save whose reprogramming
+        // round total doesn't equal the approved LIB total (authoritative server-side rule).
+        $this->assertLibReprogrammingsBalanced($data['rows']);
 
         $document = DB::transaction(function () use ($data, $uid, $user): LibDocument {
             $document = LibDocument::firstOrNew(['client_uid' => $uid]);
@@ -564,6 +567,38 @@ class ProcurementController extends Controller
     private function libLink(LibDocument $document): string
     {
         return "/planning/lib/new?edit={$document->client_uid}";
+    }
+
+    /**
+     * Reprogramming only reallocates line items, so each reprogramming round must total
+     * the same as the approved LIB. Reject (422) any save that would push an unbalanced
+     * round. An entirely-empty round (all zero) is ignored; any round with figures must
+     * equal the approved total (±0.01 for float rounding).
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     */
+    private function assertLibReprogrammingsBalanced(array $rows): void
+    {
+        $num = static fn ($v): float => (float) str_replace([',', ' '], '', (string) ($v ?? ''));
+        $approvedTotal = 0.0;
+        $roundTotals = [];
+        foreach ($rows as $row) {
+            $approvedTotal += $num($row['approved'] ?? null);
+            foreach ((array) ($row['reprogrammings'] ?? []) as $i => $rp) {
+                $roundTotals[$i] = ($roundTotals[$i] ?? 0.0) + $num($rp['amount'] ?? null);
+            }
+        }
+
+        foreach ($roundTotals as $i => $total) {
+            if (abs($total) < 0.01) {
+                continue; // round not started / cleared out
+            }
+            abort_if(
+                abs($total - $approvedTotal) > 0.01,
+                422,
+                'Reprogramming round '.($i + 1).' must equal the approved LIB total of ₱'.number_format($approvedTotal, 2).'.',
+            );
+        }
     }
 
     public function planningPpmpIndex(Request $request): JsonResponse
