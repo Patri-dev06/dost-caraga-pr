@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
-import { apiGetSystemSettings, apiUpdateSystemSettings, apiGetSignatories, type SystemPreferenceRecord, type Signatory } from "@/lib/api";
+import { apiGetSystemSettings, apiUpdateSystemSettings, apiGetSignatories, apiUpdateProfile, type SystemPreferenceRecord, type Signatory } from "@/lib/api";
 import { useCanAccess, useCurrentUser } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -37,7 +37,7 @@ function SettingsPage() {
   // Everyone can open Settings for their profile; only accounts with the "settings"
   // module (admin/superadmin) see and manage the system-wide preferences.
   const canManageSystem = canAccess("settings");
-  const { user } = useCurrentUser();
+  const { user, refresh } = useCurrentUser();
 
   const queryClient = useQueryClient();
   const [draftSettings, setDraftSettings] = useState<Record<string, SystemPreferenceRecord["value"]>>({});
@@ -86,12 +86,21 @@ function SettingsPage() {
     setIsEditingProfile(false);
   };
 
-  const saveProfile = () => {
-    setProfile(draftProfile);
-    setIsEditingProfile(false);
-    setConfirmProfileSave(false);
-    toast.success("Profile details updated.");
-  };
+  const profileMutation = useMutation({
+    mutationFn: () => apiUpdateProfile({ name: draftProfile.name, email: draftProfile.email, position: draftProfile.position }),
+    onSuccess: (updated) => {
+      setProfile({ name: updated.name, email: updated.email, office: updated.office, position: updated.position });
+      setIsEditingProfile(false);
+      setConfirmProfileSave(false);
+      refresh(); // update the name/initials shown in the topbar
+      toast.success("Profile updated.");
+    },
+    onError: (error) => {
+      setConfirmProfileSave(false);
+      toast.error(error instanceof Error ? error.message : "Unable to update profile.");
+    },
+  });
+  const saveProfile = () => profileMutation.mutate();
   const settingsByCategory = systemSettings.reduce<Record<string, SystemPreferenceRecord[]>>((groups, setting) => {
     groups[setting.category] = [...(groups[setting.category] ?? []), setting];
     return groups;
@@ -133,11 +142,12 @@ function SettingsPage() {
             editing={isEditingProfile}
             onChange={(value) => setDraftProfile((current) => ({ ...current, email: value }))}
           />
+          {/* Office is an organizational assignment managed by the Superadmin, not self-editable. */}
           <ProfileField
             label="Office"
-            value={isEditingProfile ? draftProfile.office : profile.office}
-            editing={isEditingProfile}
-            onChange={(value) => setDraftProfile((current) => ({ ...current, office: value }))}
+            value={profile.office}
+            editing={false}
+            onChange={() => {}}
           />
           <ProfileField
             label="Position"
@@ -238,7 +248,9 @@ function SettingsPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Review Again</AlertDialogCancel>
-            <AlertDialogAction onClick={saveProfile}>Confirm Changes</AlertDialogAction>
+            <AlertDialogAction onClick={saveProfile} disabled={profileMutation.isPending}>
+              {profileMutation.isPending ? "Saving..." : "Confirm Changes"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

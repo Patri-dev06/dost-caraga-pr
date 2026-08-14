@@ -132,6 +132,23 @@ class AuthController extends Controller
         return response()->json(['data' => $this->serializeUser($request->user()->load('roles', 'office'))]);
     }
 
+    /** Self-service profile update. Only the account's own editable fields — never
+     *  tier/status/modules/roles, which stay under Superadmin control. */
+    public function updateMe(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $data = $request->validate([
+            'name' => ['sometimes', 'string', 'max:255'],
+            'email' => ['sometimes', 'email', Rule::unique('users', 'email')->ignore($user->id)],
+            'position' => ['sometimes', 'nullable', 'string', 'max:255'],
+        ]);
+
+        $user->fill($data)->save();
+        $this->audit($request, $user, 'Account', 'Updated Profile', $user->email);
+
+        return response()->json(['data' => $this->serializeUser($user->fresh(['roles', 'office']))]);
+    }
+
     /** User payload plus the derived is_budget_officer flag used by the client. */
     private function serializeUser(User $user): array
     {

@@ -359,6 +359,14 @@ export async function apiMe(): Promise<CurrentUser> {
   return user;
 }
 
+/** Self-service profile update (name / email / position). */
+export async function apiUpdateProfile(payload: { name?: string; email?: string; position?: string }): Promise<CurrentUser> {
+  const result = await request<{ data: BackendUser }>("/auth/me", { method: "PUT", body: payload });
+  const user = mapCurrentUser(result.data);
+  setCurrentUser(user);
+  return user;
+}
+
 export async function logout() {
   const token = getToken();
 

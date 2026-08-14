@@ -13,6 +13,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
         Route::post('/auth/refresh', [AuthController::class, 'refresh']);
         Route::get('/auth/me', [AuthController::class, 'me']);
+        Route::put('/auth/me', [AuthController::class, 'updateMe']);
 
         // Approved accounts for signatory pickers (readable by any signed-in user).
         Route::get('/signatories', [ProcurementController::class, 'signatories']);
