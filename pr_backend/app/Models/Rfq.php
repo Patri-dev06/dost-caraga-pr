@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class Rfq extends Model
@@ -12,6 +13,7 @@ class Rfq extends Model
     protected $fillable = [
         'rfq_no',
         'purchase_request_id',
+        'procurement_category',
         'quotation_no',
         'rfq_date',
         'opening_date',
@@ -21,13 +23,17 @@ class Rfq extends Model
         'bac_chairman_title',
         'purpose',
         'fund_source_snapshot',
-        'supplier_name',
-        'supplier_address',
-        'supplier_by',
-        'supplier_contact_no',
-        'supplier_tin',
         'canvasser',
         'bac_action',
+        'bac_chair_signed_by',
+        'bac_chair_signed_name',
+        'bac_chair_signed_at',
+        'bac_vice_chair_signed_by',
+        'bac_vice_chair_signed_name',
+        'bac_vice_chair_signed_at',
+        'supply_officer_signed_by',
+        'supply_officer_signed_name',
+        'supply_officer_signed_at',
         'status',
         'stage',
         'created_by',
@@ -38,6 +44,9 @@ class Rfq extends Model
     {
         return [
             'estimated_budget' => 'decimal:2',
+            'bac_chair_signed_at' => 'datetime',
+            'bac_vice_chair_signed_at' => 'datetime',
+            'supply_officer_signed_at' => 'datetime',
             'submitted_at' => 'datetime',
         ];
     }
@@ -55,6 +64,16 @@ class Rfq extends Model
     public function items(): HasMany
     {
         return $this->hasMany(RfqItem::class);
+    }
+
+    public function suppliers(): HasMany
+    {
+        return $this->hasMany(RfqSupplier::class);
+    }
+
+    public function abstractOfCanvas(): HasOne
+    {
+        return $this->hasOne(AbstractOfCanvas::class);
     }
 
     public function purchaseOrders(): HasMany

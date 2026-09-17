@@ -26,6 +26,18 @@ class PurchaseOrder extends Model
         'status',
         'stage',
         'created_by',
+        'budget_officer_id',
+        'budget_officer_name',
+        'budget_officer_signed_at',
+        'accounting_officer_id',
+        'accounting_officer_name',
+        'accounting_officer_signed_at',
+        'approved_by_id',
+        'approved_by_name',
+        'approved_by_signed_at',
+        'delivery_waived',
+        'delivery_waived_at',
+        'delivery_waived_reason',
         'submitted_at',
     ];
 
@@ -33,6 +45,11 @@ class PurchaseOrder extends Model
     {
         return [
             'total_amount' => 'decimal:2',
+            'budget_officer_signed_at' => 'datetime',
+            'accounting_officer_signed_at' => 'datetime',
+            'approved_by_signed_at' => 'datetime',
+            'delivery_waived' => 'boolean',
+            'delivery_waived_at' => 'datetime',
             'submitted_at' => 'datetime',
         ];
     }
@@ -50,6 +67,21 @@ class PurchaseOrder extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function budgetOfficer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'budget_officer_id');
+    }
+
+    public function accountingOfficer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'accounting_officer_id');
+    }
+
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by_id');
     }
 
     public function items(): HasMany

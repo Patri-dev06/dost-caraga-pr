@@ -56,7 +56,7 @@ class DatabaseSeeder extends Seeder
             'tier' => 'admin',
             'modules' => null,
         ]);
-        $admin->roles()->sync([$roles->firstWhere('name', 'Admin')->id]);
+        $admin->roles()->sync([$roles->firstWhere('name', 'Admin')->id, $roles->firstWhere('name', 'Recommender')->id]);
 
         $requester = User::updateOrCreate(['email' => 'mdelacruz@dost.gov.ph'], [
             'name' => 'Maria Dela Cruz',

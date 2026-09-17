@@ -1,12 +1,13 @@
-import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { FilePlus2, FileText, AlertTriangle, FileCheck2, Trash2, Eye } from "lucide-react";
+import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { FilePlus2, FileText, AlertTriangle, FileCheck2, Eye, CheckCircle2, XCircle, ThumbsUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
-import { apiGetPurchaseRequests } from "@/lib/api";
-import { listAllRfqs, listRfqsForPr, deleteRfq, fmtAmount, type RfqDoc } from "@/lib/rfq-store";
+import { StatusBadge } from "@/components/app/status-badge";
+import { apiGetPurchaseRequests, apiGetRfqs, apiRfqApprovalAction, type Rfq } from "@/lib/api";
+import { fmtAmount } from "@/lib/lib-store";
 import type { PurchaseRequest } from "@/lib/mock-data";
 import { toast } from "sonner";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/rfq")({
   head: () => ({
@@ -19,41 +20,36 @@ export const Route = createFileRoute("/rfq")({
 });
 
 function RfqListPage() {
-  const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const [prs, setPrs] = useState<PurchaseRequest[]>([]);
-  const [rfqs, setRfqs] = useState<RfqDoc[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    if (pathname !== "/rfq") return;
+  const { data: prs = [], isLoading: loadingPrs, error: prsError } = useQuery({
+    queryKey: ["purchase-requests"],
+    queryFn: apiGetPurchaseRequests,
+    enabled: pathname === "/rfq",
+  });
 
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiGetPurchaseRequests();
-        if (!cancelled) setPrs(data);
-      } catch {
-        if (!cancelled) setError("Could not load Purchase Requests from server.");
-      } finally {
-        if (!cancelled) {
-          setRfqs(listAllRfqs());
-          setLoading(false);
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [pathname]);
+  const { data: rfqs = [], isLoading: loadingRfqs } = useQuery({
+    queryKey: ["rfqs"],
+    queryFn: () => apiGetRfqs(),
+    enabled: pathname === "/rfq",
+  });
+
+  const pendingRfqs = rfqs.filter((r) => r.status === "For Recommendation" || r.status === "For Approval");
+
+  const actionMutation = useMutation({
+    mutationFn: ({ id, action, reason }: { id: string; action: "recommend" | "approve" | "reject"; reason?: string }) =>
+      apiRfqApprovalAction(id, action, reason),
+    onSuccess: async (result) => {
+      toast.success(result.message);
+      await queryClient.invalidateQueries({ queryKey: ["rfqs"] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to complete approval action."),
+  });
 
   if (pathname !== "/rfq") return <Outlet />;
 
-  function handleDelete(rfqId: string) {
-    deleteRfq(rfqId);
-    setRfqs(listAllRfqs());
-    toast.success("RFQ deleted.");
-  }
-
+  const loading = loadingPrs || loadingRfqs;
   const approvedPrs = prs.filter((pr) => pr.status === "Approved");
 
   return (
@@ -64,22 +60,69 @@ function RfqListPage() {
         subtitle="Generate RFQ documents from approved Purchase Requests."
       />
 
-      {error && (
+      {prsError && (
         <div className="flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4">
           <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
           <div>
             <p className="text-sm font-semibold text-warning-foreground">Server Unavailable</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">{error}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Could not load Purchase Requests from server.</p>
           </div>
         </div>
       )}
 
       {loading ? (
         <div className="rounded-xl border border-border bg-card p-10 text-center">
-          <p className="text-sm text-muted-foreground">Loading Purchase Requests…</p>
+          <p className="text-sm text-muted-foreground">Loading…</p>
         </div>
       ) : (
         <>
+          {/* RFQs awaiting recommend/approve/reject */}
+          {pendingRfqs.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-navy">RFQs Awaiting Action</h2>
+              <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
+                {pendingRfqs.map((rfq) => (
+                  <div key={rfq.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-navy">{rfq.rfqNo}</p>
+                      <p className="text-xs text-muted-foreground">
+                        PR: {rfq.prNo} · {rfq.supplierName || "No supplier name"} · {rfq.stage}
+                      </p>
+                    </div>
+                    <StatusBadge status={rfq.status} />
+                    <div className="flex gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1 border-border px-2 text-xs"
+                        disabled={actionMutation.isPending}
+                        onClick={() =>
+                          actionMutation.mutate({ id: rfq.id, action: rfq.status === "For Recommendation" ? "recommend" : "approve" })
+                        }
+                      >
+                        {rfq.status === "For Recommendation" ? <ThumbsUp className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                        {rfq.status === "For Recommendation" ? "Recommend" : "Approve"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1 border-destructive/40 px-2 text-xs text-destructive hover:bg-destructive/10"
+                        disabled={actionMutation.isPending}
+                        onClick={() => {
+                          const reason = window.prompt("Reason for rejecting this RFQ:");
+                          if (!reason) return;
+                          actionMutation.mutate({ id: rfq.id, action: "reject", reason });
+                        }}
+                      >
+                        <XCircle className="h-3 w-3" /> Reject
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Existing RFQs */}
           {rfqs.length > 0 && (
             <div className="space-y-3">
@@ -90,18 +133,13 @@ function RfqListPage() {
                     <FileCheck2 className="h-4 w-4 shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
                       <Link to="/rfq/$rfqId" params={{ rfqId: rfq.id }} className="text-sm font-medium text-navy hover:underline">
-                        {rfq.quotationNo}
+                        {rfq.rfqNo}
                       </Link>
                       <p className="text-xs text-muted-foreground">
                         PR: {rfq.prNo} · {rfq.items.length} items · ₱{fmtAmount(rfq.estimatedBudget)}
                       </p>
                     </div>
-                    <span className="hidden text-xs text-muted-foreground md:block">
-                      {new Date(rfq.createdAt).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" })}
-                    </span>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(rfq.id)}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    <StatusBadge status={rfq.status} />
                   </div>
                 ))}
               </div>
@@ -116,16 +154,12 @@ function RfqListPage() {
                 Select a Purchase Request to auto-generate an RFQ document.
               </p>
               <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
-                {approvedPrs.map((pr) => {
-                  const existingRfqs = listRfqsForPr(pr.id);
-                  return <ApprovedPrCard key={pr.id} pr={pr} existingRfqs={existingRfqs} onGenerate={() => {
-                    sessionStorage.setItem("rfq_source_pr", JSON.stringify(pr));
-                    navigate({ to: "/rfq/new", search: { pr: pr.id } });
-                  }} />;
-                })}
+                {approvedPrs.map((pr) => (
+                  <ApprovedPrCard key={pr.id} pr={pr} existingRfqCount={rfqs.filter((r) => r.prId === pr.id).length} />
+                ))}
               </div>
             </div>
-          ) : !error ? (
+          ) : !prsError ? (
             <div className="rounded-xl border border-border bg-card p-10 text-center">
               <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" strokeWidth={1.5} />
               <p className="text-sm font-semibold text-navy">No Approved Purchase Requests</p>
@@ -140,7 +174,7 @@ function RfqListPage() {
   );
 }
 
-function ApprovedPrCard({ pr, existingRfqs, onGenerate }: { pr: PurchaseRequest; existingRfqs: RfqDoc[]; onGenerate: () => void }) {
+function ApprovedPrCard({ pr, existingRfqCount }: { pr: PurchaseRequest; existingRfqCount: number }) {
   return (
     <div className="flex flex-wrap items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40">
       <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -152,8 +186,8 @@ function ApprovedPrCard({ pr, existingRfqs, onGenerate }: { pr: PurchaseRequest;
       </div>
       <div className="text-right">
         <p className="text-sm font-semibold tabular-nums text-navy">₱{fmtAmount(pr.amount)}</p>
-        {existingRfqs.length > 0 && (
-          <p className="text-[10px] text-muted-foreground">{existingRfqs.length} RFQ(s) generated</p>
+        {existingRfqCount > 0 && (
+          <p className="text-[10px] text-muted-foreground">{existingRfqCount} RFQ(s) generated</p>
         )}
       </div>
       <Button asChild variant="outline" size="sm" className="gap-1.5">
@@ -161,8 +195,10 @@ function ApprovedPrCard({ pr, existingRfqs, onGenerate }: { pr: PurchaseRequest;
           <Eye className="h-4 w-4" /> Preview PR
         </Link>
       </Button>
-      <Button size="sm" className="gap-1.5" onClick={onGenerate}>
-        <FilePlus2 className="h-4 w-4" /> Generate RFQ
+      <Button asChild size="sm" className="gap-1.5">
+        <Link to="/rfq/new" search={{ pr: pr.id }}>
+          <FilePlus2 className="h-4 w-4" /> Generate RFQ
+        </Link>
       </Button>
     </div>
   );

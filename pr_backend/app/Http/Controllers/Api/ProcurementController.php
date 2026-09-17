@@ -27,8 +27,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
@@ -182,16 +180,6 @@ class ProcurementController extends Controller
         $request->user()->forceFill(['signature' => null])->save();
 
         return response()->json(['data' => ['has_signature' => false]]);
-    }
-
-    /** Block a signing/approval action when the acting user has no e-signature on file. */
-    private function requireSignature(?User $user): void
-    {
-        abort_if(
-            $user === null || empty($user->signature),
-            422,
-            'Upload your e-signature first (top-right account menu → My E-Signature) before you can sign or approve documents.',
-        );
     }
 
     public function notifications(Request $request): JsonResponse
@@ -1322,30 +1310,6 @@ class ProcurementController extends Controller
             ->all();
     }
 
-    /** The user currently designated as Budget Officer, or null if none is set. */
-    private function designatedBudgetOfficer(): ?User
-    {
-        $id = $this->preferenceValue('budget_officer_user_id', null);
-
-        return $id ? User::find((int) $id) : null;
-    }
-
-    /** The user currently designated as Supervisor (recommends approval on LIBs). */
-    private function designatedSupervisor(): ?User
-    {
-        $id = $this->preferenceValue('supervisor_user_id', null);
-
-        return $id ? User::find((int) $id) : null;
-    }
-
-    /** The user currently designated as Regional Director (final LIB approver). */
-    private function designatedRegionalDirector(): ?User
-    {
-        $id = $this->preferenceValue('regional_director_user_id', null);
-
-        return $id ? User::find((int) $id) : null;
-    }
-
     /**
      * Whether $user is the Budget Officer for $document — either the officer the
      * document was routed to, or the current global designated officer.
@@ -1370,37 +1334,6 @@ class ProcurementController extends Controller
         return $lib
             ? "/planning/ppmp/new?lib={$lib}&edit={$document->client_uid}"
             : '/planning/ppmp';
-    }
-
-    /** Persist an in-app notification and, if enabled, best-effort send an email. */
-    private function notify(?User $recipient, string $type, string $title, ?string $body, ?string $link, array $data = []): void
-    {
-        if ($recipient === null) {
-            return;
-        }
-
-        UserNotification::create([
-            'user_id' => $recipient->id,
-            'type' => $type,
-            'title' => $title,
-            'body' => $body,
-            'link' => $link,
-            'data' => $data,
-        ]);
-
-        if (! $this->preferenceValue('email_notifications_enabled', true) || empty($recipient->email)) {
-            return;
-        }
-
-        // Email delivery is best-effort: a missing/unconfigured mailer must never
-        // break the request. Wire up SMTP later and this starts sending for real.
-        try {
-            Mail::raw(trim($title."\n\n".($body ?? '')), function ($message) use ($recipient, $title): void {
-                $message->to($recipient->email)->subject($title);
-            });
-        } catch (\Throwable $e) {
-            Log::warning('Notification email failed', ['recipient' => $recipient->email, 'error' => $e->getMessage()]);
-        }
     }
 
     private function defaultPlanningProjectId(): int
@@ -1831,6 +1764,7 @@ class ProcurementController extends Controller
     public function recommend(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->guardModule('approvals');
+        $this->abortUnlessRecommender($request->user());
         $purchaseRequest->forceFill([
             'status' => 'For Approval',
             'stage' => $this->preferenceValue('rd_approval_stage', 'Director Approval'),
@@ -1843,6 +1777,7 @@ class ProcurementController extends Controller
     public function approve(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->guardModule('approvals');
+        $this->abortUnlessDesignatedApprover($request->user());
         $purchaseRequest->forceFill(['status' => 'Approved', 'stage' => 'Approved'])->save();
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Approved', $request->input('remarks'));
 
@@ -1852,11 +1787,26 @@ class ProcurementController extends Controller
     public function reject(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->guardModule('approvals');
+        $this->abortUnlessDesignatedApprover($request->user());
         $data = $request->validate(['reason' => ['required', 'string']]);
         $purchaseRequest->forceFill(['status' => 'Rejected', 'stage' => 'Rejected'])->save();
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Rejected', $data['reason']);
 
         return response()->json(['message' => 'Purchase Request rejected.', 'data' => $this->format($purchaseRequest->fresh())]);
+    }
+
+    /** Any account holding the Recommender role may recommend a PR — not just one hardcoded person. */
+    private function abortUnlessRecommender(?User $user): void
+    {
+        $ok = $user?->tier === 'superadmin' || ($user !== null && $user->roles->contains('name', 'Recommender'));
+        abort_unless($ok, 403, 'Only an account with the Recommender role may recommend this Purchase Request.');
+    }
+
+    /** Only the Settings-designated Regional Director may give final approval/rejection. */
+    private function abortUnlessDesignatedApprover(?User $user): void
+    {
+        $ok = $user?->tier === 'superadmin' || ($user !== null && $this->designatedRegionalDirector()?->id === $user->id);
+        abort_unless($ok, 403, 'Only the designated Regional Director may approve or reject this Purchase Request.');
     }
 
     public function auditLogs(Request $request): JsonResponse
@@ -2352,122 +2302,6 @@ class ProcurementController extends Controller
             'items' => $record->items,
             'validation' => $record->validationResults,
             'approval_trail' => $record->approvalActions,
-        ];
-    }
-
-    private function ensureDefaultSystemPreferences(): void
-    {
-        foreach ($this->defaultSystemPreferences() as $preference) {
-            SystemPreference::firstOrCreate(
-                ['key' => $preference['key']],
-                $preference
-            );
-        }
-    }
-
-    private function normalizePreferenceValue(mixed $value): array
-    {
-        return ['value' => $value];
-    }
-
-    private function preferenceValue(string $key, mixed $fallback): mixed
-    {
-        $this->ensureDefaultSystemPreferences();
-
-        return SystemPreference::where('key', $key)->first()?->value['value'] ?? $fallback;
-    }
-
-    private function defaultSystemPreferences(): array
-    {
-        return [
-            [
-                'key' => 'agency_name',
-                'value' => ['value' => 'Department of Science and Technology - Caraga'],
-                'category' => 'Agency',
-                'label' => 'Agency Name',
-                'description' => 'Official agency name shown in system headers and reports.',
-                'type' => 'text',
-            ],
-            [
-                'key' => 'office_region',
-                'value' => ['value' => 'Caraga Region'],
-                'category' => 'Agency',
-                'label' => 'Office Region',
-                'description' => 'Regional office label used in generated procurement records.',
-                'type' => 'text',
-            ],
-            [
-                'key' => 'fiscal_year',
-                'value' => ['value' => now()->year],
-                'category' => 'Procurement',
-                'label' => 'Fiscal Year',
-                'description' => 'Default procurement fiscal year for planning and monitoring views.',
-                'type' => 'number',
-            ],
-            [
-                'key' => 'pr_number_prefix',
-                'value' => ['value' => 'PR'],
-                'category' => 'Procurement',
-                'label' => 'PR Number Prefix',
-                'description' => 'Prefix used when generating purchase request numbers.',
-                'type' => 'text',
-            ],
-            [
-                'key' => 'recommending_approval_stage',
-                'value' => ['value' => 'Supervisor/Recommending Approval for Digital Sign'],
-                'category' => 'Workflow',
-                'label' => 'Recommending Approval Stage',
-                'description' => 'Label for the stage after a PR is submitted by the requester.',
-                'type' => 'text',
-            ],
-            [
-                'key' => 'rd_approval_stage',
-                'value' => ['value' => 'Forwarded to RD for Digital Sign'],
-                'category' => 'Workflow',
-                'label' => 'RD Approval Stage',
-                'description' => 'Label for the final approval stage before a PR is approved.',
-                'type' => 'text',
-            ],
-            [
-                'key' => 'require_digital_signature',
-                'value' => ['value' => true],
-                'category' => 'Workflow',
-                'label' => 'Require Digital Signature',
-                'description' => 'Marks the approval flow as requiring digital signature routing.',
-                'type' => 'boolean',
-            ],
-            [
-                'key' => 'budget_officer_user_id',
-                'value' => ['value' => optional(User::where('status', 'Active')->where('name', 'like', '%Marites%')->first())->id],
-                'category' => 'Workflow',
-                'label' => 'Budget Officer',
-                'description' => 'Account that certifies fund availability on PPMPs and LIBs. Submissions are routed here for review, return, or approval.',
-                'type' => 'text',
-            ],
-            [
-                'key' => 'supervisor_user_id',
-                'value' => ['value' => null],
-                'category' => 'Workflow',
-                'label' => 'Supervisor (Recommending Approval)',
-                'description' => 'Account that recommends approval on LIBs. Submitted LIBs are routed here first.',
-                'type' => 'text',
-            ],
-            [
-                'key' => 'regional_director_user_id',
-                'value' => ['value' => null],
-                'category' => 'Workflow',
-                'label' => 'Regional Director (Approving Authority)',
-                'description' => 'Account that gives final approval on LIBs after fund certification.',
-                'type' => 'text',
-            ],
-            [
-                'key' => 'email_notifications_enabled',
-                'value' => ['value' => true],
-                'category' => 'Notifications',
-                'label' => 'Email Notifications',
-                'description' => 'Enable email notifications for submissions, returns, and approvals.',
-                'type' => 'boolean',
-            ],
         ];
     }
 

@@ -7,6 +7,7 @@ export type ModuleKey =
   | "lib"
   | "ppmp"
   | "rfq"
+  | "po"
   | "validation"
   | "approvals"
   | "references"
@@ -16,7 +17,7 @@ export type ModuleKey =
   | "settings";
 
 /** Modules a Superadmin can grant/revoke on an individual regular account. */
-export const TOGGLEABLE_MODULES: ModuleKey[] = ["pr", "lib", "ppmp", "rfq", "validation", "approvals", "references", "reports"];
+export const TOGGLEABLE_MODULES: ModuleKey[] = ["pr", "lib", "ppmp", "rfq", "po", "validation", "approvals", "references", "reports"];
 
 export const MODULE_LABELS: Record<ModuleKey, string> = {
   dashboard: "Dashboard",
@@ -24,6 +25,7 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   lib: "Line Item Budget",
   ppmp: "PPMP",
   rfq: "RFQ",
+  po: "Purchase Orders",
   validation: "Validation",
   approvals: "Approval Inbox",
   references: "References (APP-CSE/Non-CSE/Budget)",
@@ -41,6 +43,7 @@ export function moduleForPath(pathname: string): ModuleKey | null {
   if (pathname.startsWith("/planning/ppmp")) return "ppmp";
   if (pathname.startsWith("/purchase-requests")) return "pr";
   if (pathname.startsWith("/rfq")) return "rfq";
+  if (pathname.startsWith("/po")) return "po";
   if (pathname.startsWith("/validation")) return "validation";
   if (pathname.startsWith("/approval-inbox")) return "approvals";
   if (pathname.startsWith("/references")) return "references";

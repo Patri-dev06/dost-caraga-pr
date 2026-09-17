@@ -1,17 +1,18 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Download, Eye, FileSpreadsheet, Loader2, Pencil, Plus, Printer, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Eye, FileSpreadsheet, Loader2, Pencil, Plus, Printer, Save, SendHorizontal, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { apiGetPurchaseRequest } from "@/lib/api";
-import { saveRfq, fmtAmount, parseAmount, type RfqItem } from "@/lib/rfq-store";
+import { apiGetPurchaseRequest, apiCreateRfq, apiUpdateRfq, apiGetRfq, apiSubmitRfq, type Rfq, type RfqCreatePayload } from "@/lib/api";
+import { fmtAmount, parseAmount } from "@/lib/lib-store";
 import { exportRfqExcel } from "@/lib/rfq-excel";
 import type { PurchaseRequest } from "@/lib/mock-data";
 
 export const Route = createFileRoute("/rfq/new")({
-  validateSearch: (search: Record<string, unknown>): { pr?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { pr?: string; rfqId?: string } => ({
     pr: typeof search.pr === "string" ? search.pr : undefined,
+    rfqId: typeof search.rfqId === "string" ? search.rfqId : undefined,
   }),
   head: () => ({
     meta: [
@@ -101,7 +102,7 @@ function AmountInput({
   editing: boolean;
 }) {
   const [focused, setFocused] = useState(false);
-  if (!editing) return <span>{value ? fmtAmount(parseAmount(value)) : " "}</span>;
+  if (!editing) return <span>{value ? fmtAmount(parseAmount(value)) : " "}</span>;
   return (
     <input
       inputMode="decimal"
@@ -166,13 +167,48 @@ function todayStr() {
   return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
+function docFromRfq(rfq: Rfq): RfqFormDoc {
+  return {
+    quotationNo: rfq.quotationNo,
+    rfqDate: rfq.rfqDate,
+    placeOfDelivery: rfq.placeOfDelivery,
+    estimatedBudget: String(rfq.estimatedBudget),
+    prNo: rfq.prNo,
+    openingDate: rfq.openingDate,
+    bacChairman: rfq.bacChairman,
+    bacChairmanTitle: rfq.bacChairmanTitle,
+    purpose: rfq.purpose,
+    fundSource: rfq.fundSource,
+    items: rfq.items.map((it) => ({
+      id: it.id,
+      itemNo: it.itemNo,
+      qty: String(it.qty),
+      unit: it.unit,
+      description: it.description,
+      unitAbc: String(it.unitAbc),
+      totalAbc: String(it.totalAbc),
+      unitPrice: it.unitPrice,
+      total: it.total,
+    })),
+    supplierName: rfq.supplierName,
+    supplierAddress: rfq.supplierAddress,
+    supplierBy: rfq.supplierBy,
+    supplierContactNo: rfq.supplierContactNo,
+    supplierTin: rfq.supplierTin,
+    canvasser: rfq.canvasser,
+    bacAction: rfq.bacAction,
+  };
+}
+
 function CreateRfqPage() {
   const navigate = useNavigate();
-  const { pr: prId } = Route.useSearch();
+  const { pr: prId, rfqId } = Route.useSearch();
   const [sourcePr, setSourcePr] = useState<PurchaseRequest | null>(null);
+  const [existingRfq, setExistingRfq] = useState<Rfq | null>(null);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [saving, setSaving] = useState(false);
-  const [loadingPr, setLoadingPr] = useState(!!prId);
+  const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(!!prId || !!rfqId);
   const loaded = useRef(false);
 
   const [doc, setDoc] = useState<RfqFormDoc>({
@@ -197,11 +233,30 @@ function CreateRfqPage() {
   });
 
   useEffect(() => {
-    if (loaded.current || !prId) {
-      setLoadingPr(false);
+    if (loaded.current) return;
+    loaded.current = true;
+
+    if (rfqId) {
+      (async () => {
+        try {
+          const rfq = await apiGetRfq(rfqId);
+          setExistingRfq(rfq);
+          setDoc(docFromRfq(rfq));
+          if (rfq.status !== "Draft" && rfq.status !== "Returned") setMode("preview");
+        } catch {
+          toast.error("Could not load RFQ.");
+          navigate({ to: "/rfq" });
+        } finally {
+          setLoading(false);
+        }
+      })();
       return;
     }
-    loaded.current = true;
+
+    if (!prId) {
+      setLoading(false);
+      return;
+    }
 
     function populateFromPr(pr: PurchaseRequest) {
       setSourcePr(pr);
@@ -231,19 +286,6 @@ function CreateRfqPage() {
       }));
     }
 
-    const cached = sessionStorage.getItem("rfq_source_pr");
-    if (cached) {
-      try {
-        const pr = JSON.parse(cached) as PurchaseRequest;
-        if (pr.id === prId) {
-          populateFromPr(pr);
-          sessionStorage.removeItem("rfq_source_pr");
-          setLoadingPr(false);
-          return;
-        }
-      } catch { /* fall through to API */ }
-    }
-
     (async () => {
       try {
         const pr = await apiGetPurchaseRequest(prId);
@@ -252,12 +294,13 @@ function CreateRfqPage() {
         toast.error("Could not load Purchase Request.");
         navigate({ to: "/rfq" });
       } finally {
-        setLoadingPr(false);
+        setLoading(false);
       }
     })();
-  }, [prId, navigate]);
+  }, [prId, rfqId, navigate]);
 
-  const editing = mode === "edit";
+  const editable = mode === "edit" && (!existingRfq || existingRfq.status === "Draft" || existingRfq.status === "Returned");
+  const readOnlyLoaded = !!existingRfq && existingRfq.status !== "Draft" && existingRfq.status !== "Returned";
 
   const set = <K extends keyof RfqFormDoc>(key: K, value: RfqFormDoc[K]) => setDoc((d) => ({ ...d, [key]: value }));
   const setItem = (id: string, patch: Partial<RfqFormItem>) =>
@@ -269,12 +312,41 @@ function CreateRfqPage() {
     setDoc((d) => ({ ...d, items: [...d.items, newItem(d.items.length + 1)] }));
   }
 
-  const grandTotalAbc = useMemo(
-    () => doc.items.reduce((sum, it) => sum + parseAmount(it.totalAbc), 0),
-    [doc.items],
-  );
+  useMemo(() => doc.items.reduce((sum, it) => sum + parseAmount(it.totalAbc), 0), [doc.items]);
 
-  function handleSave() {
+  function buildPayload(): RfqCreatePayload {
+    return {
+      purchase_request_id: (prId || existingRfq?.prId) as string,
+      quotation_no: doc.quotationNo,
+      rfq_date: doc.rfqDate,
+      opening_date: doc.openingDate,
+      place_of_delivery: doc.placeOfDelivery,
+      estimated_budget: parseAmount(doc.estimatedBudget),
+      bac_chairman: doc.bacChairman,
+      bac_chairman_title: doc.bacChairmanTitle,
+      purpose: doc.purpose,
+      fund_source_snapshot: doc.fundSource,
+      supplier_name: doc.supplierName,
+      supplier_address: doc.supplierAddress,
+      supplier_by: doc.supplierBy,
+      supplier_contact_no: doc.supplierContactNo,
+      supplier_tin: doc.supplierTin,
+      canvasser: doc.canvasser,
+      bac_action: doc.bacAction,
+      items: doc.items.map((it) => ({
+        item_no: it.itemNo,
+        description: it.description,
+        uom: it.unit,
+        quantity: Number(it.qty) || 0,
+        unit_abc: parseAmount(it.unitAbc),
+        total_abc: parseAmount(it.totalAbc),
+        unit_price: parseAmount(it.unitPrice),
+        total_price: parseAmount(it.total),
+      })),
+    };
+  }
+
+  async function handleSave() {
     if (doc.items.length === 0) {
       toast.error("Add at least one item.");
       return;
@@ -282,48 +354,32 @@ function CreateRfqPage() {
 
     setSaving(true);
     try {
-      const rfqItems: RfqItem[] = doc.items.map((it) => ({
-        id: it.id,
-        itemNo: it.itemNo,
-        qty: Number(it.qty) || 0,
-        unit: it.unit,
-        description: it.description,
-        unitAbc: parseAmount(it.unitAbc),
-        totalAbc: parseAmount(it.totalAbc),
-        unitPrice: it.unitPrice,
-        total: it.total,
-      }));
-
-      saveRfq({
-        id: `rfq-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        prId: prId || "",
-        prNo: doc.prNo,
-        quotationNo: doc.quotationNo,
-        rfqDate: doc.rfqDate,
-        placeOfDelivery: doc.placeOfDelivery,
-        estimatedBudget: parseAmount(doc.estimatedBudget),
-        openingDate: doc.openingDate,
-        bacChairman: doc.bacChairman,
-        bacChairmanTitle: doc.bacChairmanTitle,
-        purpose: doc.purpose,
-        fundSource: doc.fundSource,
-        items: rfqItems,
-        supplierName: doc.supplierName,
-        supplierAddress: doc.supplierAddress,
-        supplierBy: doc.supplierBy,
-        supplierContactNo: doc.supplierContactNo,
-        supplierTin: doc.supplierTin,
-        canvasser: doc.canvasser,
-        bacAction: doc.bacAction,
-        createdAt: new Date().toISOString(),
-      });
-
-      toast.success("RFQ saved successfully.");
+      if (existingRfq) {
+        await apiUpdateRfq(existingRfq.id, buildPayload());
+        toast.success("RFQ updated successfully.");
+      } else {
+        await apiCreateRfq(buildPayload());
+        toast.success("RFQ saved successfully.");
+      }
       navigate({ to: "/rfq" });
-    } catch {
-      toast.error("Unable to save RFQ.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to save RFQ.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSubmit() {
+    if (!existingRfq) return;
+    setSubmitting(true);
+    try {
+      await apiSubmitRfq(existingRfq.id);
+      toast.success("RFQ submitted for recommendation.");
+      navigate({ to: "/rfq" });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to submit RFQ.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -357,14 +413,16 @@ function CreateRfqPage() {
     );
   }
 
-  if (loadingPr) {
+  if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        <span className="ml-2 text-sm text-muted-foreground">Loading Purchase Request…</span>
+        <span className="ml-2 text-sm text-muted-foreground">Loading…</span>
       </div>
     );
   }
+
+  const editing = editable;
 
   return (
     <div className="min-h-full bg-background print:bg-white">
@@ -378,31 +436,33 @@ function CreateRfqPage() {
           </Button>
 
           <span className="hidden rounded-md bg-secondary px-2 py-1 text-xs font-semibold text-secondary-foreground sm:inline">
-            New RFQ
+            {existingRfq ? `${existingRfq.rfqNo} · ${existingRfq.status}` : "New RFQ"}
           </span>
 
-          <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
-            <button
-              type="button"
-              onClick={() => setMode("edit")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                mode === "edit" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Pencil className="h-3.5 w-3.5" /> Edit
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("preview")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                mode === "preview" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Eye className="h-3.5 w-3.5" /> Preview
-            </button>
-          </div>
+          {!readOnlyLoaded && (
+            <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
+              <button
+                type="button"
+                onClick={() => setMode("edit")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  mode === "edit" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("preview")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  mode === "preview" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Eye className="h-3.5 w-3.5" /> Preview
+              </button>
+            </div>
+          )}
 
           <div className="ml-auto flex items-center gap-2">
             <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={handleExportExcel}>
@@ -416,10 +476,18 @@ function CreateRfqPage() {
                 <Printer className="h-4 w-4" /> Print
               </Button>
             )}
-            <Button size="sm" className="gap-1.5" onClick={handleSave} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save RFQ
-            </Button>
+            {!readOnlyLoaded && (
+              <Button size="sm" className="gap-1.5" onClick={handleSave} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {existingRfq ? "Save Changes" : "Save RFQ"}
+              </Button>
+            )}
+            {existingRfq?.status === "Draft" && (
+              <Button size="sm" variant="outline" className="gap-1.5 border-border" onClick={handleSubmit} disabled={submitting}>
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizontal className="h-4 w-4" />}
+                Submit
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -681,8 +749,15 @@ function CreateRfqPage() {
 
           {editing && (
             <p className="no-print mx-auto mt-3 max-w-xl text-center text-xs text-muted-foreground">
-              Items are auto-populated from the Purchase Request. Edit fields as needed, then switch to{" "}
+              {sourcePr
+                ? "Items are auto-populated from the Purchase Request. Edit fields as needed, then switch to "
+                : "Edit fields as needed, then switch to "}
               <span className="font-semibold text-foreground">Preview</span> for the clean, printable version.
+            </p>
+          )}
+          {readOnlyLoaded && existingRfq && (
+            <p className="no-print mx-auto mt-3 max-w-xl text-center text-xs text-muted-foreground">
+              This RFQ is <span className="font-semibold text-foreground">{existingRfq.status}</span> and can no longer be edited.
             </p>
           )}
         </div>

@@ -676,6 +676,25 @@ export async function apiCreateBudget(payload: BudgetCreatePayload, projectId = 
   return mapBudget(result);
 }
 
+/**
+ * Thrown for any non-OK API response. Carries the raw message for generic
+ * `toast.error(error.message)` handling, plus (when the backend included them,
+ * e.g. a PR save-as-draft-but-failed-validation response) the itemized
+ * validation breakdown and the partially-saved record, so a caller that wants
+ * to show more than the summary message can.
+ */
+export class ApiError extends Error {
+  validation?: (ValidationCheck & { itemId?: string })[];
+  data?: PurchaseRequest;
+
+  constructor(message: string, options?: { validation?: (ValidationCheck & { itemId?: string })[]; data?: PurchaseRequest }) {
+    super(message);
+    this.name = "ApiError";
+    this.validation = options?.validation;
+    this.data = options?.data;
+  }
+}
+
 async function request<T>(path: string, options: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -704,7 +723,10 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
       notifyAuthExpired();
     }
 
-    throw new Error(error.message ?? `Backend request failed with HTTP ${response.status}.`);
+    const validation = Array.isArray(error?.validation?.data) ? error.validation.data.map(mapValidation) : undefined;
+    const data = error?.data && typeof error.data === "object" && "pr_no" in error.data ? mapPurchaseRequest(error.data) : undefined;
+
+    throw new ApiError(error.message ?? `Backend request failed with HTTP ${response.status}.`, { validation, data });
   }
 
   return response.json();
@@ -944,6 +966,359 @@ function mapValidation(result: BackendValidation): ValidationCheck & { itemId?: 
     status: result.status,
     message: result.message,
   };
+}
+
+export interface RfqItem {
+  id: string;
+  itemNo: number;
+  qty: number;
+  unit: string;
+  description: string;
+  unitAbc: number;
+  totalAbc: number;
+  unitPrice: string;
+  total: string;
+}
+
+export interface Rfq {
+  id: string;
+  rfqNo: string;
+  prId: string;
+  prNo: string;
+  quotationNo: string;
+  rfqDate: string;
+  placeOfDelivery: string;
+  estimatedBudget: number;
+  openingDate: string;
+  bacChairman: string;
+  bacChairmanTitle: string;
+  purpose: string;
+  fundSource: string;
+  items: RfqItem[];
+  supplierName: string;
+  supplierAddress: string;
+  supplierBy: string;
+  supplierContactNo: string;
+  supplierTin: string;
+  canvasser: string;
+  bacAction: string;
+  status: string;
+  stage: string;
+  createdAt: string;
+}
+
+type BackendRfqItem = {
+  id: number;
+  purchase_request_item_id: number | null;
+  item_no: number;
+  description: string | null;
+  uom: string | null;
+  quantity: string | number;
+  unit_abc: string | number;
+  total_abc: string | number;
+  unit_price: string | number | null;
+  total_price: string | number | null;
+};
+
+type BackendRfq = {
+  id: number;
+  rfq_no: string;
+  purchase_request_id: number;
+  pr_no: string | null;
+  quotation_no: string | null;
+  rfq_date: string | null;
+  opening_date: string | null;
+  place_of_delivery: string | null;
+  estimated_budget: string | number;
+  bac_chairman: string | null;
+  bac_chairman_title: string | null;
+  purpose: string | null;
+  fund_source: string | null;
+  supplier_name: string | null;
+  supplier_address: string | null;
+  supplier_by: string | null;
+  supplier_contact_no: string | null;
+  supplier_tin: string | null;
+  canvasser: string | null;
+  bac_action: string | null;
+  status: string;
+  stage: string;
+  date_submitted?: string | null;
+  items: BackendRfqItem[];
+  created_at?: string | null;
+};
+
+function mapRfqItem(item: BackendRfqItem): RfqItem {
+  return {
+    id: String(item.id),
+    itemNo: item.item_no,
+    qty: Number(item.quantity),
+    unit: item.uom ?? "",
+    description: item.description ?? "",
+    unitAbc: Number(item.unit_abc),
+    totalAbc: Number(item.total_abc),
+    unitPrice: item.unit_price === null || item.unit_price === undefined ? "" : String(item.unit_price),
+    total: item.total_price === null || item.total_price === undefined ? "" : String(item.total_price),
+  };
+}
+
+function mapRfq(rfq: BackendRfq): Rfq {
+  return {
+    id: String(rfq.id),
+    rfqNo: rfq.rfq_no,
+    prId: String(rfq.purchase_request_id),
+    prNo: rfq.pr_no ?? "",
+    quotationNo: rfq.quotation_no ?? "",
+    rfqDate: rfq.rfq_date ?? "",
+    placeOfDelivery: rfq.place_of_delivery ?? "",
+    estimatedBudget: Number(rfq.estimated_budget),
+    openingDate: rfq.opening_date ?? "",
+    bacChairman: rfq.bac_chairman ?? "",
+    bacChairmanTitle: rfq.bac_chairman_title ?? "",
+    purpose: rfq.purpose ?? "",
+    fundSource: rfq.fund_source ?? "",
+    items: rfq.items.map(mapRfqItem),
+    supplierName: rfq.supplier_name ?? "",
+    supplierAddress: rfq.supplier_address ?? "",
+    supplierBy: rfq.supplier_by ?? "",
+    supplierContactNo: rfq.supplier_contact_no ?? "",
+    supplierTin: rfq.supplier_tin ?? "",
+    canvasser: rfq.canvasser ?? "",
+    bacAction: rfq.bac_action ?? "",
+    status: rfq.status,
+    stage: rfq.stage,
+    createdAt: rfq.created_at ?? "",
+  };
+}
+
+export interface RfqItemPayload {
+  purchase_request_item_id?: number | null;
+  item_no?: number;
+  description?: string;
+  uom?: string;
+  quantity: number;
+  unit_abc?: number;
+  total_abc?: number;
+  unit_price?: number;
+  total_price?: number;
+}
+
+export interface RfqCreatePayload {
+  purchase_request_id: string | number;
+  quotation_no?: string;
+  rfq_date?: string;
+  opening_date?: string;
+  place_of_delivery?: string;
+  estimated_budget?: number;
+  bac_chairman?: string;
+  bac_chairman_title?: string;
+  purpose?: string;
+  fund_source_snapshot?: string;
+  supplier_name?: string;
+  supplier_address?: string;
+  supplier_by?: string;
+  supplier_contact_no?: string;
+  supplier_tin?: string;
+  canvasser?: string;
+  bac_action?: string;
+  items: RfqItemPayload[];
+}
+
+export async function apiGetRfqs(filters?: { purchaseRequestId?: string | number; status?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.purchaseRequestId) params.set("purchase_request_id", String(filters.purchaseRequestId));
+  if (filters?.status) params.set("status", filters.status);
+  const query = params.toString() ? `?${params.toString()}` : "";
+
+  const result = await request<ApiList<BackendRfq>>(`/rfqs${query}`);
+  return result.data.map(mapRfq);
+}
+
+export async function apiGetRfq(id: string | number) {
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${id}`);
+  return mapRfq(result.data);
+}
+
+export async function apiCreateRfq(payload: RfqCreatePayload) {
+  const result = await request<ApiRecord<BackendRfq>>("/rfqs", { method: "POST", body: payload });
+  return mapRfq(result.data);
+}
+
+export async function apiUpdateRfq(id: string | number, payload: Partial<RfqCreatePayload>) {
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${id}`, { method: "PUT", body: payload });
+  return mapRfq(result.data);
+}
+
+export async function apiSubmitRfq(id: string | number) {
+  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${id}/submit`, { method: "POST" });
+  return mapRfq(result.data);
+}
+
+export async function apiRfqApprovalAction(id: string | number, action: "recommend" | "approve" | "reject", reason?: string) {
+  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/approvals/rfq/${id}/${action}`, {
+    method: "POST",
+    body: action === "reject" ? { reason: reason || "Rejected from approval inbox." } : { remarks: reason },
+  });
+  return { ...result, data: mapRfq(result.data) };
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  itemNo: number;
+  description: string;
+  uom: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  poNo: string;
+  prId: string;
+  prNo: string;
+  rfqId: string;
+  rfqNo: string;
+  supplierName: string;
+  supplierAddress: string;
+  supplierContactNo: string;
+  supplierTin: string;
+  poDate: string;
+  deliveryDate: string;
+  placeOfDelivery: string;
+  modeOfProcurement: string;
+  totalAmount: number;
+  termsAndConditions: string;
+  items: PurchaseOrderItem[];
+  status: string;
+  stage: string;
+  createdAt: string;
+}
+
+type BackendPurchaseOrderItem = {
+  id: number;
+  rfq_item_id: number | null;
+  item_no: number;
+  description: string | null;
+  uom: string | null;
+  quantity: string | number;
+  unit_cost: string | number;
+  total_cost: string | number;
+};
+
+type BackendPurchaseOrder = {
+  id: number;
+  po_no: string;
+  purchase_request_id: number;
+  pr_no: string | null;
+  rfq_id: number;
+  rfq_no: string | null;
+  supplier_name: string | null;
+  supplier_address: string | null;
+  supplier_contact_no: string | null;
+  supplier_tin: string | null;
+  po_date: string | null;
+  delivery_date: string | null;
+  place_of_delivery: string | null;
+  mode_of_procurement: string | null;
+  total_amount: string | number;
+  terms_and_conditions: string | null;
+  status: string;
+  stage: string;
+  date_submitted?: string | null;
+  items: BackendPurchaseOrderItem[];
+  created_at?: string | null;
+};
+
+function mapPurchaseOrderItem(item: BackendPurchaseOrderItem): PurchaseOrderItem {
+  return {
+    id: String(item.id),
+    itemNo: item.item_no,
+    description: item.description ?? "",
+    uom: item.uom ?? "",
+    quantity: Number(item.quantity),
+    unitCost: Number(item.unit_cost),
+    totalCost: Number(item.total_cost),
+  };
+}
+
+function mapPurchaseOrder(po: BackendPurchaseOrder): PurchaseOrder {
+  return {
+    id: String(po.id),
+    poNo: po.po_no,
+    prId: String(po.purchase_request_id),
+    prNo: po.pr_no ?? "",
+    rfqId: String(po.rfq_id),
+    rfqNo: po.rfq_no ?? "",
+    supplierName: po.supplier_name ?? "",
+    supplierAddress: po.supplier_address ?? "",
+    supplierContactNo: po.supplier_contact_no ?? "",
+    supplierTin: po.supplier_tin ?? "",
+    poDate: po.po_date ?? "",
+    deliveryDate: po.delivery_date ?? "",
+    placeOfDelivery: po.place_of_delivery ?? "",
+    modeOfProcurement: po.mode_of_procurement ?? "",
+    totalAmount: Number(po.total_amount),
+    termsAndConditions: po.terms_and_conditions ?? "",
+    items: po.items.map(mapPurchaseOrderItem),
+    status: po.status,
+    stage: po.stage,
+    createdAt: po.created_at ?? "",
+  };
+}
+
+export interface PurchaseOrderUpdatePayload {
+  po_date?: string;
+  delivery_date?: string;
+  place_of_delivery?: string;
+  terms_and_conditions?: string;
+  items?: Array<{
+    rfq_item_id?: number | null;
+    item_no?: number;
+    description?: string;
+    uom?: string;
+    quantity: number;
+    unit_cost: number;
+  }>;
+}
+
+export async function apiGetPurchaseOrders(filters?: { purchaseRequestId?: string | number; status?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.purchaseRequestId) params.set("purchase_request_id", String(filters.purchaseRequestId));
+  if (filters?.status) params.set("status", filters.status);
+  const query = params.toString() ? `?${params.toString()}` : "";
+
+  const result = await request<ApiList<BackendPurchaseOrder>>(`/purchase-orders${query}`);
+  return result.data.map(mapPurchaseOrder);
+}
+
+export async function apiGetPurchaseOrder(id: string | number) {
+  const result = await request<ApiRecord<BackendPurchaseOrder>>(`/purchase-orders/${id}`);
+  return mapPurchaseOrder(result.data);
+}
+
+/** Generates a PO from a winning (Approved) RFQ, copying supplier and item data over. */
+export async function apiGenerateFromRfq(rfqId: string | number) {
+  const result = await request<ApiRecord<BackendPurchaseOrder>>(`/rfqs/${rfqId}/generate-po`, { method: "POST" });
+  return mapPurchaseOrder(result.data);
+}
+
+export async function apiUpdatePurchaseOrder(id: string | number, payload: PurchaseOrderUpdatePayload) {
+  const result = await request<ApiRecord<BackendPurchaseOrder>>(`/purchase-orders/${id}`, { method: "PUT", body: payload });
+  return mapPurchaseOrder(result.data);
+}
+
+export async function apiSubmitPurchaseOrder(id: string | number) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/purchase-orders/${id}/submit`, { method: "POST" });
+  return mapPurchaseOrder(result.data);
+}
+
+export async function apiPoApprovalAction(id: string | number, action: "recommend" | "approve" | "reject", reason?: string) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/${action}`, {
+    method: "POST",
+    body: action === "reject" ? { reason: reason || "Rejected from approval inbox." } : { remarks: reason },
+  });
+  return { ...result, data: mapPurchaseOrder(result.data) };
 }
 
 function mapUser(user: BackendUser): UserRecord {

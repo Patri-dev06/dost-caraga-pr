@@ -2,7 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\Office;
+use App\Models\Role;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class ProcurementApiTest extends TestCase
@@ -344,5 +348,88 @@ class ProcurementApiTest extends TestCase
             ->assertJsonPath('account_code', '5020301000')
             ->assertJsonPath('allocated_amount', '250000.00')
             ->assertJsonPath('obligated_amount', '50000.00');
+    }
+
+    private function loginAsAdmin(): string
+    {
+        return $this->postJson('/api/v1/auth/login', [
+            'email' => 'admin@dost.gov.ph',
+            'password' => 'password123',
+        ])->json('token');
+    }
+
+    /** A user with the "approvals" module but not the given role — for negative access-control tests. */
+    private function loginAsUserWithoutRole(string $excludedRole): string
+    {
+        $user = User::create([
+            'name' => 'Unprivileged Approvals User',
+            'email' => 'unprivileged-'.$excludedRole.'@dost.gov.ph',
+            'password' => Hash::make('password123'),
+            'office_id' => Office::first()->id,
+            'status' => 'Active',
+            'tier' => 'regular',
+            'modules' => ['approvals'],
+        ]);
+        $user->roles()->sync(Role::where('name', '!=', $excludedRole)->pluck('id'));
+
+        return $this->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => 'password123',
+        ])->json('token');
+    }
+
+    private function createSubmittedPr(string $token): int
+    {
+        $create = $this->withToken($token)->postJson('/api/v1/purchase-requests', [
+            'office_code' => 'RO',
+            'fund_source' => 'GAA 2026 - MOOE',
+            'project_code' => 'PROJ-2026-001',
+            'mode_of_procurement' => 'Shopping',
+            'purpose' => 'PR for approval access-control tests.',
+            'submit' => true,
+            'items' => [
+                ['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_cost' => 250],
+            ],
+        ])->assertCreated();
+
+        return $create->json('data.id');
+    }
+
+    public function test_recommend_is_blocked_without_the_recommender_role(): void
+    {
+        $adminToken = $this->loginAsAdmin();
+        $prId = $this->createSubmittedPr($adminToken);
+
+        $outsiderToken = $this->loginAsUserWithoutRole('Recommender');
+
+        $this->withToken($outsiderToken)
+            ->postJson("/api/v1/approvals/{$prId}/recommend")
+            ->assertStatus(403);
+
+        // The designated Recommender (seeded admin) can still recommend it.
+        $this->withToken($adminToken)
+            ->postJson("/api/v1/approvals/{$prId}/recommend")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'For Approval');
+    }
+
+    public function test_approve_is_blocked_unless_the_designated_regional_director(): void
+    {
+        $adminToken = $this->loginAsAdmin();
+        $prId = $this->createSubmittedPr($adminToken);
+        $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/recommend")->assertOk();
+
+        // Even a user who does hold the Recommender role, but isn't the
+        // Settings-designated Regional Director, must not be able to approve.
+        $outsiderToken = $this->loginAsUserWithoutRole('__none__');
+
+        $this->withToken($outsiderToken)
+            ->postJson("/api/v1/approvals/{$prId}/approve")
+            ->assertStatus(403);
+
+        $this->withToken($adminToken)
+            ->postJson("/api/v1/approvals/{$prId}/approve")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'Approved');
     }
 }

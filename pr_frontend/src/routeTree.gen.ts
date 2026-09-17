@@ -15,6 +15,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as RfqRouteImport } from './routes/rfq'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as PurchaseRequestsRouteImport } from './routes/purchase-requests'
+import { Route as PoRouteImport } from './routes/po'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuditLogsRouteImport } from './routes/audit-logs'
 import { Route as ApprovalInboxRouteImport } from './routes/approval-inbox'
@@ -27,6 +28,7 @@ import { Route as ReferencesAppNonCseRouteImport } from './routes/references.app
 import { Route as ReferencesAppCseRouteImport } from './routes/references.app-cse'
 import { Route as PurchaseRequestsNewRouteImport } from './routes/purchase-requests.new'
 import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requests.$prId'
+import { Route as PoPoIdRouteImport } from './routes/po.$poId'
 import { Route as PlanningPpmpRouteImport } from './routes/planning.ppmp'
 import { Route as PlanningLibRouteImport } from './routes/planning.lib'
 import { Route as PlanningPpmpNewRouteImport } from './routes/planning.ppmp.new'
@@ -60,6 +62,11 @@ const ReportsRoute = ReportsRouteImport.update({
 const PurchaseRequestsRoute = PurchaseRequestsRouteImport.update({
   id: '/purchase-requests',
   path: '/purchase-requests',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PoRoute = PoRouteImport.update({
+  id: '/po',
+  path: '/po',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -122,6 +129,11 @@ const PurchaseRequestsPrIdRoute = PurchaseRequestsPrIdRouteImport.update({
   path: '/$prId',
   getParentRoute: () => PurchaseRequestsRoute,
 } as any)
+const PoPoIdRoute = PoPoIdRouteImport.update({
+  id: '/$poId',
+  path: '/$poId',
+  getParentRoute: () => PoRoute,
+} as any)
 const PlanningPpmpRoute = PlanningPpmpRouteImport.update({
   id: '/planning/ppmp',
   path: '/planning/ppmp',
@@ -148,6 +160,7 @@ export interface FileRoutesByFullPath {
   '/approval-inbox': typeof ApprovalInboxRoute
   '/audit-logs': typeof AuditLogsRoute
   '/login': typeof LoginRoute
+  '/po': typeof PoRouteWithChildren
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
   '/rfq': typeof RfqRouteWithChildren
@@ -156,6 +169,7 @@ export interface FileRoutesByFullPath {
   '/validation': typeof ValidationRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
+  '/po/$poId': typeof PoPoIdRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -172,6 +186,7 @@ export interface FileRoutesByTo {
   '/approval-inbox': typeof ApprovalInboxRoute
   '/audit-logs': typeof AuditLogsRoute
   '/login': typeof LoginRoute
+  '/po': typeof PoRouteWithChildren
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
   '/rfq': typeof RfqRouteWithChildren
@@ -180,6 +195,7 @@ export interface FileRoutesByTo {
   '/validation': typeof ValidationRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
+  '/po/$poId': typeof PoPoIdRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -197,6 +213,7 @@ export interface FileRoutesById {
   '/approval-inbox': typeof ApprovalInboxRoute
   '/audit-logs': typeof AuditLogsRoute
   '/login': typeof LoginRoute
+  '/po': typeof PoRouteWithChildren
   '/purchase-requests': typeof PurchaseRequestsRouteWithChildren
   '/reports': typeof ReportsRoute
   '/rfq': typeof RfqRouteWithChildren
@@ -205,6 +222,7 @@ export interface FileRoutesById {
   '/validation': typeof ValidationRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
+  '/po/$poId': typeof PoPoIdRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
@@ -223,6 +241,7 @@ export interface FileRouteTypes {
     | '/approval-inbox'
     | '/audit-logs'
     | '/login'
+    | '/po'
     | '/purchase-requests'
     | '/reports'
     | '/rfq'
@@ -231,6 +250,7 @@ export interface FileRouteTypes {
     | '/validation'
     | '/planning/lib'
     | '/planning/ppmp'
+    | '/po/$poId'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -247,6 +267,7 @@ export interface FileRouteTypes {
     | '/approval-inbox'
     | '/audit-logs'
     | '/login'
+    | '/po'
     | '/purchase-requests'
     | '/reports'
     | '/rfq'
@@ -255,6 +276,7 @@ export interface FileRouteTypes {
     | '/validation'
     | '/planning/lib'
     | '/planning/ppmp'
+    | '/po/$poId'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -271,6 +293,7 @@ export interface FileRouteTypes {
     | '/approval-inbox'
     | '/audit-logs'
     | '/login'
+    | '/po'
     | '/purchase-requests'
     | '/reports'
     | '/rfq'
@@ -279,6 +302,7 @@ export interface FileRouteTypes {
     | '/validation'
     | '/planning/lib'
     | '/planning/ppmp'
+    | '/po/$poId'
     | '/purchase-requests/$prId'
     | '/purchase-requests/new'
     | '/references/app-cse'
@@ -296,6 +320,7 @@ export interface RootRouteChildren {
   ApprovalInboxRoute: typeof ApprovalInboxRoute
   AuditLogsRoute: typeof AuditLogsRoute
   LoginRoute: typeof LoginRoute
+  PoRoute: typeof PoRouteWithChildren
   PurchaseRequestsRoute: typeof PurchaseRequestsRouteWithChildren
   ReportsRoute: typeof ReportsRoute
   RfqRoute: typeof RfqRouteWithChildren
@@ -352,6 +377,13 @@ declare module '@tanstack/react-router' {
       path: '/purchase-requests'
       fullPath: '/purchase-requests'
       preLoaderRoute: typeof PurchaseRequestsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/po': {
+      id: '/po'
+      path: '/po'
+      fullPath: '/po'
+      preLoaderRoute: typeof PoRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -438,6 +470,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchaseRequestsPrIdRouteImport
       parentRoute: typeof PurchaseRequestsRoute
     }
+    '/po/$poId': {
+      id: '/po/$poId'
+      path: '/$poId'
+      fullPath: '/po/$poId'
+      preLoaderRoute: typeof PoPoIdRouteImport
+      parentRoute: typeof PoRoute
+    }
     '/planning/ppmp': {
       id: '/planning/ppmp'
       path: '/planning/ppmp'
@@ -468,6 +507,16 @@ declare module '@tanstack/react-router' {
     }
   }
 }
+
+interface PoRouteChildren {
+  PoPoIdRoute: typeof PoPoIdRoute
+}
+
+const PoRouteChildren: PoRouteChildren = {
+  PoPoIdRoute: PoPoIdRoute,
+}
+
+const PoRouteWithChildren = PoRoute._addFileChildren(PoRouteChildren)
 
 interface PurchaseRequestsRouteChildren {
   PurchaseRequestsPrIdRoute: typeof PurchaseRequestsPrIdRoute
@@ -523,6 +572,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApprovalInboxRoute: ApprovalInboxRoute,
   AuditLogsRoute: AuditLogsRoute,
   LoginRoute: LoginRoute,
+  PoRoute: PoRouteWithChildren,
   PurchaseRequestsRoute: PurchaseRequestsRouteWithChildren,
   ReportsRoute: ReportsRoute,
   RfqRoute: RfqRouteWithChildren,

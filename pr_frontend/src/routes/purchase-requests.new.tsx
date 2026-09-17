@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { exportPurchaseRequestExcel } from "@/lib/pr-excel";
 import {
+  ApiError,
   apiCreatePurchaseRequest,
   apiGetPurchaseRequest,
   apiGetPurchaseRequests,
@@ -14,6 +15,8 @@ import {
   type PurchaseRequestCreatePayload,
   type Signatory as SignatoryOption,
 } from "@/lib/api";
+import { ValidationResultPanel } from "@/components/app/validation-result-panel";
+import type { PRItem, ValidationCheck } from "@/lib/mock-data";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCurrentUser } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -519,6 +522,8 @@ function NewPR() {
 
   const grandTotal = items.reduce((s, it) => s + parseNum(it.qty) * parseNum(it.unitCost), 0);
 
+  const [validationFailure, setValidationFailure] = useState<{ items: PRItem[]; results: (ValidationCheck & { itemId?: string })[] } | null>(null);
+
   const mutation = useMutation({
     mutationFn: async ({ payload, submit }: { payload: PurchaseRequestCreatePayload; submit: boolean }) => {
       if (editId) {
@@ -527,6 +532,7 @@ function NewPR() {
       }
       return apiCreatePurchaseRequest({ ...payload, submit });
     },
+    onMutate: () => setValidationFailure(null),
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
       if (editId) await queryClient.invalidateQueries({ queryKey: ["purchase-request", editId] });
@@ -539,7 +545,12 @@ function NewPR() {
       );
       navigate({ to: "/purchase-requests/$prId", params: { prId: result.id } });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to save Purchase Request."),
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Unable to save Purchase Request.");
+      if (error instanceof ApiError && error.validation && error.data) {
+        setValidationFailure({ items: error.data.items, results: error.validation });
+      }
+    },
     onSettled: () => setAction(null),
   });
 
@@ -776,6 +787,12 @@ function NewPR() {
           </div>
         </div>
       </div>
+
+      {validationFailure && (
+        <div className="no-print mx-auto w-full max-w-3xl px-3 pt-6 sm:px-6">
+          <ValidationResultPanel items={validationFailure.items} results={validationFailure.results} />
+        </div>
+      )}
 
       {/* Document */}
       <div className="w-full overflow-x-auto px-3 py-6 sm:px-6 print:overflow-visible print:p-0">
