@@ -2,10 +2,10 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\HasProcurementHelpers;
 use App\Http\Controllers\Controller;
 use App\Models\AppCseItem;
 use App\Models\AppNonCseItem;
-use App\Models\ApprovalAction;
 use App\Models\AuditLog;
 use App\Models\BudgetAllocation;
 use App\Models\FundSource;
@@ -34,6 +34,8 @@ use Illuminate\Validation\Rule;
 
 class ProcurementController extends Controller
 {
+    use HasProcurementHelpers;
+
     private const RESOURCE_MODELS = [
         'roles' => Role::class,
         'offices' => Office::class,
@@ -43,12 +45,6 @@ class ProcurementController extends Controller
         'purchase-requests' => PurchaseRequest::class,
         'users' => User::class,
     ];
-
-    /** Abort with 403 unless the current user may access the given module. */
-    private function guardModule(string $module): void
-    {
-        abort_unless(request()->user()?->canAccessModule($module), 403, 'You do not have access to this module.');
-    }
 
     /** Map a generic REST resource to the module that governs it, then enforce it. */
     private function guardResource(string $resource): void
@@ -2357,35 +2353,6 @@ class ProcurementController extends Controller
             'validation' => $record->validationResults,
             'approval_trail' => $record->approvalActions,
         ];
-    }
-
-    private function recordAction(Request $request, PurchaseRequest $purchaseRequest, string $role, string $action, ?string $remarks): void
-    {
-        ApprovalAction::create([
-            'purchase_request_id' => $purchaseRequest->id,
-            'user_id' => $request->user()->id,
-            'role' => $role,
-            'action' => $action,
-            'remarks' => $remarks,
-        ]);
-
-        $this->audit($request, $role === 'Requester' ? 'Purchase Requests' : 'Approval Inbox', $action, $purchaseRequest->pr_no);
-    }
-
-    private function audit(Request $request, string $module, string $action, mixed $target = null): void
-    {
-        $user = $request->user();
-
-        AuditLog::create([
-            'actor_id' => $user?->id,
-            'actor_name' => $user?->name,
-            'role' => $user?->roles->pluck('name')->implode(', '),
-            'module' => $module,
-            'action' => $action,
-            'target' => $target === null ? null : (string) $target,
-            'ip_address' => $request->ip(),
-            'created_at' => now(),
-        ]);
     }
 
     private function ensureDefaultSystemPreferences(): void

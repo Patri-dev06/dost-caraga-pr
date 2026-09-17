@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class PurchaseRequest extends Model
 {
@@ -56,8 +57,8 @@ class PurchaseRequest extends Model
         return $this->hasMany(ValidationResult::class);
     }
 
-    public function approvalActions(): HasMany
+    public function approvalActions(): MorphMany
     {
-        return $this->hasMany(ApprovalAction::class);
+        return $this->morphMany(ApprovalAction::class, 'actionable');
     }
 }

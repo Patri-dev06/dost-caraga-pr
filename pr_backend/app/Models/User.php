@@ -17,12 +17,12 @@ class User extends Authenticatable
 
     /** Every module the platform exposes, in sidebar order. */
     public const ALL_MODULES = [
-        'dashboard', 'pr', 'lib', 'ppmp', 'rfq', 'validation', 'approvals', 'references', 'reports', 'users', 'audit', 'settings',
+        'dashboard', 'pr', 'lib', 'ppmp', 'rfq', 'po', 'validation', 'approvals', 'references', 'reports', 'users', 'audit', 'settings',
     ];
 
     /** Modules a Superadmin can grant/revoke on an individual regular account. */
     public const TOGGLEABLE_MODULES = [
-        'pr', 'lib', 'ppmp', 'rfq', 'validation', 'approvals', 'references', 'reports',
+        'pr', 'lib', 'ppmp', 'rfq', 'po', 'validation', 'approvals', 'references', 'reports',
     ];
 
     /** What a regular account gets before any Superadmin customization. */

@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProcurementController;
+use App\Http\Controllers\Api\PurchaseOrderController;
+use App\Http\Controllers\Api\RfqController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function (): void {
@@ -82,6 +84,25 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/approvals/{purchaseRequest}/recommend', [ProcurementController::class, 'recommend']);
         Route::post('/approvals/{purchaseRequest}/approve', [ProcurementController::class, 'approve']);
         Route::post('/approvals/{purchaseRequest}/reject', [ProcurementController::class, 'reject']);
+
+        Route::get('/rfqs', [RfqController::class, 'index']);
+        Route::post('/rfqs', [RfqController::class, 'store']);
+        Route::get('/rfqs/{rfq}', [RfqController::class, 'show']);
+        Route::put('/rfqs/{rfq}', [RfqController::class, 'update']);
+        Route::post('/rfqs/{rfq}/submit', [RfqController::class, 'submit']);
+        Route::post('/approvals/rfq/{rfq}/recommend', [RfqController::class, 'recommend']);
+        Route::post('/approvals/rfq/{rfq}/approve', [RfqController::class, 'approve']);
+        Route::post('/approvals/rfq/{rfq}/reject', [RfqController::class, 'reject']);
+        Route::post('/rfqs/{rfq}/generate-po', [PurchaseOrderController::class, 'generateFromRfq']);
+
+        Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
+        Route::get('/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'show']);
+        Route::put('/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'update']);
+        Route::post('/purchase-orders/{purchaseOrder}/submit', [PurchaseOrderController::class, 'submit']);
+        Route::post('/approvals/po/{purchaseOrder}/recommend', [PurchaseOrderController::class, 'recommend']);
+        Route::post('/approvals/po/{purchaseOrder}/approve', [PurchaseOrderController::class, 'approve']);
+        Route::post('/approvals/po/{purchaseOrder}/reject', [PurchaseOrderController::class, 'reject']);
+
         Route::get('/audit-logs', [ProcurementController::class, 'auditLogs']);
         Route::get('/system-settings', [ProcurementController::class, 'systemSettings']);
         Route::put('/system-settings', [ProcurementController::class, 'updateSystemSettings']);
