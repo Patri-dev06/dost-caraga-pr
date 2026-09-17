@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\AbstractOfCanvasController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ProcurementController;
 use App\Http\Controllers\Api\PurchaseOrderController;
@@ -89,19 +90,39 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/rfqs', [RfqController::class, 'store']);
         Route::get('/rfqs/{rfq}', [RfqController::class, 'show']);
         Route::put('/rfqs/{rfq}', [RfqController::class, 'update']);
-        Route::post('/rfqs/{rfq}/submit', [RfqController::class, 'submit']);
-        Route::post('/approvals/rfq/{rfq}/recommend', [RfqController::class, 'recommend']);
-        Route::post('/approvals/rfq/{rfq}/approve', [RfqController::class, 'approve']);
-        Route::post('/approvals/rfq/{rfq}/reject', [RfqController::class, 'reject']);
+
+        // Pre-send signing chain: BAC Chair -> BAC Vice-Chair -> Supply Officer.
+        Route::post('/rfqs/{rfq}/sign/bac-chair', [RfqController::class, 'signAsBacChair']);
+        Route::post('/rfqs/{rfq}/sign/bac-vice-chair', [RfqController::class, 'signAsBacViceChair']);
+        Route::post('/rfqs/{rfq}/sign/supply-officer', [RfqController::class, 'signAsSupplyOfficer']);
+
+        // Multi-supplier canvass (staff-recorded, no external supplier portal).
+        Route::post('/rfqs/{rfq}/suppliers', [RfqController::class, 'addSupplier']);
+        Route::post('/rfqs/{rfq}/send', [RfqController::class, 'send']);
+        Route::put('/rfqs/{rfq}/suppliers/{rfqSupplier}/quote', [RfqController::class, 'recordQuote']);
+        Route::post('/rfqs/{rfq}/suppliers/{rfqSupplier}/replace', [RfqController::class, 'replaceSupplier']);
+
+        // Abstract of Canvas + BAC review loop.
+        Route::post('/rfqs/{rfq}/aoc', [AbstractOfCanvasController::class, 'generate']);
+        Route::get('/aoc/{aoc}', [AbstractOfCanvasController::class, 'show']);
+        Route::post('/aoc/{aoc}/submit-for-bac-review', [AbstractOfCanvasController::class, 'submitForBacReview']);
+        Route::post('/aoc/{aoc}/bac-review', [AbstractOfCanvasController::class, 'bacReview']);
+        Route::post('/aoc/{aoc}/twg-respond', [AbstractOfCanvasController::class, 'twgRespond']);
+        Route::post('/aoc/{aoc}/cancel', [AbstractOfCanvasController::class, 'cancel']);
+
         Route::post('/rfqs/{rfq}/generate-po', [PurchaseOrderController::class, 'generateFromRfq']);
 
         Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
         Route::get('/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'show']);
         Route::put('/purchase-orders/{purchaseOrder}', [PurchaseOrderController::class, 'update']);
         Route::post('/purchase-orders/{purchaseOrder}/submit', [PurchaseOrderController::class, 'submit']);
-        Route::post('/approvals/po/{purchaseOrder}/recommend', [PurchaseOrderController::class, 'recommend']);
-        Route::post('/approvals/po/{purchaseOrder}/approve', [PurchaseOrderController::class, 'approve']);
+
+        // 3-stage approval chain: Budget Obligation -> Accounting -> Regional Director.
+        Route::post('/approvals/po/{purchaseOrder}/obligate', [PurchaseOrderController::class, 'obligate']);
+        Route::post('/approvals/po/{purchaseOrder}/account', [PurchaseOrderController::class, 'account']);
+        Route::post('/approvals/po/{purchaseOrder}/final-approve', [PurchaseOrderController::class, 'finalApprove']);
         Route::post('/approvals/po/{purchaseOrder}/reject', [PurchaseOrderController::class, 'reject']);
+        Route::post('/purchase-orders/{purchaseOrder}/deliver', [PurchaseOrderController::class, 'deliver']);
 
         Route::get('/audit-logs', [ProcurementController::class, 'auditLogs']);
         Route::get('/system-settings', [ProcurementController::class, 'systemSettings']);

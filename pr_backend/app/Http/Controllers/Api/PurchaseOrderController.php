@@ -6,7 +6,6 @@ use App\Http\Controllers\Concerns\HasProcurementHelpers;
 use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
 use App\Models\Rfq;
-use App\Models\SystemPreference;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -34,39 +33,46 @@ class PurchaseOrderController extends Controller
         ]);
     }
 
-    /** Generates a PO from a winning (Approved) RFQ, copying supplier and item data over. */
+    /** Generates a Draft PO from the RFQ's BAC-approved Abstract of Canvas, copying the winning supplier's quote. */
     public function generateFromRfq(Request $request, Rfq $rfq): JsonResponse
     {
         $this->guardModule('po');
-        abort_unless($rfq->status === 'Approved', 422, 'A Purchase Order can only be generated from an approved RFQ.');
+
+        $aoc = $rfq->abstractOfCanvas;
+        abort_unless($aoc !== null && $aoc->status === 'Approved', 422, 'A Purchase Order can only be generated once the Abstract of Canvas is BAC-approved.');
         abort_if($rfq->purchaseOrders()->exists(), 422, 'A Purchase Order has already been generated from this RFQ.');
 
-        $rfq->loadMissing(['purchaseRequest', 'items']);
+        $winner = $aoc->winningSupplier()->with('quoteItems.rfqItem')->first();
+        abort_if($winner === null, 422, 'No winning supplier is recorded on this Abstract of Canvas.');
 
-        $po = DB::transaction(function () use ($rfq, $request): PurchaseOrder {
+        $rfq->loadMissing('purchaseRequest');
+
+        $po = DB::transaction(function () use ($rfq, $winner, $request): PurchaseOrder {
             $po = PurchaseOrder::create([
                 'po_no' => $this->nextPoNo(),
                 'purchase_request_id' => $rfq->purchase_request_id,
                 'rfq_id' => $rfq->id,
-                'supplier_name' => $rfq->supplier_name,
-                'supplier_address' => $rfq->supplier_address,
-                'supplier_contact_no' => $rfq->supplier_contact_no,
-                'supplier_tin' => $rfq->supplier_tin,
+                'supplier_name' => $winner->supplier_name,
+                'supplier_address' => $winner->supplier_address,
+                'supplier_contact_no' => $winner->supplier_contact_no,
+                'supplier_tin' => $winner->supplier_tin,
                 'place_of_delivery' => $rfq->place_of_delivery,
                 'mode_of_procurement' => $rfq->purchaseRequest?->mode_of_procurement,
-                'total_amount' => $rfq->items->sum(fn ($item) => (float) $item->quantity * (float) ($item->unit_price ?? 0)),
+                'total_amount' => $winner->quoteItems->sum(fn ($qi) => (float) $qi->total_price),
+                'status' => 'Draft',
+                'stage' => 'Draft',
                 'created_by' => $request->user()->id,
             ]);
 
-            $po->items()->createMany($rfq->items->map(fn ($item, int $index): array => [
-                'rfq_item_id' => $item->id,
-                'item_no' => $item->item_no ?: $index + 1,
-                'description' => $item->description,
-                'uom' => $item->uom,
-                'quantity' => $item->quantity,
-                'unit_cost' => $item->unit_price ?? 0,
-                'total_cost' => $item->quantity * ($item->unit_price ?? 0),
-            ])->values()->all());
+            $po->items()->createMany($winner->quoteItems->values()->map(fn ($qi, int $index): array => [
+                'rfq_item_id' => $qi->rfq_item_id,
+                'item_no' => $qi->rfqItem?->item_no ?: $index + 1,
+                'description' => $qi->rfqItem?->description,
+                'uom' => $qi->rfqItem?->uom,
+                'quantity' => $qi->rfqItem?->quantity ?? 0,
+                'unit_cost' => $qi->unit_price ?? 0,
+                'total_cost' => $qi->total_price ?? 0,
+            ])->all());
 
             return $po;
         });
@@ -86,7 +92,7 @@ class PurchaseOrderController extends Controller
     public function update(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
         $this->guardModule('po');
-        abort_if(! in_array($purchaseOrder->status, ['Draft', 'Returned'], true), 422, 'Only draft or returned Purchase Orders may be edited.');
+        abort_unless($purchaseOrder->status === 'Draft', 422, 'Only a Draft Purchase Order may be edited.');
 
         $data = $request->validate([
             'po_date' => ['nullable', 'string', 'max:255'],
@@ -132,44 +138,98 @@ class PurchaseOrderController extends Controller
     public function submit(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
         $this->guardModule('po');
+        abort_unless($purchaseOrder->status === 'Draft', 422, 'This Purchase Order has already been submitted.');
 
         $purchaseOrder->forceFill([
-            'status' => 'For Recommendation',
-            'stage' => $this->stagePreference('po_recommending_stage', 'Division Chief Recommendation'),
+            'status' => 'Pending Budget Obligation',
+            'stage' => 'Pending Budget Obligation',
             'submitted_at' => now(),
         ])->save();
+        $this->recordAction($request, $purchaseOrder, 'Requester', 'Submitted PO', null);
 
-        $this->recordAction($request, $purchaseOrder, 'Requester', 'Submitted PO', 'Initial submission.');
+        $officer = $this->designatedBudgetOfficer();
+        if ($officer) {
+            $this->notify($officer, 'po_submitted', 'Purchase Order awaiting budget obligation',
+                "{$purchaseOrder->po_no} is awaiting your action.", "/po/{$purchaseOrder->id}", ['poId' => $purchaseOrder->id]);
+        }
 
-        return response()->json(['message' => 'Purchase Order submitted for recommendation.', 'data' => $this->format($purchaseOrder->fresh())]);
+        return response()->json(['message' => 'Purchase Order submitted.', 'data' => $this->format($purchaseOrder->fresh())]);
     }
 
-    public function recommend(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    // --- 3-stage approval chain: Budget Obligation -> Accounting -> Regional Director ---
+
+    public function obligate(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    {
+        return $this->advancePo($request, $purchaseOrder, 'obligate');
+    }
+
+    public function account(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    {
+        return $this->advancePo($request, $purchaseOrder, 'account');
+    }
+
+    public function finalApprove(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
+    {
+        return $this->advancePo($request, $purchaseOrder, 'final_approve');
+    }
+
+    private function advancePo(Request $request, PurchaseOrder $po, string $step): JsonResponse
     {
         $this->guardModule('approvals');
 
-        $purchaseOrder->forceFill([
-            'status' => 'For Approval',
-            'stage' => $this->stagePreference('po_rd_stage', 'Director Approval'),
+        $steps = [
+            'obligate' => ['from' => 'Pending Budget Obligation', 'to' => 'Pending Accounting', 'designated' => fn () => $this->designatedBudgetOfficer(), 'label' => 'Budget Officer', 'column' => 'budget_officer'],
+            'account' => ['from' => 'Pending Accounting', 'to' => 'Pending RD Approval', 'designated' => fn () => $this->designatedAccountingOfficer(), 'label' => 'Accounting Officer', 'column' => 'accounting_officer'],
+            'final_approve' => ['from' => 'Pending RD Approval', 'to' => 'Approved', 'designated' => fn () => $this->designatedRegionalDirector(), 'label' => 'Regional Director', 'column' => 'approved_by'],
+        ][$step];
+
+        abort_unless($po->status === $steps['from'], 422, "This Purchase Order is not awaiting the {$steps['label']} action.");
+
+        $user = $request->user();
+        $designated = $steps['designated']();
+        $ok = $user?->tier === 'superadmin' || ($designated !== null && $designated->id === $user?->id);
+        abort_unless($ok, 403, "You are not the designated {$steps['label']}.");
+        $this->requireSignature($user);
+
+        $column = $steps['column'];
+        $po->forceFill([
+            'status' => $steps['to'],
+            'stage' => $steps['to'],
+            "{$column}_id" => $user->id,
+            "{$column}_name" => $user->name,
+            "{$column}_signed_at" => now(),
         ])->save();
-        $this->recordAction($request, $purchaseOrder, 'Recommender', 'Recommended', $request->input('remarks'));
 
-        return response()->json(['message' => 'Purchase Order recommended.', 'data' => $this->format($purchaseOrder->fresh())]);
+        $this->recordAction($request, $po, $steps['label'], 'Signed', $request->input('remarks'));
+
+        $nextDesignated = match ($steps['to']) {
+            'Pending Accounting' => $this->designatedAccountingOfficer(),
+            'Pending RD Approval' => $this->designatedRegionalDirector(),
+            default => null,
+        };
+        if ($nextDesignated) {
+            $this->notify($nextDesignated, 'po_approval', 'Purchase Order awaiting your action',
+                "{$po->po_no} is awaiting your action.", "/po/{$po->id}", ['poId' => $po->id]);
+        }
+
+        return response()->json(['message' => "Purchase Order signed by {$steps['label']}.", 'data' => $this->format($po->fresh())]);
     }
 
-    public function approve(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
-    {
-        $this->guardModule('approvals');
-
-        $purchaseOrder->forceFill(['status' => 'Approved', 'stage' => 'Approved'])->save();
-        $this->recordAction($request, $purchaseOrder, 'Approver', 'Approved', $request->input('remarks'));
-
-        return response()->json(['message' => 'Purchase Order approved.', 'data' => $this->format($purchaseOrder->fresh())]);
-    }
-
+    /** Rejects a PO at whichever stage it's currently pending — only that stage's designated signatory may. */
     public function reject(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
         $this->guardModule('approvals');
+        abort_unless(in_array($purchaseOrder->status, ['Pending Budget Obligation', 'Pending Accounting', 'Pending RD Approval'], true),
+            422, 'This Purchase Order is not awaiting action.');
+
+        $designated = match ($purchaseOrder->status) {
+            'Pending Budget Obligation' => $this->designatedBudgetOfficer(),
+            'Pending Accounting' => $this->designatedAccountingOfficer(),
+            'Pending RD Approval' => $this->designatedRegionalDirector(),
+        };
+        $user = $request->user();
+        $ok = $user?->tier === 'superadmin' || ($designated !== null && $designated->id === $user?->id);
+        abort_unless($ok, 403, 'You are not the designated signatory for this Purchase Order stage.');
 
         $data = $request->validate(['reason' => ['required', 'string']]);
         $purchaseOrder->forceFill(['status' => 'Rejected', 'stage' => 'Rejected'])->save();
@@ -178,10 +238,40 @@ class PurchaseOrderController extends Controller
         return response()->json(['message' => 'Purchase Order rejected.', 'data' => $this->format($purchaseOrder->fresh())]);
     }
 
-    /** Reads a SystemPreference key directly (no auto-seed), matching RfqController's pattern. */
-    private function stagePreference(string $key, string $fallback): string
+    /** Records whether the winning supplier delivered or waived, once the PO is fully approved. */
+    public function deliver(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
-        return SystemPreference::where('key', $key)->first()?->value['value'] ?? $fallback;
+        $this->guardModule('po');
+        abort_unless($purchaseOrder->status === 'Approved', 422, 'Only an approved Purchase Order can record a delivery outcome.');
+
+        $data = $request->validate([
+            'waived' => ['required', 'boolean'],
+            'reason' => ['required_if:waived,true', 'nullable', 'string'],
+        ]);
+
+        if (! $data['waived']) {
+            $this->recordAction($request, $purchaseOrder, 'Supply', 'Delivery Accepted', null);
+
+            return response()->json(['message' => 'Delivery accepted.', 'data' => $this->format($purchaseOrder->fresh())]);
+        }
+
+        $purchaseOrder->forceFill([
+            'status' => 'Delivery Waived',
+            'stage' => 'Delivery Waived',
+            'delivery_waived' => true,
+            'delivery_waived_at' => now(),
+            'delivery_waived_reason' => $data['reason'],
+        ])->save();
+        $this->recordAction($request, $purchaseOrder, 'Supply', 'Delivery Waived', $data['reason']);
+
+        $requester = $purchaseOrder->purchaseRequest?->requester;
+        if ($requester) {
+            $this->notify($requester, 'po_delivery_waived', 'Supplier waived delivery',
+                "{$purchaseOrder->po_no}'s supplier waived delivery. Start a new RFQ canvass to re-procure if the need still stands.",
+                '/rfq', ['poId' => $purchaseOrder->id]);
+        }
+
+        return response()->json(['message' => 'Delivery waiver recorded.', 'data' => $this->format($purchaseOrder->fresh())]);
     }
 
     private function format(PurchaseOrder $po): array
@@ -205,6 +295,15 @@ class PurchaseOrderController extends Controller
             'mode_of_procurement' => $po->mode_of_procurement,
             'total_amount' => $po->total_amount,
             'terms_and_conditions' => $po->terms_and_conditions,
+            'budget_officer_name' => $po->budget_officer_name,
+            'budget_officer_signed_at' => $po->budget_officer_signed_at?->toISOString(),
+            'accounting_officer_name' => $po->accounting_officer_name,
+            'accounting_officer_signed_at' => $po->accounting_officer_signed_at?->toISOString(),
+            'approved_by_name' => $po->approved_by_name,
+            'approved_by_signed_at' => $po->approved_by_signed_at?->toISOString(),
+            'delivery_waived' => $po->delivery_waived,
+            'delivery_waived_at' => $po->delivery_waived_at?->toISOString(),
+            'delivery_waived_reason' => $po->delivery_waived_reason,
             'status' => $po->status,
             'stage' => $po->stage,
             'date_submitted' => $po->submitted_at?->toDateString(),

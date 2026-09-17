@@ -180,7 +180,7 @@ trait HasProcurementHelpers
             ],
             [
                 'key' => 'budget_officer_user_id',
-                'value' => ['value' => optional(User::where('status', 'Active')->where('name', 'like', '%Marites%')->first())->id],
+                'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
                 'category' => 'Workflow',
                 'label' => 'Budget Officer',
                 'description' => 'Account that certifies fund availability on PPMPs and LIBs. Submissions are routed here for review, return, or approval.',
@@ -210,6 +210,46 @@ trait HasProcurementHelpers
                 'description' => 'Enable email notifications for submissions, returns, and approvals.',
                 'type' => 'boolean',
             ],
+            [
+                'key' => 'bac_chair_user_id',
+                'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
+                'category' => 'Workflow',
+                'label' => 'BAC Chairman',
+                'description' => 'Account that signs an RFQ first, before it can be sent to suppliers.',
+                'type' => 'text',
+            ],
+            [
+                'key' => 'bac_vice_chair_user_id',
+                'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
+                'category' => 'Workflow',
+                'label' => 'BAC Vice-Chairman',
+                'description' => 'Account that signs an RFQ after the BAC Chairman.',
+                'type' => 'text',
+            ],
+            [
+                'key' => 'supply_officer_user_id',
+                'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
+                'category' => 'Workflow',
+                'label' => 'Supply Officer',
+                'description' => 'Account that countersigns an RFQ, the final step before it can be sent to suppliers.',
+                'type' => 'text',
+            ],
+            [
+                'key' => 'accounting_officer_user_id',
+                'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
+                'category' => 'Workflow',
+                'label' => 'Accounting Officer',
+                'description' => 'Account that signs a Purchase Order after Budget obligation, before Regional Director final approval.',
+                'type' => 'text',
+            ],
+            [
+                'key' => 'twg_lead_user_id',
+                'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
+                'category' => 'Workflow',
+                'label' => 'TWG Lead',
+                'description' => 'Account that addresses BAC remarks on an Abstract of Canvas on behalf of the Technical Working Group.',
+                'type' => 'text',
+            ],
         ];
     }
 
@@ -233,6 +273,41 @@ trait HasProcurementHelpers
     private function designatedRegionalDirector(): ?User
     {
         $id = $this->preferenceValue('regional_director_user_id', null);
+
+        return $id ? User::find((int) $id) : null;
+    }
+
+    private function designatedBacChair(): ?User
+    {
+        $id = $this->preferenceValue('bac_chair_user_id', null);
+
+        return $id ? User::find((int) $id) : null;
+    }
+
+    private function designatedBacViceChair(): ?User
+    {
+        $id = $this->preferenceValue('bac_vice_chair_user_id', null);
+
+        return $id ? User::find((int) $id) : null;
+    }
+
+    private function designatedSupplyOfficer(): ?User
+    {
+        $id = $this->preferenceValue('supply_officer_user_id', null);
+
+        return $id ? User::find((int) $id) : null;
+    }
+
+    private function designatedAccountingOfficer(): ?User
+    {
+        $id = $this->preferenceValue('accounting_officer_user_id', null);
+
+        return $id ? User::find((int) $id) : null;
+    }
+
+    private function designatedTwgLead(): ?User
+    {
+        $id = $this->preferenceValue('twg_lead_user_id', null);
 
         return $id ? User::find((int) $id) : null;
     }

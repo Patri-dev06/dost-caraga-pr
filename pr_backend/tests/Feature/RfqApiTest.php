@@ -55,9 +55,6 @@ class RfqApiTest extends TestCase
     {
         return $this->withToken($token)->postJson('/api/v1/rfqs', [
             'purchase_request_id' => $prId,
-            'supplier_name' => 'ACME Trading',
-            'supplier_address' => '123 Rizal St., Butuan City',
-            'supplier_contact_no' => '09171234567',
             'canvasser' => 'Juan Dela Cruz',
             'items' => [
                 [
@@ -71,20 +68,40 @@ class RfqApiTest extends TestCase
         ]);
     }
 
+    /** Runs the full BAC Chair -> BAC Vice-Chair -> Supply Officer signing chain (all default to admin). */
+    private function completeSigningChain(string $token, int $rfqId): void
+    {
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-chair")->assertOk()->assertJsonPath('data.status', 'Pending BAC Vice-Chair Signature');
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-vice-chair")->assertOk()->assertJsonPath('data.status', 'Pending Supply Officer Countersign');
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/supply-officer")->assertOk()->assertJsonPath('data.status', 'Ready to Send');
+    }
+
+    private function addThreeSuppliers(string $token, int $rfqId): void
+    {
+        foreach (['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants'] as $name) {
+            $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", [
+                'supplier_name' => $name,
+                'supplier_address' => '123 Rizal St., Butuan City',
+                'supplier_contact_no' => '09171234567',
+            ])->assertCreated();
+        }
+    }
+
     public function test_rfq_can_be_created_from_an_approved_purchase_request(): void
     {
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
 
-        $this->createRfq($token, $prId)
+        $rfqNo = $this->createRfq($token, $prId)
             ->assertCreated()
             ->assertJsonPath('data.purchase_request_id', $prId)
             ->assertJsonPath('data.status', 'Draft')
-            ->assertJsonPath('data.supplier_name', 'ACME Trading')
+            ->assertJsonPath('data.procurement_category', 'Goods')
             ->assertJsonPath('data.items.0.description', 'A4-sized Bond Paper')
-            ->assertJsonStructure(['data' => ['rfq_no']]);
+            ->assertJsonStructure(['data' => ['rfq_no']])
+            ->json('data.rfq_no');
 
-        $this->assertDatabaseHas('rfqs', ['purchase_request_id' => $prId, 'supplier_name' => 'ACME Trading']);
+        $this->assertDatabaseHas('rfqs', ['purchase_request_id' => $prId, 'rfq_no' => $rfqNo]);
     }
 
     public function test_rfq_number_is_continuous_and_formatted_per_year(): void
@@ -119,57 +136,106 @@ class RfqApiTest extends TestCase
         $this->createRfq($token, $draft->json('data.id'))->assertStatus(422);
     }
 
-    public function test_rfq_can_be_submitted_recommended_and_approved(): void
+    public function test_rfq_update_is_blocked_once_signing_has_started(): void
     {
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/submit")
-            ->assertOk()
-            ->assertJsonPath('data.status', 'For Recommendation');
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-chair")->assertOk();
 
-        $this->withToken($token)->postJson("/api/v1/approvals/rfq/{$rfqId}/recommend")
-            ->assertOk()
-            ->assertJsonPath('data.status', 'For Approval');
+        $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}", ['canvasser' => 'Should Not Save'])
+            ->assertStatus(422);
+    }
 
-        $this->withToken($token)->postJson("/api/v1/approvals/rfq/{$rfqId}/approve")
-            ->assertOk()
-            ->assertJsonPath('data.status', 'Approved');
+    public function test_signing_chain_must_proceed_in_order_and_is_recorded(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token);
+        $rfqId = $this->createRfq($token, $prId)->json('data.id');
+
+        // Skipping ahead is rejected.
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/supply-officer")->assertStatus(422);
+
+        $this->completeSigningChain($token, $rfqId);
 
         $this->assertDatabaseHas('approval_actions', [
             'actionable_id' => $rfqId,
             'actionable_type' => \App\Models\Rfq::class,
-            'action' => 'Approved',
+            'action' => 'Signed',
         ]);
     }
 
-    public function test_rfq_can_be_rejected_with_a_reason(): void
+    public function test_signing_is_blocked_for_a_non_designated_signatory(): void
     {
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/submit")->assertOk();
+        $requesterLogin = $this->postJson('/api/v1/auth/login', [
+            'email' => 'mdelacruz@dost.gov.ph',
+            'password' => 'password123',
+        ]);
 
-        $this->withToken($token)->postJson("/api/v1/approvals/rfq/{$rfqId}/reject")
-            ->assertStatus(422);
-
-        $this->withToken($token)->postJson("/api/v1/approvals/rfq/{$rfqId}/reject", ['reason' => 'Quotation exceeds the ABC.'])
-            ->assertOk()
-            ->assertJsonPath('data.status', 'Rejected');
+        $this->withToken($requesterLogin->json('token'))
+            ->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-chair")
+            ->assertStatus(403);
     }
 
-    public function test_rfq_update_is_blocked_once_no_longer_draft(): void
+    public function test_full_canvass_flow_send_quote_and_generate_aoc(): void
     {
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/submit")->assertOk();
+        $this->completeSigningChain($token, $rfqId);
+        $this->addThreeSuppliers($token, $rfqId);
 
-        $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}", ['supplier_name' => 'Should Not Save'])
-            ->assertStatus(422);
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'Canvassing')
+            ->assertJsonCount(3, 'data.suppliers');
+
+        $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
+        $rfqItemId = $rfq['items'][0]['id'];
+        $supplierIds = collect($rfq['suppliers'])->pluck('id');
+
+        // Record quotes for all 3 suppliers so the AOC can be generated.
+        foreach ($supplierIds as $i => $supplierId) {
+            $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}/suppliers/{$supplierId}/quote", [
+                'items' => [['rfq_item_id' => $rfqItemId, 'unit_price' => 240 + $i]],
+            ])->assertOk();
+        }
+
+        $aoc = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'Draft')
+            ->json('data');
+
+        // Lowest quote (240) should win.
+        $this->assertSame($supplierIds[0], $aoc['winning_rfq_supplier_id']);
+    }
+
+    public function test_overdue_supplier_can_be_replaced(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token);
+        $rfqId = $this->createRfq($token, $prId)->json('data.id');
+
+        $this->completeSigningChain($token, $rfqId);
+        $this->addThreeSuppliers($token, $rfqId);
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
+
+        $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
+        $firstSupplierId = $rfq['suppliers'][0]['id'];
+
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/{$firstSupplierId}/replace", [
+            'supplier_name' => 'Replacement Supplier Co.',
+            'reason' => 'No response after follow-up.',
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('rfq_suppliers', ['id' => $firstSupplierId, 'status' => 'Replaced']);
+        $this->assertDatabaseHas('rfq_suppliers', ['rfq_id' => $rfqId, 'supplier_name' => 'Replacement Supplier Co.', 'status' => 'Sent']);
     }
 
     public function test_rfqs_can_be_listed_and_filtered_by_purchase_request(): void

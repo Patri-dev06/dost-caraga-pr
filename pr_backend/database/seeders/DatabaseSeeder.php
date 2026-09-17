@@ -55,6 +55,11 @@ class DatabaseSeeder extends Seeder
             'status' => 'Active',
             'tier' => 'admin',
             'modules' => null,
+            // Every "digital sign" gate (RFQ/AOC/PO/LIB) requires the acting user
+            // to have an e-signature on file. Seed a placeholder 1x1 PNG so the
+            // demo account (also used as every default designated signatory) can
+            // actually walk the full chain out of the box.
+            'signature' => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
         ]);
         $admin->roles()->sync([$roles->firstWhere('name', 'Admin')->id, $roles->firstWhere('name', 'Recommender')->id]);
 

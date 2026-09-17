@@ -31,6 +31,7 @@ import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requ
 import { Route as PoPoIdRouteImport } from './routes/po.$poId'
 import { Route as PlanningPpmpRouteImport } from './routes/planning.ppmp'
 import { Route as PlanningLibRouteImport } from './routes/planning.lib'
+import { Route as AocAocIdRouteImport } from './routes/aoc.$aocId'
 import { Route as PlanningPpmpNewRouteImport } from './routes/planning.ppmp.new'
 import { Route as PlanningLibNewRouteImport } from './routes/planning.lib.new'
 
@@ -144,6 +145,11 @@ const PlanningLibRoute = PlanningLibRouteImport.update({
   path: '/planning/lib',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AocAocIdRoute = AocAocIdRouteImport.update({
+  id: '/aoc/$aocId',
+  path: '/aoc/$aocId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlanningPpmpNewRoute = PlanningPpmpNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -167,6 +173,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/aoc/$aocId': typeof AocAocIdRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/po/$poId': typeof PoPoIdRoute
@@ -193,6 +200,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/aoc/$aocId': typeof AocAocIdRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/po/$poId': typeof PoPoIdRoute
@@ -220,6 +228,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
+  '/aoc/$aocId': typeof AocAocIdRoute
   '/planning/lib': typeof PlanningLibRouteWithChildren
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/po/$poId': typeof PoPoIdRoute
@@ -248,6 +257,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/validation'
+    | '/aoc/$aocId'
     | '/planning/lib'
     | '/planning/ppmp'
     | '/po/$poId'
@@ -274,6 +284,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/validation'
+    | '/aoc/$aocId'
     | '/planning/lib'
     | '/planning/ppmp'
     | '/po/$poId'
@@ -300,6 +311,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/validation'
+    | '/aoc/$aocId'
     | '/planning/lib'
     | '/planning/ppmp'
     | '/po/$poId'
@@ -327,6 +339,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   UsersRoute: typeof UsersRoute
   ValidationRoute: typeof ValidationRoute
+  AocAocIdRoute: typeof AocAocIdRoute
   PlanningLibRoute: typeof PlanningLibRouteWithChildren
   PlanningPpmpRoute: typeof PlanningPpmpRouteWithChildren
   ReferencesAppCseRoute: typeof ReferencesAppCseRoute
@@ -491,6 +504,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlanningLibRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/aoc/$aocId': {
+      id: '/aoc/$aocId'
+      path: '/aoc/$aocId'
+      fullPath: '/aoc/$aocId'
+      preLoaderRoute: typeof AocAocIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/planning/ppmp/new': {
       id: '/planning/ppmp/new'
       path: '/new'
@@ -579,6 +599,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   UsersRoute: UsersRoute,
   ValidationRoute: ValidationRoute,
+  AocAocIdRoute: AocAocIdRoute,
   PlanningLibRoute: PlanningLibRouteWithChildren,
   PlanningPpmpRoute: PlanningPpmpRouteWithChildren,
   ReferencesAppCseRoute: ReferencesAppCseRoute,

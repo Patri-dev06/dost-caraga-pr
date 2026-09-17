@@ -976,8 +976,29 @@ export interface RfqItem {
   description: string;
   unitAbc: number;
   totalAbc: number;
-  unitPrice: string;
-  total: string;
+}
+
+export interface RfqQuoteItem {
+  rfqItemId: string;
+  unitPrice: number | null;
+  totalPrice: number | null;
+}
+
+export interface RfqSupplier {
+  id: string;
+  supplierId: string | null;
+  supplierName: string;
+  supplierAddress: string;
+  supplierContactNo: string;
+  supplierTin: string;
+  supplierBy: string;
+  status: string; // Pending | Sent | Replied | TimedOut | Replaced
+  sentAt: string;
+  replyDueAt: string;
+  isOverdue: boolean;
+  isWinner: boolean;
+  replacedBySupplierId: string | null;
+  quoteItems: RfqQuoteItem[];
 }
 
 export interface Rfq {
@@ -985,6 +1006,7 @@ export interface Rfq {
   rfqNo: string;
   prId: string;
   prNo: string;
+  procurementCategory: string;
   quotationNo: string;
   rfqDate: string;
   placeOfDelivery: string;
@@ -995,13 +1017,18 @@ export interface Rfq {
   purpose: string;
   fundSource: string;
   items: RfqItem[];
-  supplierName: string;
-  supplierAddress: string;
-  supplierBy: string;
-  supplierContactNo: string;
-  supplierTin: string;
+  suppliers: RfqSupplier[];
   canvasser: string;
   bacAction: string;
+  bacChairSignedName: string;
+  bacChairSignedAt: string;
+  bacViceChairSignedName: string;
+  bacViceChairSignedAt: string;
+  supplyOfficerSignedName: string;
+  supplyOfficerSignedAt: string;
+  abstractOfCanvasId: string | null;
+  abstractOfCanvasStatus: string | null;
+  hasPurchaseOrder: boolean;
   status: string;
   stage: string;
   createdAt: string;
@@ -1016,8 +1043,29 @@ type BackendRfqItem = {
   quantity: string | number;
   unit_abc: string | number;
   total_abc: string | number;
+};
+
+type BackendRfqQuoteItem = {
+  rfq_item_id: number;
   unit_price: string | number | null;
   total_price: string | number | null;
+};
+
+type BackendRfqSupplier = {
+  id: number;
+  supplier_id: number | null;
+  supplier_name: string | null;
+  supplier_address: string | null;
+  supplier_contact_no: string | null;
+  supplier_tin: string | null;
+  supplier_by: string | null;
+  status: string;
+  sent_at: string | null;
+  reply_due_at: string | null;
+  is_overdue: boolean;
+  is_winner: boolean;
+  replaced_by_supplier_id: number | null;
+  quote_items: BackendRfqQuoteItem[];
 };
 
 type BackendRfq = {
@@ -1025,6 +1073,7 @@ type BackendRfq = {
   rfq_no: string;
   purchase_request_id: number;
   pr_no: string | null;
+  procurement_category: string;
   quotation_no: string | null;
   rfq_date: string | null;
   opening_date: string | null;
@@ -1034,17 +1083,22 @@ type BackendRfq = {
   bac_chairman_title: string | null;
   purpose: string | null;
   fund_source: string | null;
-  supplier_name: string | null;
-  supplier_address: string | null;
-  supplier_by: string | null;
-  supplier_contact_no: string | null;
-  supplier_tin: string | null;
   canvasser: string | null;
   bac_action: string | null;
+  bac_chair_signed_name: string | null;
+  bac_chair_signed_at: string | null;
+  bac_vice_chair_signed_name: string | null;
+  bac_vice_chair_signed_at: string | null;
+  supply_officer_signed_name: string | null;
+  supply_officer_signed_at: string | null;
+  abstract_of_canvas_id: number | null;
+  abstract_of_canvas_status: string | null;
+  has_purchase_order: boolean;
   status: string;
   stage: string;
   date_submitted?: string | null;
   items: BackendRfqItem[];
+  suppliers: BackendRfqSupplier[];
   created_at?: string | null;
 };
 
@@ -1057,8 +1111,33 @@ function mapRfqItem(item: BackendRfqItem): RfqItem {
     description: item.description ?? "",
     unitAbc: Number(item.unit_abc),
     totalAbc: Number(item.total_abc),
-    unitPrice: item.unit_price === null || item.unit_price === undefined ? "" : String(item.unit_price),
-    total: item.total_price === null || item.total_price === undefined ? "" : String(item.total_price),
+  };
+}
+
+function mapRfqQuoteItem(qi: BackendRfqQuoteItem): RfqQuoteItem {
+  return {
+    rfqItemId: String(qi.rfq_item_id),
+    unitPrice: qi.unit_price === null || qi.unit_price === undefined ? null : Number(qi.unit_price),
+    totalPrice: qi.total_price === null || qi.total_price === undefined ? null : Number(qi.total_price),
+  };
+}
+
+function mapRfqSupplier(s: BackendRfqSupplier): RfqSupplier {
+  return {
+    id: String(s.id),
+    supplierId: s.supplier_id !== null ? String(s.supplier_id) : null,
+    supplierName: s.supplier_name ?? "",
+    supplierAddress: s.supplier_address ?? "",
+    supplierContactNo: s.supplier_contact_no ?? "",
+    supplierTin: s.supplier_tin ?? "",
+    supplierBy: s.supplier_by ?? "",
+    status: s.status,
+    sentAt: s.sent_at ?? "",
+    replyDueAt: s.reply_due_at ?? "",
+    isOverdue: s.is_overdue,
+    isWinner: s.is_winner,
+    replacedBySupplierId: s.replaced_by_supplier_id !== null ? String(s.replaced_by_supplier_id) : null,
+    quoteItems: s.quote_items.map(mapRfqQuoteItem),
   };
 }
 
@@ -1068,6 +1147,7 @@ function mapRfq(rfq: BackendRfq): Rfq {
     rfqNo: rfq.rfq_no,
     prId: String(rfq.purchase_request_id),
     prNo: rfq.pr_no ?? "",
+    procurementCategory: rfq.procurement_category,
     quotationNo: rfq.quotation_no ?? "",
     rfqDate: rfq.rfq_date ?? "",
     placeOfDelivery: rfq.place_of_delivery ?? "",
@@ -1078,13 +1158,18 @@ function mapRfq(rfq: BackendRfq): Rfq {
     purpose: rfq.purpose ?? "",
     fundSource: rfq.fund_source ?? "",
     items: rfq.items.map(mapRfqItem),
-    supplierName: rfq.supplier_name ?? "",
-    supplierAddress: rfq.supplier_address ?? "",
-    supplierBy: rfq.supplier_by ?? "",
-    supplierContactNo: rfq.supplier_contact_no ?? "",
-    supplierTin: rfq.supplier_tin ?? "",
+    suppliers: (rfq.suppliers ?? []).map(mapRfqSupplier),
     canvasser: rfq.canvasser ?? "",
     bacAction: rfq.bac_action ?? "",
+    bacChairSignedName: rfq.bac_chair_signed_name ?? "",
+    bacChairSignedAt: rfq.bac_chair_signed_at ?? "",
+    bacViceChairSignedName: rfq.bac_vice_chair_signed_name ?? "",
+    bacViceChairSignedAt: rfq.bac_vice_chair_signed_at ?? "",
+    supplyOfficerSignedName: rfq.supply_officer_signed_name ?? "",
+    supplyOfficerSignedAt: rfq.supply_officer_signed_at ?? "",
+    abstractOfCanvasId: rfq.abstract_of_canvas_id !== null ? String(rfq.abstract_of_canvas_id) : null,
+    abstractOfCanvasStatus: rfq.abstract_of_canvas_status,
+    hasPurchaseOrder: rfq.has_purchase_order,
     status: rfq.status,
     stage: rfq.stage,
     createdAt: rfq.created_at ?? "",
@@ -1099,12 +1184,11 @@ export interface RfqItemPayload {
   quantity: number;
   unit_abc?: number;
   total_abc?: number;
-  unit_price?: number;
-  total_price?: number;
 }
 
 export interface RfqCreatePayload {
   purchase_request_id: string | number;
+  procurement_category?: string;
   quotation_no?: string;
   rfq_date?: string;
   opening_date?: string;
@@ -1114,14 +1198,18 @@ export interface RfqCreatePayload {
   bac_chairman_title?: string;
   purpose?: string;
   fund_source_snapshot?: string;
-  supplier_name?: string;
-  supplier_address?: string;
-  supplier_by?: string;
-  supplier_contact_no?: string;
-  supplier_tin?: string;
   canvasser?: string;
   bac_action?: string;
   items: RfqItemPayload[];
+}
+
+export interface RfqSupplierPayload {
+  supplier_id?: number;
+  supplier_name?: string;
+  supplier_address?: string;
+  supplier_contact_no?: string;
+  supplier_tin?: string;
+  supplier_by?: string;
 }
 
 export async function apiGetRfqs(filters?: { purchaseRequestId?: string | number; status?: string }) {
@@ -1149,17 +1237,161 @@ export async function apiUpdateRfq(id: string | number, payload: Partial<RfqCrea
   return mapRfq(result.data);
 }
 
-export async function apiSubmitRfq(id: string | number) {
-  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${id}/submit`, { method: "POST" });
+/** Pre-send signing chain: BAC Chair -> BAC Vice-Chair -> Supply Officer. */
+export async function apiSignRfq(id: string | number, step: "bac-chair" | "bac-vice-chair" | "supply-officer", remarks?: string) {
+  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${id}/sign/${step}`, {
+    method: "POST",
+    body: { remarks },
+  });
+  return { ...result, data: mapRfq(result.data) };
+}
+
+export async function apiAddRfqSupplier(rfqId: string | number, payload: RfqSupplierPayload) {
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers`, { method: "POST", body: payload });
   return mapRfq(result.data);
 }
 
-export async function apiRfqApprovalAction(id: string | number, action: "recommend" | "approve" | "reject", reason?: string) {
-  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/approvals/rfq/${id}/${action}`, {
-    method: "POST",
-    body: action === "reject" ? { reason: reason || "Rejected from approval inbox." } : { remarks: reason },
-  });
+export async function apiSendRfq(rfqId: string | number) {
+  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${rfqId}/send`, { method: "POST" });
   return { ...result, data: mapRfq(result.data) };
+}
+
+/** Canvasser records one supplier's reply — no external portal, plain staff data entry. */
+export async function apiRecordRfqSupplierQuote(
+  rfqId: string | number,
+  rfqSupplierId: string | number,
+  items: Array<{ rfq_item_id: number | string; unit_price: number }>,
+) {
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/quote`, {
+    method: "PUT",
+    body: { items },
+  });
+  return mapRfq(result.data);
+}
+
+export async function apiReplaceRfqSupplier(rfqId: string | number, rfqSupplierId: string | number, payload: RfqSupplierPayload & { reason?: string }) {
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/replace`, {
+    method: "POST",
+    body: payload,
+  });
+  return mapRfq(result.data);
+}
+
+export interface AocSupplierSummary {
+  id: string;
+  supplierName: string;
+  status: string;
+  isWinner: boolean;
+  totalQuoted: number;
+}
+
+export interface AbstractOfCanvas {
+  id: string;
+  rfqId: string;
+  rfqNo: string;
+  prNo: string;
+  procurementCategory: string;
+  twgEvaluationNotes: string;
+  winningRfqSupplierId: string | null;
+  winningSupplierName: string;
+  status: string;
+  bacRemarks: string;
+  twgResponse: string;
+  submittedAt: string;
+  suppliers: AocSupplierSummary[];
+  items: RfqItem[];
+}
+
+type BackendAocSupplierSummary = {
+  id: number;
+  supplier_name: string | null;
+  status: string;
+  is_winner: boolean;
+  total_quoted: number | string;
+};
+
+type BackendAbstractOfCanvas = {
+  id: number;
+  rfq_id: number;
+  rfq_no: string | null;
+  pr_no: string | null;
+  procurement_category: string;
+  twg_evaluation_notes: string | null;
+  winning_rfq_supplier_id: number | null;
+  winning_supplier_name: string | null;
+  status: string;
+  bac_remarks: string | null;
+  twg_response: string | null;
+  submitted_at: string | null;
+  suppliers?: BackendAocSupplierSummary[];
+  items?: BackendRfqItem[];
+};
+
+function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
+  return {
+    id: String(aoc.id),
+    rfqId: String(aoc.rfq_id),
+    rfqNo: aoc.rfq_no ?? "",
+    prNo: aoc.pr_no ?? "",
+    procurementCategory: aoc.procurement_category,
+    twgEvaluationNotes: aoc.twg_evaluation_notes ?? "",
+    winningRfqSupplierId: aoc.winning_rfq_supplier_id !== null ? String(aoc.winning_rfq_supplier_id) : null,
+    winningSupplierName: aoc.winning_supplier_name ?? "",
+    status: aoc.status,
+    bacRemarks: aoc.bac_remarks ?? "",
+    twgResponse: aoc.twg_response ?? "",
+    submittedAt: aoc.submitted_at ?? "",
+    suppliers: (aoc.suppliers ?? []).map((s) => ({
+      id: String(s.id),
+      supplierName: s.supplier_name ?? "",
+      status: s.status,
+      isWinner: s.is_winner,
+      totalQuoted: Number(s.total_quoted),
+    })),
+    items: (aoc.items ?? []).map(mapRfqItem),
+  };
+}
+
+export async function apiGenerateAoc(rfqId: string | number, twgEvaluationNotes?: string) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas>>(`/rfqs/${rfqId}/aoc`, {
+    method: "POST",
+    body: { twg_evaluation_notes: twgEvaluationNotes },
+  });
+  return mapAbstractOfCanvas(result.data);
+}
+
+export async function apiGetAoc(aocId: string | number) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas>>(`/aoc/${aocId}`);
+  return mapAbstractOfCanvas(result.data);
+}
+
+export async function apiSubmitAocForBacReview(aocId: string | number) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/submit-for-bac-review`, { method: "POST" });
+  return { ...result, data: mapAbstractOfCanvas(result.data) };
+}
+
+export async function apiBacReviewAoc(aocId: string | number, pass: boolean, remarks?: string) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/bac-review`, {
+    method: "POST",
+    body: { pass, remarks },
+  });
+  return { ...result, data: mapAbstractOfCanvas(result.data) };
+}
+
+export async function apiTwgRespondAoc(aocId: string | number, response: string) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/twg-respond`, {
+    method: "POST",
+    body: { response },
+  });
+  return { ...result, data: mapAbstractOfCanvas(result.data) };
+}
+
+export async function apiCancelAoc(aocId: string | number, reason?: string) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/cancel`, {
+    method: "POST",
+    body: { reason },
+  });
+  return { ...result, data: mapAbstractOfCanvas(result.data) };
 }
 
 export interface PurchaseOrderItem {
@@ -1189,6 +1421,15 @@ export interface PurchaseOrder {
   modeOfProcurement: string;
   totalAmount: number;
   termsAndConditions: string;
+  budgetOfficerName: string;
+  budgetOfficerSignedAt: string;
+  accountingOfficerName: string;
+  accountingOfficerSignedAt: string;
+  approvedByName: string;
+  approvedBySignedAt: string;
+  deliveryWaived: boolean;
+  deliveryWaivedAt: string;
+  deliveryWaivedReason: string;
   items: PurchaseOrderItem[];
   status: string;
   stage: string;
@@ -1223,6 +1464,15 @@ type BackendPurchaseOrder = {
   mode_of_procurement: string | null;
   total_amount: string | number;
   terms_and_conditions: string | null;
+  budget_officer_name: string | null;
+  budget_officer_signed_at: string | null;
+  accounting_officer_name: string | null;
+  accounting_officer_signed_at: string | null;
+  approved_by_name: string | null;
+  approved_by_signed_at: string | null;
+  delivery_waived: boolean;
+  delivery_waived_at: string | null;
+  delivery_waived_reason: string | null;
   status: string;
   stage: string;
   date_submitted?: string | null;
@@ -1260,6 +1510,15 @@ function mapPurchaseOrder(po: BackendPurchaseOrder): PurchaseOrder {
     modeOfProcurement: po.mode_of_procurement ?? "",
     totalAmount: Number(po.total_amount),
     termsAndConditions: po.terms_and_conditions ?? "",
+    budgetOfficerName: po.budget_officer_name ?? "",
+    budgetOfficerSignedAt: po.budget_officer_signed_at ?? "",
+    accountingOfficerName: po.accounting_officer_name ?? "",
+    accountingOfficerSignedAt: po.accounting_officer_signed_at ?? "",
+    approvedByName: po.approved_by_name ?? "",
+    approvedBySignedAt: po.approved_by_signed_at ?? "",
+    deliveryWaived: po.delivery_waived,
+    deliveryWaivedAt: po.delivery_waived_at ?? "",
+    deliveryWaivedReason: po.delivery_waived_reason ?? "",
     items: po.items.map(mapPurchaseOrderItem),
     status: po.status,
     stage: po.stage,
@@ -1297,7 +1556,7 @@ export async function apiGetPurchaseOrder(id: string | number) {
   return mapPurchaseOrder(result.data);
 }
 
-/** Generates a PO from a winning (Approved) RFQ, copying supplier and item data over. */
+/** Generates a Draft PO from the RFQ's BAC-approved Abstract of Canvas, copying the winning supplier's quote. */
 export async function apiGenerateFromRfq(rfqId: string | number) {
   const result = await request<ApiRecord<BackendPurchaseOrder>>(`/rfqs/${rfqId}/generate-po`, { method: "POST" });
   return mapPurchaseOrder(result.data);
@@ -1313,10 +1572,31 @@ export async function apiSubmitPurchaseOrder(id: string | number) {
   return mapPurchaseOrder(result.data);
 }
 
-export async function apiPoApprovalAction(id: string | number, action: "recommend" | "approve" | "reject", reason?: string) {
-  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/${action}`, {
+/** 3-stage approval chain: Budget Obligation -> Accounting -> Regional Director. */
+export async function apiObligatePo(id: string | number, remarks?: string) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/obligate`, { method: "POST", body: { remarks } });
+  return { ...result, data: mapPurchaseOrder(result.data) };
+}
+
+export async function apiAccountPo(id: string | number, remarks?: string) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/account`, { method: "POST", body: { remarks } });
+  return { ...result, data: mapPurchaseOrder(result.data) };
+}
+
+export async function apiFinalApprovePo(id: string | number, remarks?: string) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/final-approve`, { method: "POST", body: { remarks } });
+  return { ...result, data: mapPurchaseOrder(result.data) };
+}
+
+export async function apiRejectPo(id: string | number, reason: string) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/reject`, { method: "POST", body: { reason } });
+  return { ...result, data: mapPurchaseOrder(result.data) };
+}
+
+export async function apiDeliverPo(id: string | number, waived: boolean, reason?: string) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/purchase-orders/${id}/deliver`, {
     method: "POST",
-    body: action === "reject" ? { reason: reason || "Rejected from approval inbox." } : { remarks: reason },
+    body: { waived, reason },
   });
   return { ...result, data: mapPurchaseOrder(result.data) };
 }

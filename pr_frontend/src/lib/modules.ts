@@ -43,6 +43,7 @@ export function moduleForPath(pathname: string): ModuleKey | null {
   if (pathname.startsWith("/planning/ppmp")) return "ppmp";
   if (pathname.startsWith("/purchase-requests")) return "pr";
   if (pathname.startsWith("/rfq")) return "rfq";
+  if (pathname.startsWith("/aoc")) return "rfq";
   if (pathname.startsWith("/po")) return "po";
   if (pathname.startsWith("/validation")) return "validation";
   if (pathname.startsWith("/approval-inbox")) return "approvals";

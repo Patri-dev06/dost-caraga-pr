@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileSpreadsheet, Loader2, Save, SendHorizontal } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FileSpreadsheet, Loader2, PackageCheck, PackageX, Save, SendHorizontal, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,10 +8,27 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
-import { apiGetPurchaseOrder, apiSubmitPurchaseOrder, apiUpdatePurchaseOrder, type PurchaseOrder, type PurchaseOrderItem } from "@/lib/api";
+import {
+  apiGetPurchaseOrder,
+  apiSubmitPurchaseOrder,
+  apiUpdatePurchaseOrder,
+  apiObligatePo,
+  apiAccountPo,
+  apiFinalApprovePo,
+  apiRejectPo,
+  apiDeliverPo,
+  type PurchaseOrder,
+  type PurchaseOrderItem,
+} from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
 import { exportPurchaseOrderExcel } from "@/lib/po-excel";
 import { toast } from "sonner";
+
+const PO_CHAIN_STEPS = [
+  { pendingStatus: "Pending Budget Obligation", label: "Budget Officer", nameKey: "budgetOfficerName" as const, atKey: "budgetOfficerSignedAt" as const },
+  { pendingStatus: "Pending Accounting", label: "Accounting Officer", nameKey: "accountingOfficerName" as const, atKey: "accountingOfficerSignedAt" as const },
+  { pendingStatus: "Pending RD Approval", label: "Regional Director", nameKey: "approvedByName" as const, atKey: "approvedBySignedAt" as const },
+];
 
 export const Route = createFileRoute("/po/$poId")({
   head: () => ({ meta: [{ title: "Purchase Order — DOST Caraga" }] }),
@@ -37,6 +54,7 @@ function PurchaseOrderDetailPage() {
   const [placeOfDelivery, setPlaceOfDelivery] = useState("");
   const [terms, setTerms] = useState("");
   const [items, setItems] = useState<EditableItem[]>([]);
+  const [chainBusy, setChainBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -57,8 +75,33 @@ function PurchaseOrderDetailPage() {
     })();
   }, [poId, navigate]);
 
-  const editable = po?.status === "Draft" || po?.status === "Returned";
+  const editable = po?.status === "Draft";
   const total = items.reduce((sum, it) => sum + (Number(it.quantityInput) || 0) * (Number(it.unitCostInput) || 0), 0);
+
+  async function runChainAction(action: () => Promise<{ data: PurchaseOrder; message: string }>) {
+    setChainBusy(true);
+    try {
+      const result = await action();
+      setPo(result.data);
+      toast.success(result.message);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Action failed.");
+    } finally {
+      setChainBusy(false);
+    }
+  }
+
+  function handleReject() {
+    const reason = window.prompt("Reason for rejecting this Purchase Order:");
+    if (!reason) return;
+    runChainAction(() => apiRejectPo(poId, reason));
+  }
+
+  function handleDeliver(waived: boolean) {
+    const reason = waived ? window.prompt("Reason the supplier waived delivery:") : undefined;
+    if (waived && !reason) return;
+    runChainAction(() => apiDeliverPo(poId, waived, reason ?? undefined));
+  }
 
   async function handleSave() {
     if (!po) return;
@@ -215,6 +258,84 @@ function PurchaseOrderDetailPage() {
           </TableBody>
         </Table>
       </Card>
+
+      {/* Budget -> Accounting -> RD approval chain */}
+      {po.status !== "Draft" && (
+        <Card className="border border-border bg-card p-4">
+          <h2 className="mb-3 text-sm font-semibold text-navy">Approval Chain</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {PO_CHAIN_STEPS.map((step) => {
+              const signedName = po[step.nameKey];
+              const signedAt = po[step.atKey];
+              const isCurrent = po.status === step.pendingStatus;
+              const isDone = !!signedName;
+
+              return (
+                <div key={step.pendingStatus} className={`rounded-lg border p-3 text-xs ${isDone ? "border-success/30 bg-success/5" : isCurrent ? "border-primary/40 bg-primary/5" : "border-border"}`}>
+                  <p className="flex items-center gap-1.5 font-semibold text-navy">
+                    {isDone && <CheckCircle2 className="h-3.5 w-3.5 text-success" />}
+                    {step.label}
+                  </p>
+                  {isDone ? (
+                    <p className="mt-1 text-muted-foreground">Signed by {signedName}<br />{signedAt && new Date(signedAt).toLocaleString("en-PH")}</p>
+                  ) : isCurrent ? (
+                    <div className="mt-2 flex gap-1.5">
+                      <Button
+                        size="sm"
+                        className="h-7 gap-1 text-xs"
+                        disabled={chainBusy}
+                        onClick={() =>
+                          runChainAction(() =>
+                            step.pendingStatus === "Pending Budget Obligation"
+                              ? apiObligatePo(poId)
+                              : step.pendingStatus === "Pending Accounting"
+                                ? apiAccountPo(poId)
+                                : apiFinalApprovePo(poId),
+                          )
+                        }
+                      >
+                        Sign now
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7 gap-1 border-destructive/40 text-xs text-destructive hover:bg-destructive/10" disabled={chainBusy} onClick={handleReject}>
+                        <XCircle className="h-3 w-3" /> Reject
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-muted-foreground">Awaiting prior signature</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Delivery outcome */}
+      {po.status === "Approved" && (
+        <Card className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-4">
+          <div>
+            <h2 className="text-sm font-semibold text-navy">Delivery</h2>
+            <p className="text-xs text-muted-foreground">Record whether the winning supplier delivered or waived.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" className="gap-1.5 border-warning/40 text-warning-foreground hover:bg-warning/10" disabled={chainBusy} onClick={() => handleDeliver(true)}>
+              <PackageX className="h-4 w-4" /> Supplier Waived Delivery
+            </Button>
+            <Button className="gap-1.5" disabled={chainBusy} onClick={() => handleDeliver(false)}>
+              <PackageCheck className="h-4 w-4" /> Delivery Accepted
+            </Button>
+          </div>
+        </Card>
+      )}
+      {po.status === "Delivery Waived" && (
+        <Card className="border border-warning/30 bg-warning/5 p-4">
+          <p className="text-sm font-semibold text-warning-foreground">Supplier waived delivery</p>
+          <p className="mt-1 text-sm text-foreground">{po.deliveryWaivedReason}</p>
+          <Button asChild size="sm" className="mt-3 gap-1.5">
+            <Link to="/rfq">Start a New RFQ Canvass</Link>
+          </Button>
+        </Card>
+      )}
 
       <div className="flex flex-wrap justify-end gap-2">
         <Button

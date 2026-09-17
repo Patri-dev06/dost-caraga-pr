@@ -1,13 +1,12 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { FilePlus2, FileText, AlertTriangle, FileCheck2, Eye, CheckCircle2, XCircle, ThumbsUp } from "lucide-react";
+import { FilePlus2, FileText, AlertTriangle, FileCheck2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
-import { apiGetPurchaseRequests, apiGetRfqs, apiRfqApprovalAction, type Rfq } from "@/lib/api";
+import { apiGetPurchaseRequests, apiGetRfqs } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
 import type { PurchaseRequest } from "@/lib/mock-data";
-import { toast } from "sonner";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/rfq")({
   head: () => ({
@@ -21,7 +20,6 @@ export const Route = createFileRoute("/rfq")({
 
 function RfqListPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const queryClient = useQueryClient();
 
   const { data: prs = [], isLoading: loadingPrs, error: prsError } = useQuery({
     queryKey: ["purchase-requests"],
@@ -33,18 +31,6 @@ function RfqListPage() {
     queryKey: ["rfqs"],
     queryFn: () => apiGetRfqs(),
     enabled: pathname === "/rfq",
-  });
-
-  const pendingRfqs = rfqs.filter((r) => r.status === "For Recommendation" || r.status === "For Approval");
-
-  const actionMutation = useMutation({
-    mutationFn: ({ id, action, reason }: { id: string; action: "recommend" | "approve" | "reject"; reason?: string }) =>
-      apiRfqApprovalAction(id, action, reason),
-    onSuccess: async (result) => {
-      toast.success(result.message);
-      await queryClient.invalidateQueries({ queryKey: ["rfqs"] });
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to complete approval action."),
   });
 
   if (pathname !== "/rfq") return <Outlet />;
@@ -76,53 +62,6 @@ function RfqListPage() {
         </div>
       ) : (
         <>
-          {/* RFQs awaiting recommend/approve/reject */}
-          {pendingRfqs.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-sm font-semibold text-navy">RFQs Awaiting Action</h2>
-              <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
-                {pendingRfqs.map((rfq) => (
-                  <div key={rfq.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-navy">{rfq.rfqNo}</p>
-                      <p className="text-xs text-muted-foreground">
-                        PR: {rfq.prNo} · {rfq.supplierName || "No supplier name"} · {rfq.stage}
-                      </p>
-                    </div>
-                    <StatusBadge status={rfq.status} />
-                    <div className="flex gap-1.5">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 gap-1 border-border px-2 text-xs"
-                        disabled={actionMutation.isPending}
-                        onClick={() =>
-                          actionMutation.mutate({ id: rfq.id, action: rfq.status === "For Recommendation" ? "recommend" : "approve" })
-                        }
-                      >
-                        {rfq.status === "For Recommendation" ? <ThumbsUp className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
-                        {rfq.status === "For Recommendation" ? "Recommend" : "Approve"}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 gap-1 border-destructive/40 px-2 text-xs text-destructive hover:bg-destructive/10"
-                        disabled={actionMutation.isPending}
-                        onClick={() => {
-                          const reason = window.prompt("Reason for rejecting this RFQ:");
-                          if (!reason) return;
-                          actionMutation.mutate({ id: rfq.id, action: "reject", reason });
-                        }}
-                      >
-                        <XCircle className="h-3 w-3" /> Reject
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Existing RFQs */}
           {rfqs.length > 0 && (
             <div className="space-y-3">
@@ -136,7 +75,7 @@ function RfqListPage() {
                         {rfq.rfqNo}
                       </Link>
                       <p className="text-xs text-muted-foreground">
-                        PR: {rfq.prNo} · {rfq.items.length} items · ₱{fmtAmount(rfq.estimatedBudget)}
+                        PR: {rfq.prNo} · {rfq.items.length} items · ₱{fmtAmount(rfq.estimatedBudget)} · {rfq.stage}
                       </p>
                     </div>
                     <StatusBadge status={rfq.status} />
