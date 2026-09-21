@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AbstractOfCanvas;
 use App\Models\Rfq;
 use App\Models\RfqSupplier;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -54,9 +55,25 @@ class AbstractOfCanvasController extends Controller
         return response()->json(['data' => $this->format($aoc->fresh())], 201);
     }
 
+    /** Queue of Abstracts of Canvas, optionally filtered by status (comma-separated), for the BAC review inbox. */
+    public function index(Request $request): JsonResponse
+    {
+        $this->guardRfqOrApprovals();
+
+        $query = AbstractOfCanvas::with(['rfq.purchaseRequest', 'winningSupplier.quoteItems'])->latest('id');
+
+        if ($request->query('status')) {
+            $query->whereIn('status', explode(',', (string) $request->query('status')));
+        }
+
+        return response()->json([
+            'data' => $query->get()->map(fn (AbstractOfCanvas $aoc): array => $this->formatSummary($aoc)),
+        ]);
+    }
+
     public function show(AbstractOfCanvas $aoc): JsonResponse
     {
-        $this->guardModule('rfq');
+        $this->guardRfqOrApprovals();
 
         return response()->json(['data' => $this->format($aoc)]);
     }
@@ -69,6 +86,7 @@ class AbstractOfCanvasController extends Controller
 
         $aoc->forceFill(['status' => 'Pending BAC Review', 'submitted_at' => now()])->save();
         $this->recordAction($request, $aoc, 'Supply', 'Submitted for BAC Review', null);
+        $this->notifyBacForReview($aoc, 'submitted');
 
         return response()->json(['message' => 'Abstract of Canvas submitted for BAC review.', 'data' => $this->format($aoc->fresh())]);
     }
@@ -76,6 +94,7 @@ class AbstractOfCanvasController extends Controller
     public function bacReview(Request $request, AbstractOfCanvas $aoc): JsonResponse
     {
         $this->guardModule('approvals');
+        $this->abortUnlessBacMember($request->user());
         abort_unless($aoc->status === 'Pending BAC Review', 422, 'This Abstract of Canvas is not awaiting BAC review.');
         $this->requireSignature($request->user());
 
@@ -122,6 +141,7 @@ class AbstractOfCanvasController extends Controller
 
         $aoc->forceFill(['status' => 'Pending BAC Review', 'twg_response' => $data['response']])->save();
         $this->recordAction($request, $aoc, 'TWG', 'Responded to Remarks', $data['response']);
+        $this->notifyBacForReview($aoc, 'resubmitted');
 
         return response()->json(['message' => 'Response submitted; back to BAC for review.', 'data' => $this->format($aoc->fresh())]);
     }
@@ -130,6 +150,7 @@ class AbstractOfCanvasController extends Controller
     public function cancel(Request $request, AbstractOfCanvas $aoc): JsonResponse
     {
         $this->guardModule('approvals');
+        $this->abortUnlessBacMember($request->user());
         abort_unless($aoc->status === 'BAC Returned', 422, 'Only a returned Abstract of Canvas can be cancelled.');
 
         DB::transaction(function () use ($aoc): void {
@@ -147,6 +168,50 @@ class AbstractOfCanvasController extends Controller
         }
 
         return response()->json(['message' => 'Abstract of Canvas and RFQ cancelled.', 'data' => $this->format($aoc->fresh())]);
+    }
+
+    private function guardRfqOrApprovals(): void
+    {
+        $user = request()->user();
+        abort_unless($user?->canAccessModule('rfq') || $user?->canAccessModule('approvals'), 403, 'You do not have access to this module.');
+    }
+
+    /** Only the Settings-designated BAC Chairman or Vice-Chairman may review (or cancel) an AOC. */
+    private function abortUnlessBacMember(?User $user): void
+    {
+        $designated = collect([$this->designatedBacChair(), $this->designatedBacViceChair()])->filter()->pluck('id');
+        $ok = $user?->tier === 'superadmin' || ($user !== null && $designated->contains($user->id));
+        abort_unless($ok, 403, 'Only the designated BAC Chairman or Vice-Chairman may review this Abstract of Canvas.');
+    }
+
+    private function notifyBacForReview(AbstractOfCanvas $aoc, string $event): void
+    {
+        $aoc->loadMissing('rfq');
+        $recipients = collect([$this->designatedBacChair(), $this->designatedBacViceChair()])->filter()->unique('id');
+
+        foreach ($recipients as $recipient) {
+            $this->notify($recipient, 'aoc_pending_bac_review', 'Abstract of Canvas awaiting BAC review',
+                "The Abstract of Canvas for {$aoc->rfq?->rfq_no} was {$event} and is waiting for your review.",
+                "/aoc/{$aoc->id}", ['aocId' => $aoc->id]);
+        }
+    }
+
+    /** Lightweight row for the BAC review queue. */
+    private function formatSummary(AbstractOfCanvas $aoc): array
+    {
+        return [
+            'id' => $aoc->id,
+            'rfq_id' => $aoc->rfq_id,
+            'rfq_no' => $aoc->rfq?->rfq_no,
+            'pr_no' => $aoc->rfq?->purchaseRequest?->pr_no,
+            'procurement_category' => $aoc->procurement_category,
+            'status' => $aoc->status,
+            'winning_supplier_name' => $aoc->winningSupplier?->supplier_name,
+            'winning_total' => $aoc->winningSupplier?->quoteItems->sum(fn ($qi) => (float) $qi->total_price),
+            'bac_remarks' => $aoc->bac_remarks,
+            'submitted_at' => $aoc->submitted_at?->toISOString(),
+            'created_at' => $aoc->created_at?->toISOString(),
+        ];
     }
 
     private function format(AbstractOfCanvas $aoc): array

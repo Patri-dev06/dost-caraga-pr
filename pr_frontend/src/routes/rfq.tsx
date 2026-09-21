@@ -78,7 +78,14 @@ function RfqListPage() {
                         PR: {rfq.prNo} · {rfq.items.length} items · ₱{fmtAmount(rfq.estimatedBudget)} · {rfq.stage}
                       </p>
                     </div>
-                    <StatusBadge status={rfq.status} />
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      <StatusBadge status={rfq.status} />
+                      {rfq.abstractOfCanvasStatus && rfq.abstractOfCanvasStatus !== rfq.status && (
+                        <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId ?? "" }} title="Abstract of Canvas status">
+                          <StatusBadge status={rfq.abstractOfCanvasStatus} />
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

@@ -105,6 +105,7 @@ Route::prefix('v1')->group(function (): void {
 
         // Abstract of Canvas + BAC review loop.
         Route::post('/rfqs/{rfq}/aoc', [AbstractOfCanvasController::class, 'generate']);
+        Route::get('/aoc', [AbstractOfCanvasController::class, 'index']);
         Route::get('/aoc/{aoc}', [AbstractOfCanvasController::class, 'show']);
         Route::post('/aoc/{aoc}/submit-for-bac-review', [AbstractOfCanvasController::class, 'submitForBacReview']);
         Route::post('/aoc/{aoc}/bac-review', [AbstractOfCanvasController::class, 'bacReview']);

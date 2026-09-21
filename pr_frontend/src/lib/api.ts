@@ -41,6 +41,8 @@ export type CurrentUser = {
   isBudgetOfficer: boolean; // designated Budget Officer for PPMP/LIB fund certification
   isSupervisor: boolean; // designated Supervisor for LIB recommending approval
   isRegionalDirector: boolean; // designated Regional Director for LIB final approval
+  isBacChair: boolean; // designated BAC Chairman: reviews Abstracts of Canvas
+  isBacViceChair: boolean; // designated BAC Vice-Chairman: reviews Abstracts of Canvas
   hasSignature: boolean; // an e-signature is uploaded (required to sign/approve)
 };
 
@@ -837,6 +839,8 @@ type BackendUser = {
   is_budget_officer?: boolean;
   is_supervisor?: boolean;
   is_regional_director?: boolean;
+  is_bac_chair?: boolean;
+  is_bac_vice_chair?: boolean;
   has_signature?: boolean;
   last_login_at: string | null;
 };
@@ -1372,6 +1376,52 @@ function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
   };
 }
 
+/** One row of the BAC review queue. */
+export interface AocSummary {
+  id: string;
+  rfqId: string;
+  rfqNo: string;
+  prNo: string;
+  procurementCategory: string;
+  status: string;
+  winningSupplierName: string;
+  winningTotal: number;
+  bacRemarks: string;
+  submittedAt: string;
+}
+
+/** Abstracts of Canvas, optionally limited to the given statuses (e.g. "Pending BAC Review"). */
+export async function apiGetAocs(statuses?: string[]): Promise<AocSummary[]> {
+  const query = statuses?.length ? `?status=${encodeURIComponent(statuses.join(","))}` : "";
+  const result = await request<{
+    data: {
+      id: number;
+      rfq_id: number;
+      rfq_no: string | null;
+      pr_no: string | null;
+      procurement_category: string;
+      status: string;
+      winning_supplier_name: string | null;
+      winning_total: number | string | null;
+      bac_remarks: string | null;
+      submitted_at: string | null;
+    }[];
+  }>(`/aoc${query}`);
+
+  return result.data.map((aoc) => ({
+    id: String(aoc.id),
+    rfqId: String(aoc.rfq_id),
+    rfqNo: aoc.rfq_no ?? "",
+    prNo: aoc.pr_no ?? "",
+    procurementCategory: aoc.procurement_category,
+    status: aoc.status,
+    winningSupplierName: aoc.winning_supplier_name ?? "",
+    winningTotal: Number(aoc.winning_total ?? 0),
+    bacRemarks: aoc.bac_remarks ?? "",
+    submittedAt: aoc.submitted_at ?? "",
+  }));
+}
+
 export async function apiGenerateAoc(rfqId: string | number, twgEvaluationNotes?: string) {
   const result = await request<ApiRecord<BackendAbstractOfCanvas>>(`/rfqs/${rfqId}/aoc`, {
     method: "POST",
@@ -1649,6 +1699,8 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     isBudgetOfficer: Boolean(user.is_budget_officer),
     isSupervisor: Boolean(user.is_supervisor),
     isRegionalDirector: Boolean(user.is_regional_director),
+    isBacChair: Boolean(user.is_bac_chair),
+    isBacViceChair: Boolean(user.is_bac_vice_chair),
     hasSignature: Boolean(user.has_signature),
   };
 }

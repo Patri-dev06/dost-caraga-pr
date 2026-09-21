@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { apiGetAoc, apiSubmitAocForBacReview, apiBacReviewAoc, apiTwgRespondAoc, apiCancelAoc, apiGenerateFromRfq, type AbstractOfCanvas } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
+import { useCurrentUser } from "@/lib/current-user";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/aoc/$aocId")({
@@ -19,6 +20,9 @@ export const Route = createFileRoute("/aoc/$aocId")({
 function AocDetailPage() {
   const { aocId } = Route.useParams();
   const navigate = useNavigate();
+  const { user } = useCurrentUser();
+  // Only the designated BAC Chairman / Vice-Chairman review or cancel an AOC (the server enforces it too).
+  const isBacReviewer = Boolean(user?.isBacChair || user?.isBacViceChair || user?.tier === "superadmin");
 
   const [aoc, setAoc] = useState<AbstractOfCanvas | null>(null);
   const [loading, setLoading] = useState(true);
@@ -131,7 +135,16 @@ function AocDetailPage() {
         </Button>
       )}
 
-      {aoc.status === "Pending BAC Review" && (
+      {aoc.status === "Pending BAC Review" && !isBacReviewer && (
+        <Card className="border border-border bg-card p-4">
+          <h2 className="text-sm font-semibold text-navy">Waiting for BAC review</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Only the designated BAC Chairman or Vice-Chairman can approve or return this Abstract of Canvas. They have been notified.
+          </p>
+        </Card>
+      )}
+
+      {aoc.status === "Pending BAC Review" && isBacReviewer && (
         <Card className="space-y-3 border border-border bg-card p-4">
           <h2 className="text-sm font-semibold text-navy">BAC Review</h2>
           <Textarea
@@ -161,14 +174,16 @@ function AocDetailPage() {
           <h2 className="text-sm font-semibold text-navy">TWG Response</h2>
           <Textarea rows={3} placeholder="Address BAC's remarks…" value={twgResponse} onChange={(e) => setTwgResponse(e.target.value)} className="border-border" />
           <div className="flex gap-2">
-            <Button variant="outline" className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10" disabled={busy}
-              onClick={() => {
-                const reason = window.prompt("Reason for cancelling this AOC and its RFQ:");
-                if (!reason) return;
-                run(() => apiCancelAoc(aoc.id, reason), "Abstract of Canvas and RFQ cancelled.");
-              }}>
-              Cancel & Notify Requester
-            </Button>
+            {isBacReviewer && (
+              <Button variant="outline" className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10" disabled={busy}
+                onClick={() => {
+                  const reason = window.prompt("Reason for cancelling this AOC and its RFQ:");
+                  if (!reason) return;
+                  run(() => apiCancelAoc(aoc.id, reason), "Abstract of Canvas and RFQ cancelled.");
+                }}>
+                Cancel & Notify Requester
+              </Button>
+            )}
             <Button className="gap-1.5" disabled={busy || !twgResponse.trim()} onClick={() => run(() => apiTwgRespondAoc(aoc.id, twgResponse), "Response sent back to BAC.")}>
               Submit Response to BAC
             </Button>

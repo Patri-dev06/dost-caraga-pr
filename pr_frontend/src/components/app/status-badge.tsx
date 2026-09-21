@@ -18,6 +18,9 @@ const styles: Record<string, string> = {
   "Pending": "bg-warning/15 text-warning-foreground border-warning/40",
   "Deactivated": "bg-muted text-muted-foreground border-border",
   "Inactive": "bg-muted text-muted-foreground border-border", // legacy value
+  "Pending BAC Review": "bg-primary/10 text-primary border-primary/30",
+  "BAC Returned": "bg-warning/15 text-warning-foreground border-warning/40",
+  "Cancelled": "bg-destructive/10 text-destructive border-destructive/30",
 };
 
 export function StatusBadge({ status, className }: { status: Status; className?: string }) {

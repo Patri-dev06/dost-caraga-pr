@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { Filter, Eye } from "lucide-react";
+import { Filter, Eye, Gavel } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,11 +8,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { fmtPHP, prTotal, PurchaseRequest } from "@/lib/mock-data";
 import { toast } from "sonner";
-import { apiApprovalAction, apiGetApprovals } from "@/lib/api";
+import { apiApprovalAction, apiGetApprovals, apiGetAocs, type AocSummary } from "@/lib/api";
+import { useCurrentUser } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/approval-inbox")({
@@ -22,12 +24,28 @@ export const Route = createFileRoute("/approval-inbox")({
       { name: "description", content: "Review, recommend, approve, return, or reject Purchase Requests awaiting action." },
     ],
   }),
+  validateSearch: (search: Record<string, unknown>): { tab?: "prs" | "bac" } => ({
+    tab: search.tab === "bac" ? "bac" : search.tab === "prs" ? "prs" : undefined,
+  }),
   component: Inbox,
 });
+
+const BAC_STATUSES = ["Pending BAC Review", "BAC Returned", "Approved", "Cancelled"];
 
 function Inbox() {
   const [open, setOpen] = useState<PurchaseRequest | null>(null);
   const queryClient = useQueryClient();
+  const { user } = useCurrentUser();
+  const search = Route.useSearch();
+  const isBacReviewer = Boolean(user?.isBacChair || user?.isBacViceChair);
+  // BAC members land on their queue; everyone else on Purchase Requests. A ?tab= link or a click overrides.
+  const [picked, setPicked] = useState<"prs" | "bac" | null>(null);
+  const tab = picked ?? search.tab ?? (isBacReviewer ? "bac" : "prs");
+  const { data: aocs = [], isLoading: aocsLoading, error: aocsError } = useQuery({
+    queryKey: ["aocs", "bac-queue"],
+    queryFn: () => apiGetAocs(BAC_STATUSES),
+  });
+  const pendingBac = aocs.filter((a) => a.status === "Pending BAC Review").length;
   const { data: queue = [], isLoading, error } = useQuery({
     queryKey: ["approvals"],
     queryFn: apiGetApprovals,
@@ -48,9 +66,22 @@ function Inbox() {
       <PageHeader
         eyebrow="Inbox"
         title="Approval Inbox"
-        subtitle="Purchase Requests awaiting your action."
+        subtitle="Purchase Requests and Abstracts of Canvas awaiting your action."
       />
 
+      <Tabs value={tab} onValueChange={(v) => setPicked(v as "prs" | "bac")} className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="prs" className="gap-2">
+            Purchase Requests
+            <span className="rounded-full bg-secondary px-1.5 text-[11px] font-semibold text-navy">{queue.length}</span>
+          </TabsTrigger>
+          <TabsTrigger value="bac" className="gap-2">
+            <Gavel className="h-3.5 w-3.5" /> BAC Review
+            {pendingBac > 0 && <span className="rounded-full bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground">{pendingBac}</span>}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="prs" className="mt-0 space-y-6">
       <Card className="flex flex-col gap-3 border border-border bg-card p-4 sm:flex-row sm:items-center">
         <div className="flex flex-1 items-center gap-2">
           <Filter className="h-4 w-4 text-muted-foreground" />
@@ -107,6 +138,12 @@ function Inbox() {
           </TableBody>
         </Table>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="bac" className="mt-0">
+          <BacReviewQueue aocs={aocs} isLoading={aocsLoading} error={aocsError} canReview={isBacReviewer} />
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={!!open} onOpenChange={(v) => !v && setOpen(null)}>
         <DialogContent className="max-w-2xl">
@@ -149,6 +186,82 @@ function Inbox() {
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+const BAC_FILTERS: { key: string; label: string; statuses: string[] }[] = [
+  { key: "pending", label: "Needs review", statuses: ["Pending BAC Review"] },
+  { key: "returned", label: "Returned to TWG", statuses: ["BAC Returned"] },
+  { key: "approved", label: "Approved", statuses: ["Approved"] },
+  { key: "cancelled", label: "Cancelled", statuses: ["Cancelled"] },
+  { key: "all", label: "All", statuses: BAC_STATUSES },
+];
+
+function BacReviewQueue({ aocs, isLoading, error, canReview }: { aocs: AocSummary[]; isLoading: boolean; error: unknown; canReview: boolean }) {
+  const [filter, setFilter] = useState("pending");
+  const active = BAC_FILTERS.find((f) => f.key === filter) ?? BAC_FILTERS[0];
+  const rows = aocs.filter((a) => active.statuses.includes(a.status));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        {BAC_FILTERS.map((f) => {
+          const count = aocs.filter((a) => f.statuses.includes(a.status)).length;
+          const on = f.key === filter;
+          return (
+            <Button key={f.key} size="sm" variant={on ? "default" : "outline"} className={on ? "" : "border-border"} onClick={() => setFilter(f.key)}>
+              {f.label} <span className="ml-1.5 text-[11px] opacity-80">{count}</span>
+            </Button>
+          );
+        })}
+      </div>
+
+      <Card className="overflow-hidden border border-border bg-card">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader><TableRow className="bg-secondary/40 hover:bg-secondary/40">
+              <TableHead className="label-eyebrow">RFQ No.</TableHead>
+              <TableHead className="label-eyebrow">PR No.</TableHead>
+              <TableHead className="label-eyebrow">Category</TableHead>
+              <TableHead className="label-eyebrow">Winning Supplier</TableHead>
+              <TableHead className="label-eyebrow text-right">Winning Total</TableHead>
+              <TableHead className="label-eyebrow">Submitted</TableHead>
+              <TableHead className="label-eyebrow">Status</TableHead>
+              <TableHead className="label-eyebrow text-right">Actions</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {isLoading && (
+                <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Fetching data, kindly wait.</TableCell></TableRow>
+              )}
+              {!isLoading && Boolean(error) && (
+                <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">{error instanceof Error ? error.message : "Unable to load the BAC review queue."}</TableCell></TableRow>
+              )}
+              {!isLoading && !error && rows.length === 0 && (
+                <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Nothing here right now.</TableCell></TableRow>
+              )}
+              {rows.map((aoc) => (
+                <TableRow key={aoc.id}>
+                  <TableCell className="font-semibold text-navy">{aoc.rfqNo}</TableCell>
+                  <TableCell>{aoc.prNo}</TableCell>
+                  <TableCell>{aoc.procurementCategory}</TableCell>
+                  <TableCell>{aoc.winningSupplierName || "—"}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{fmtPHP(aoc.winningTotal)}</TableCell>
+                  <TableCell className="text-muted-foreground">{aoc.submittedAt ? aoc.submittedAt.slice(0, 10) : "—"}</TableCell>
+                  <TableCell><StatusBadge status={aoc.status} /></TableCell>
+                  <TableCell className="text-right">
+                    <Button asChild size="sm" variant="outline" className="gap-1.5 border-border">
+                      <Link to="/aoc/$aocId" params={{ aocId: aoc.id }}>
+                        <Eye className="h-3.5 w-3.5" /> {canReview && aoc.status === "Pending BAC Review" ? "Review" : "View"}
+                      </Link>
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
     </div>
   );
 }

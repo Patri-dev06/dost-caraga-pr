@@ -75,7 +75,7 @@ class PurchaseOrderApiTest extends TestCase
 
         $aocId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()->json('data.id');
         $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/submit-for-bac-review")->assertOk();
-        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])
             ->assertOk()->assertJsonPath('data.status', 'Approved');
 
         return $rfqId;
