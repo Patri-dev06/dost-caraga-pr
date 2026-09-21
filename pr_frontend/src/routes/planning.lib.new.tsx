@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, CalendarIcon, Eye, FileSpreadsheet, History, ListOrdered, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
-import { format as formatDate } from "date-fns";
+import { ArrowLeft, ArrowRight, CalendarIcon, Eye, FileSpreadsheet, History, ListOrdered, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
+import { addMonths, format as formatDate, isBefore, parseISO, startOfDay, subDays } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Combobox } from "@/components/ui/combobox";
@@ -180,15 +180,25 @@ function AutoTextarea({
 }
 
 const toISODate = (d: Date): string => formatDate(d, "yyyy-MM-dd");
+// parseISO reads "yyyy-MM-dd" as a local date; new Date("yyyy-MM-dd") is UTC and can show the day before.
 function rangeLabel(from?: string, to?: string): string {
   if (!from && !to) return "";
-  const f = from ? formatDate(new Date(from), "MMM d, yyyy") : "…";
-  const t = to ? formatDate(new Date(to), "MMM d, yyyy") : "…";
+  const f = from ? formatDate(parseISO(from), "MMM d, yyyy") : "…";
+  const t = to ? formatDate(parseISO(to), "MMM d, yyyy") : "…";
   return `${f} – ${t}`;
 }
 
-/* Project duration as a From/To calendar range. Shows the formatted range as
-   plain text in preview, and a two-month range calendar (popover) while editing. */
+// One-click end dates counted from the start date, so a multi-year project doesn't need month-by-month paging.
+const DURATION_PRESETS: { label: string; months: number }[] = [
+  { label: "6 months", months: 6 },
+  { label: "1 year", months: 12 },
+  { label: "2 years", months: 24 },
+  { label: "3 years", months: 36 },
+];
+
+/* Project duration as a two-step range picker: pick the start date, then the end date.
+   Month/year dropdowns jump straight to a far-off date, and the duration buttons fill the
+   end date from the start. Shows plain text in preview. */
 function DateRangeField({
   from,
   to,
@@ -202,26 +212,110 @@ function DateRangeField({
   fallback?: string;
   onChange: (from?: string, to?: string) => void;
 }) {
-  const fromDate = from ? new Date(from) : undefined;
-  const toDate = to ? new Date(to) : undefined;
+  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<"start" | "end">("start");
+  const [months, setMonths] = useState(2);
+  const fromDate = from ? parseISO(from) : undefined;
+  const toDate = to ? parseISO(to) : undefined;
   const label = rangeLabel(from, to) || (fallback ?? "");
+
+  // Two months side by side on wide screens, one on phones.
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 640px)");
+    const update = () => setMonths(query.matches ? 1 : 2);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
   if (!editing) return <span className="inline-block min-h-[1.2em]">{label || " "}</span>;
+
+  const pickDay = (day: Date) => {
+    const picked = startOfDay(day);
+    if (step === "start" || !fromDate || isBefore(picked, fromDate)) {
+      // A new start clears any old end date; an end date before the start restarts the range.
+      onChange(toISODate(picked), undefined);
+      setStep("end");
+      return;
+    }
+    onChange(from, toISODate(picked));
+    setOpen(false);
+    setStep("start");
+  };
+
+  const applyPreset = (monthsToAdd: number) => {
+    if (!fromDate) return;
+    onChange(from, toISODate(subDays(addMonths(fromDate, monthsToAdd), 1)));
+    setOpen(false);
+    setStep("start");
+  };
+
+  const dateBox = (which: "start" | "end", value?: Date, disabled = false) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => setStep(which)}
+      className={cn(
+        "min-w-[7.5rem] flex-1 rounded-md border px-2.5 py-1.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        step === which ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border hover:bg-secondary",
+      )}
+    >
+      <span className="block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{which === "start" ? "Start date" : "End date"}</span>
+      <span className={cn("text-sm", !value && "text-muted-foreground")}>{value ? formatDate(value, "MMM d, yyyy") : "Not set"}</span>
+    </button>
+  );
+
   return (
-    <Popover>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        // Reopening a complete range starts over from the start date; a half-picked one resumes at the end date.
+        if (next) setStep(fromDate && !toDate ? "end" : "start");
+      }}
+    >
       <PopoverTrigger asChild>
         <button type="button" className="flex w-full items-center gap-2 rounded-sm px-0.5 text-left leading-snug hover:bg-amber-50">
           <CalendarIcon className="h-3.5 w-3.5 shrink-0 opacity-60" />
           <span className={cn("truncate", !label && "italic text-black/30")}>{label || "Select start and end dates"}</span>
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start" style={{ fontFamily: "var(--font-sans)" }}>
+      <PopoverContent className="w-auto max-w-[calc(100vw-1rem)] p-0" align="start" style={{ fontFamily: "var(--font-sans)" }}>
+        <div className="space-y-2 border-b border-border p-3">
+          <div className="flex items-center gap-2">
+            {dateBox("start", fromDate)}
+            <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            {dateBox("end", toDate, !fromDate)}
+          </div>
+          <p className="text-xs text-muted-foreground">{step === "start" ? "Pick the start date." : "Now pick the end date."}</p>
+          {fromDate && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs text-muted-foreground">Ends after:</span>
+              {DURATION_PRESETS.map((preset) => (
+                <Button key={preset.months} type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => applyPreset(preset.months)}>
+                  {preset.label}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
         <Calendar
           mode="range"
-          numberOfMonths={2}
-          defaultMonth={fromDate}
+          numberOfMonths={months}
+          captionLayout="dropdown"
+          startMonth={new Date(2015, 0)}
+          endMonth={new Date(2045, 11)}
+          defaultMonth={step === "end" && fromDate ? fromDate : (fromDate ?? new Date())}
           selected={{ from: fromDate, to: toDate }}
-          onSelect={(r) => onChange(r?.from ? toISODate(r.from) : undefined, r?.to ? toISODate(r.to) : undefined)}
+          onDayClick={pickDay}
         />
+        {(from || to) && (
+          <div className="flex justify-end border-t border-border p-2">
+            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground" onClick={() => { onChange(undefined, undefined); setStep("start"); }}>
+              Clear dates
+            </Button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   );
