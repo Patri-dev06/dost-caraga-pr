@@ -126,4 +126,12 @@ return [
 
     'api_token_idle_timeout' => (int) env('AUTH_TOKEN_IDLE_TIMEOUT_MINUTES', 30),
 
+    /*
+    | Rate limits for the public login/register endpoints. Turned off in phpunit.xml because
+    | the test suite logs in many times; the throttle tests switch it back on.
+    */
+    'throttle_enabled' => (bool) env('AUTH_THROTTLE_ENABLED', true),
+    'login_attempts_per_minute' => (int) env('AUTH_LOGIN_ATTEMPTS_PER_MINUTE', 5),
+    'register_attempts_per_hour' => (int) env('AUTH_REGISTER_ATTEMPTS_PER_HOUR', 5),
+
 ];
