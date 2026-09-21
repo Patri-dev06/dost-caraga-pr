@@ -3,11 +3,13 @@
 namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Feature\Concerns\SignsRfq;
 use Tests\TestCase;
 
 class AbstractOfCanvasTest extends TestCase
 {
     use RefreshDatabase;
+    use SignsRfq;
 
     protected bool $seed = true;
 
@@ -53,9 +55,9 @@ class AbstractOfCanvasTest extends TestCase
             ],
         ])->assertCreated()->json('data.id');
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-chair")->assertOk();
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-vice-chair")->assertOk();
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/supply-officer")->assertOk();
+        $this->signRfq($rfqId, 'bac-chair')->assertOk();
+        $this->signRfq($rfqId, 'bac-vice-chair')->assertOk();
+        $this->signRfq($rfqId, 'supply-officer')->assertOk();
 
         foreach (['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants'] as $name) {
             $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_name' => $name])->assertCreated();

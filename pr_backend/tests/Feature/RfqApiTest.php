@@ -3,12 +3,14 @@
 namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Feature\Concerns\SignsRfq;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
 class RfqApiTest extends TestCase
 {
     use RefreshDatabase;
+    use SignsRfq;
 
     protected bool $seed = true;
 
@@ -71,9 +73,9 @@ class RfqApiTest extends TestCase
     /** Runs the full BAC Chair -> BAC Vice-Chair -> Supply Officer signing chain (all default to admin). */
     private function completeSigningChain(string $token, int $rfqId): void
     {
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-chair")->assertOk()->assertJsonPath('data.status', 'Pending BAC Vice-Chair Signature');
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-vice-chair")->assertOk()->assertJsonPath('data.status', 'Pending Supply Officer Countersign');
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/supply-officer")->assertOk()->assertJsonPath('data.status', 'Ready to Send');
+        $this->signRfq($rfqId, 'bac-chair')->assertOk()->assertJsonPath('data.status', 'Pending BAC Vice-Chair Signature');
+        $this->signRfq($rfqId, 'bac-vice-chair')->assertOk()->assertJsonPath('data.status', 'Pending Supply Officer Countersign');
+        $this->signRfq($rfqId, 'supply-officer')->assertOk()->assertJsonPath('data.status', 'Ready to Send');
     }
 
     private function addThreeSuppliers(string $token, int $rfqId): void
@@ -142,7 +144,7 @@ class RfqApiTest extends TestCase
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-chair")->assertOk();
+        $this->signRfq($rfqId, 'bac-chair')->assertOk();
 
         $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}", ['canvasser' => 'Should Not Save'])
             ->assertStatus(422);
@@ -155,7 +157,7 @@ class RfqApiTest extends TestCase
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
         // Skipping ahead is rejected.
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/sign/supply-officer")->assertStatus(422);
+        $this->signRfq($rfqId, 'supply-officer')->assertStatus(422);
 
         $this->completeSigningChain($token, $rfqId);
 

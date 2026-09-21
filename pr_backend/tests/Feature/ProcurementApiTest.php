@@ -92,7 +92,7 @@ class ProcurementApiTest extends TestCase
                 'office' => 'RO',
                 'fundSource' => 'GAA',
                 'projectTitle' => 'Office Productivity Upgrade',
-                'requestedBy' => 2,
+                'requestedBy' => User::where('email', 'mdelacruz@dost.gov.ph')->value('id'),
                 'modeOfProcurement' => 'Shopping',
                 'purpose' => 'Create a PR from the frontend form.',
                 'items' => [
@@ -432,4 +432,5 @@ class ProcurementApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.status', 'Approved');
     }
+
 }
