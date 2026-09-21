@@ -1745,6 +1745,7 @@ class ProcurementController extends Controller
         ])->save();
 
         $this->recordAction($request, $purchaseRequest, 'Requester', 'Submitted PR', 'Initial submission.');
+        $this->notifyPrSubmitted($purchaseRequest);
 
         return response()->json(['message' => 'Purchase Request submitted for recommendation.', 'data' => $this->format($purchaseRequest->fresh())]);
     }
@@ -1765,11 +1766,17 @@ class ProcurementController extends Controller
     {
         $this->guardModule('approvals');
         $this->abortUnlessRecommender($request->user());
+        $this->requireSignature($request->user());
         $purchaseRequest->forceFill([
             'status' => 'For Approval',
             'stage' => $this->preferenceValue('rd_approval_stage', 'Director Approval'),
         ])->save();
         $this->recordAction($request, $purchaseRequest, 'Recommender', 'Recommended', $request->input('remarks'));
+
+        $this->notify($this->designatedRegionalDirector(), 'pr_for_approval', 'Purchase Request awaiting your approval',
+            "{$purchaseRequest->pr_no} was recommended and is awaiting your digital sign.", '/approval-inbox', ['prId' => $purchaseRequest->id]);
+        $this->notify($purchaseRequest->requester, 'pr_recommended', 'Purchase Request recommended',
+            "{$purchaseRequest->pr_no} was recommended and forwarded to the Regional Director.", "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id]);
 
         return response()->json(['message' => 'Purchase Request recommended.', 'data' => $this->format($purchaseRequest->fresh())]);
     }
@@ -1778,8 +1785,11 @@ class ProcurementController extends Controller
     {
         $this->guardModule('approvals');
         $this->abortUnlessDesignatedApprover($request->user());
+        $this->requireSignature($request->user());
         $purchaseRequest->forceFill(['status' => 'Approved', 'stage' => 'Approved'])->save();
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Approved', $request->input('remarks'));
+        $this->notify($purchaseRequest->requester, 'pr_approved', 'Purchase Request approved',
+            "{$purchaseRequest->pr_no} was approved. It can now proceed to RFQ.", "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id]);
 
         return response()->json(['message' => 'Purchase Request approved.', 'data' => $this->format($purchaseRequest->fresh())]);
     }
@@ -1791,8 +1801,24 @@ class ProcurementController extends Controller
         $data = $request->validate(['reason' => ['required', 'string']]);
         $purchaseRequest->forceFill(['status' => 'Rejected', 'stage' => 'Rejected'])->save();
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Rejected', $data['reason']);
+        $this->notify($purchaseRequest->requester, 'pr_rejected', 'Purchase Request rejected',
+            "{$purchaseRequest->pr_no} was rejected: {$data['reason']}", "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id]);
 
         return response()->json(['message' => 'Purchase Request rejected.', 'data' => $this->format($purchaseRequest->fresh())]);
+    }
+
+    /** Tells everyone who can recommend a PR (Recommender role + designated Supervisor) that it is waiting. */
+    private function notifyPrSubmitted(PurchaseRequest $purchaseRequest): void
+    {
+        $recipients = User::whereHas('roles', fn ($query) => $query->where('name', 'Recommender'))->get()
+            ->push($this->designatedSupervisor())
+            ->filter()
+            ->unique('id');
+
+        foreach ($recipients as $recipient) {
+            $this->notify($recipient, 'pr_submitted', 'Purchase Request awaiting your recommendation',
+                "{$purchaseRequest->pr_no} was submitted and is awaiting your recommending approval.", '/approval-inbox', ['prId' => $purchaseRequest->id]);
+        }
     }
 
     /** Any account holding the Recommender role may recommend a PR — not just one hardcoded person. */
@@ -1919,6 +1945,7 @@ class ProcurementController extends Controller
                 'submitted_at' => now(),
             ])->save();
             $this->recordAction($request, $purchaseRequest, 'Requester', 'Submitted PR', 'Initial submission.');
+            $this->notifyPrSubmitted($purchaseRequest);
         }
 
         return response()->json(['data' => $this->format($purchaseRequest->fresh())], 201);

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Office;
 use App\Models\Role;
 use App\Models\User;
+use App\Models\UserNotification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -431,6 +432,43 @@ class ProcurementApiTest extends TestCase
             ->postJson("/api/v1/approvals/{$prId}/approve")
             ->assertOk()
             ->assertJsonPath('data.status', 'Approved');
+    }
+
+    public function test_submitting_a_pr_notifies_the_recommenders(): void
+    {
+        $adminToken = $this->loginAsAdmin();
+        $prId = $this->createSubmittedPr($adminToken);
+
+        $this->assertDatabaseHas('user_notifications', [
+            'user_id' => User::where('email', 'admin@dost.gov.ph')->value('id'),
+            'type' => 'pr_submitted',
+        ]);
+        $this->assertSame($prId, UserNotification::where('type', 'pr_submitted')->first()->data['prId']);
+    }
+
+    public function test_recommend_and_approve_notify_the_next_actor_and_requester(): void
+    {
+        $adminToken = $this->loginAsAdmin();
+        $prId = $this->createSubmittedPr($adminToken);
+        $adminId = User::where('email', 'admin@dost.gov.ph')->value('id');
+
+        $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/recommend")->assertOk();
+        $this->assertDatabaseHas('user_notifications', ['user_id' => $adminId, 'type' => 'pr_recommended']);
+
+        $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/approve")->assertOk();
+        $this->assertDatabaseHas('user_notifications', ['user_id' => $adminId, 'type' => 'pr_approved']);
+    }
+
+    public function test_recommend_and_approve_require_an_e_signature(): void
+    {
+        $adminToken = $this->loginAsAdmin();
+        $prId = $this->createSubmittedPr($adminToken);
+
+        User::where('email', 'admin@dost.gov.ph')->update(['signature' => null]);
+
+        $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/recommend")->assertStatus(422);
+        $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/approve")->assertStatus(422);
+        $this->assertSame('For Recommendation', \App\Models\PurchaseRequest::find($prId)->status);
     }
 
 }
