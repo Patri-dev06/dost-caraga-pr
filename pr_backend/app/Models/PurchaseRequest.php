@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -25,6 +26,45 @@ class PurchaseRequest extends Model
     protected function casts(): array
     {
         return ['submitted_at' => 'datetime'];
+    }
+
+    /** Modules whose holders work on every PR (approvers, BAC/supply, validators), not just their own. */
+    private const CROSS_CUTTING_MODULES = ['approvals', 'rfq', 'po', 'validation'];
+
+    /** Admins/Superadmins and holders of a cross-cutting module see every PR; requesters see only their own. */
+    public static function seesAllFor(?User $user): bool
+    {
+        if ($user === null) {
+            return false;
+        }
+
+        if (in_array($user->tier, ['superadmin', 'admin'], true)) {
+            return true;
+        }
+
+        foreach (self::CROSS_CUTTING_MODULES as $module) {
+            if ($user->canAccessModule($module)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function scopeVisibleTo(Builder $query, ?User $user): Builder
+    {
+        return self::seesAllFor($user) ? $query : $query->where('requested_by', $user?->id ?? 0);
+    }
+
+    public function isVisibleTo(?User $user): bool
+    {
+        return self::seesAllFor($user) || ($user !== null && $this->requested_by === $user->id);
+    }
+
+    /** Only the owner, or an Admin/Superadmin, may edit or submit a PR. */
+    public function isManageableBy(?User $user): bool
+    {
+        return $user !== null && (in_array($user->tier, ['superadmin', 'admin'], true) || $this->requested_by === $user->id);
     }
 
     public function office(): BelongsTo

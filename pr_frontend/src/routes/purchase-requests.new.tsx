@@ -8,7 +8,7 @@ import {
   ApiError,
   apiCreatePurchaseRequest,
   apiGetPurchaseRequest,
-  apiGetPurchaseRequests,
+  apiGetPurchaseRequestUsage,
   apiGetSignatories,
   apiSubmitPurchaseRequest,
   apiUpdatePurchaseRequest,
@@ -386,7 +386,7 @@ function NewPR() {
 
   // Every other PR already drawn against this PPMP — used to compute what's left
   // of each item's budget and quantity before this PR takes its share.
-  const { data: allPrs } = useQuery({ queryKey: ["purchase-requests"], queryFn: apiGetPurchaseRequests, enabled: Boolean(selectedPpmp) });
+  const { data: allPrs } = useQuery({ queryKey: ["purchase-request-usage"], queryFn: apiGetPurchaseRequestUsage, enabled: Boolean(selectedPpmp) });
   const priorUse = useMemo(() => {
     const byName = new Map<string, { amount: number; qtyByUnit: Map<string, number> }>();
     if (!selectedPpmp) return byName;
@@ -535,6 +535,7 @@ function NewPR() {
     onMutate: () => setValidationFailure(null),
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
+      await queryClient.invalidateQueries({ queryKey: ["purchase-request-usage"] });
       if (editId) await queryClient.invalidateQueries({ queryKey: ["purchase-request", editId] });
       toast.success(
         result.status === "For Recommendation"

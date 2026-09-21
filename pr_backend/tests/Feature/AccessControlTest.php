@@ -149,4 +149,103 @@ class AccessControlTest extends TestCase
         $this->withToken($superadmin)->putJson("/api/v1/users/{$user->id}", ['status' => 'Whatever'])->assertStatus(422);
     }
 
+    // --- 3. PR ownership and visibility (Option A) ---
+
+    public function test_a_requester_only_sees_and_opens_their_own_prs(): void
+    {
+        $alice = $this->makeRequester('alice@dost.gov.ph');
+        $bob = $this->makeRequester('bob@dost.gov.ph');
+        $aliceToken = $this->tokenFor($alice->email);
+        $bobToken = $this->tokenFor($bob->email);
+
+        $alicePr = $this->withToken($aliceToken)->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated()->json('data.id');
+        $bobPr = $this->withToken($bobToken)->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated()->json('data.id');
+
+        $ids = collect($this->withToken($aliceToken)->getJson('/api/v1/purchase-requests')->assertOk()->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($alicePr));
+        $this->assertFalse($ids->contains($bobPr));
+
+        $this->withToken($aliceToken)->getJson("/api/v1/purchase-requests/{$alicePr}")->assertOk();
+        $this->withToken($aliceToken)->getJson("/api/v1/purchase-requests/{$bobPr}")->assertNotFound();
+    }
+
+    public function test_a_requester_cannot_edit_validate_or_submit_someone_elses_pr(): void
+    {
+        $alice = $this->makeRequester('alice2@dost.gov.ph');
+        $bob = $this->makeRequester('bob2@dost.gov.ph');
+        $aliceToken = $this->tokenFor($alice->email);
+        $bobToken = $this->tokenFor($bob->email);
+
+        $bobPr = $this->withToken($bobToken)->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated()->json('data.id');
+
+        $this->withToken($aliceToken)->putJson("/api/v1/purchase-requests/{$bobPr}", ['purpose' => 'Hijacked'] + $this->prPayload())->assertNotFound();
+        $this->withToken($aliceToken)->postJson("/api/v1/purchase-requests/{$bobPr}/validate")->assertNotFound();
+        $this->withToken($aliceToken)->postJson("/api/v1/purchase-requests/{$bobPr}/submit")->assertNotFound();
+
+        $pr = PurchaseRequest::find($bobPr);
+        $this->assertSame('Draft', $pr->status);
+        $this->assertSame('Ownership tests.', $pr->purpose);
+
+        // The owner can still edit and submit.
+        $this->withToken($bobToken)->postJson("/api/v1/purchase-requests/{$bobPr}/submit")->assertOk();
+    }
+
+    public function test_a_requester_cannot_file_a_pr_in_someone_elses_name(): void
+    {
+        $alice = $this->makeRequester('alice3@dost.gov.ph');
+        $bob = $this->makeRequester('bob3@dost.gov.ph');
+
+        $prId = $this->withToken($this->tokenFor($alice->email))
+            ->postJson('/api/v1/purchase-requests', $this->prPayload() + ['requestedBy' => $bob->id])
+            ->assertCreated()->json('data.id');
+
+        $this->assertSame($alice->id, PurchaseRequest::find($prId)->requested_by);
+    }
+
+    public function test_admin_can_file_on_behalf_and_sees_every_pr(): void
+    {
+        $alice = $this->makeRequester('alice4@dost.gov.ph');
+        $aliceToken = $this->tokenFor($alice->email);
+        $alicePr = $this->withToken($aliceToken)->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated()->json('data.id');
+
+        $admin = $this->tokenFor('admin@dost.gov.ph');
+        $this->withToken($admin)->getJson("/api/v1/purchase-requests/{$alicePr}")->assertOk();
+        $this->withToken($admin)->putJson("/api/v1/purchase-requests/{$alicePr}", ['purpose' => 'Admin edit'] + $this->prPayload())->assertOk();
+
+        $onBehalf = $this->withToken($admin)
+            ->postJson('/api/v1/purchase-requests', $this->prPayload() + ['requestedBy' => $alice->id])
+            ->assertCreated()->json('data.id');
+        $this->assertSame($alice->id, PurchaseRequest::find($onBehalf)->requested_by);
+    }
+
+    public function test_holders_of_cross_cutting_modules_see_every_pr(): void
+    {
+        $alice = $this->makeRequester('alice5@dost.gov.ph');
+        $alicePr = $this->withToken($this->tokenFor($alice->email))
+            ->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated()->json('data.id');
+
+        foreach (['approvals', 'rfq', 'po', 'validation'] as $module) {
+            $viewer = $this->makeRequester("viewer-{$module}@dost.gov.ph", ['pr', $module]);
+            $token = $this->tokenFor($viewer->email);
+
+            $ids = collect($this->withToken($token)->getJson('/api/v1/purchase-requests')->assertOk()->json('data'))->pluck('id');
+            $this->assertTrue($ids->contains($alicePr), "{$module} holder should see every PR");
+            $this->withToken($token)->getJson("/api/v1/purchase-requests/{$alicePr}")->assertOk();
+        }
+    }
+
+    public function test_usage_endpoint_gives_requesters_shared_totals_without_pr_details(): void
+    {
+        $alice = $this->makeRequester('alice6@dost.gov.ph');
+        $bob = $this->makeRequester('bob6@dost.gov.ph');
+        $this->withToken($this->tokenFor($bob->email))->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated();
+
+        $response = $this->withToken($this->tokenFor($alice->email))->getJson('/api/v1/purchase-requests/usage')->assertOk();
+
+        $this->assertNotEmpty($response->json('data'));
+        $row = $response->json('data.0');
+        $this->assertSame(['id', 'status', 'fund_source', 'items'], array_keys($row));
+        $this->assertArrayNotHasKey('requested_by', $row);
+        $this->assertArrayNotHasKey('purpose', $row);
+    }
 }

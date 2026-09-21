@@ -391,6 +391,26 @@ export async function apiGetPurchaseRequests() {
   return result.data.map(mapPurchaseRequest);
 }
 
+/** What live PRs have already drawn per fund source (all requesters), for PPMP balance checks. */
+export type PurchaseRequestUsage = {
+  id: string;
+  status: string;
+  fundSource: string;
+  items: { name: string; uom: string; qty: number; unitCost: number }[];
+};
+
+export async function apiGetPurchaseRequestUsage(): Promise<PurchaseRequestUsage[]> {
+  const result = await request<{
+    data: { id: number; status: string; fund_source: string | null; items: { name: string; uom: string; quantity: string | number; unit_cost: string | number }[] }[];
+  }>("/purchase-requests/usage");
+  return result.data.map((pr) => ({
+    id: String(pr.id),
+    status: pr.status,
+    fundSource: pr.fund_source ?? "Unassigned",
+    items: pr.items.map((item) => ({ name: item.name, uom: item.uom, qty: Number(item.quantity), unitCost: Number(item.unit_cost) })),
+  }));
+}
+
 export async function apiGetPurchaseRequest(id: string | number) {
   const result = await request<ApiRecord<BackendPurchaseRequest>>(`/purchase-requests/${id}`);
   return mapPurchaseRequest(result.data);

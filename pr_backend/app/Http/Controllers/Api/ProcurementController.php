@@ -70,6 +70,9 @@ class ProcurementController extends Controller
         $resource = $this->resource($request);
         $this->guardResource($resource);
         $query = $this->query($resource);
+        if ($resource === 'purchase-requests') {
+            $query->visibleTo($request->user());
+        }
         $search = $request->query('search');
 
         if ($search) {
@@ -1005,7 +1008,11 @@ class ProcurementController extends Controller
     {
         $resource = $this->resource($request);
         $this->guardResource($resource);
-        $record = $this->query($resource)->findOrFail($resourceId);
+        $query = $this->query($resource);
+        if ($resource === 'purchase-requests') {
+            $query->visibleTo($request->user()); // someone else's PR is a 404, not a 403
+        }
+        $record = $query->findOrFail($resourceId);
 
         return response()->json(['data' => $this->format($record)]);
     }
@@ -1713,6 +1720,7 @@ class ProcurementController extends Controller
         // the Validation module is only needed to work from the standalone validation screen.
         $user = $request->user();
         abort_unless($user?->canAccessModule('pr') || $user?->canAccessModule('validation'), 403, 'You do not have access to this module.');
+        abort_unless($purchaseRequest->isVisibleTo($user), 404);
 
         $validation = $this->runValidationChecks($purchaseRequest);
         $this->audit($request, 'Validation', 'Validated Items', $purchaseRequest->pr_no);
@@ -1764,6 +1772,8 @@ class ProcurementController extends Controller
     public function submitPurchaseRequest(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->guardModule('pr');
+        abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
+        abort_unless($purchaseRequest->isManageableBy($request->user()), 403, 'Only the requester who owns this Purchase Request may submit it.');
         abort_unless(in_array($purchaseRequest->status, ['Draft', 'Returned'], true), 422, 'Only a draft or returned Purchase Request can be submitted.');
         $validation = $this->validateForSubmission($request, $purchaseRequest);
 
@@ -1781,6 +1791,33 @@ class ProcurementController extends Controller
         $this->notifyPrSubmitted($purchaseRequest);
 
         return response()->json(['message' => 'Purchase Request submitted for recommendation.', 'data' => $this->format($purchaseRequest->fresh())]);
+    }
+
+    /**
+     * What every live PR has already drawn against each fund source. Requesters can only list their own PRs,
+     * but the form needs the shared totals to work out what's left of a PPMP item, so this exposes just
+     * the amounts (no requester, purpose or approval details).
+     */
+    public function purchaseRequestUsage(Request $request): JsonResponse
+    {
+        $this->guardModule('pr');
+
+        $rows = PurchaseRequest::with(['fundSource', 'items'])
+            ->whereNotIn('status', ['Rejected', 'Returned'])
+            ->get()
+            ->map(fn (PurchaseRequest $pr): array => [
+                'id' => $pr->id,
+                'status' => $pr->status,
+                'fund_source' => $pr->fundSource?->name,
+                'items' => $pr->items->map(fn ($item): array => [
+                    'name' => $item->name,
+                    'uom' => $item->uom,
+                    'quantity' => $item->quantity,
+                    'unit_cost' => $item->unit_cost,
+                ])->values(),
+            ]);
+
+        return response()->json(['data' => $rows]);
     }
 
     public function approvals(): JsonResponse
@@ -1949,7 +1986,10 @@ class ProcurementController extends Controller
                 'office_id' => $data['office_id'],
                 'fund_source_id' => $data['fund_source_id'],
                 'project_id' => $data['project_id'] ?? null,
-                'requested_by' => $data['requested_by'] ?? $request->user()->id,
+                // Only Admin/Superadmin may file a PR on someone else's behalf; everyone else is always the requester.
+                'requested_by' => in_array($request->user()->tier, ['superadmin', 'admin'], true)
+                    ? ($data['requested_by'] ?? $request->user()->id)
+                    : $request->user()->id,
                 'mode_of_procurement' => $data['mode_of_procurement'],
                 'purpose' => $data['purpose'],
             ]);
@@ -2105,7 +2145,8 @@ class ProcurementController extends Controller
 
     private function updatePurchaseRequest(Request $request, int $id): JsonResponse
     {
-        $purchaseRequest = PurchaseRequest::findOrFail($id);
+        $purchaseRequest = PurchaseRequest::visibleTo($request->user())->findOrFail($id);
+        abort_unless($purchaseRequest->isManageableBy($request->user()), 403, 'Only the requester who owns this Purchase Request may edit it.');
         abort_if(! in_array($purchaseRequest->status, ['Draft', 'Returned'], true), 422, 'Only draft or returned purchase requests may be edited.');
 
         $data = validator($this->normalizedPurchaseRequestPayload($request), [
