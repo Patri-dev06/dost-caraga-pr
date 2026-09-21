@@ -359,8 +359,21 @@ class ProcurementController extends Controller
     {
         $this->guardModule('lib');
         $document = LibDocument::where('client_uid', $clientUid)->firstOrFail();
+        $user = $request->user();
         $this->abortUnlessOwned($document->owner_id);
+
+        // A LIB that is in review or approved is a budget of record: only a Superadmin may remove it.
+        $isDraft = $document->status === null || in_array($document->status, ['Draft', ''], true);
+        abort_unless($isDraft || $user?->tier === 'superadmin', 403,
+            'Only a draft LIB can be deleted. A LIB that has been submitted or approved can only be removed by a Superadmin.');
+
+        // Deleting would silently unlink the PPMPs built from it, so refuse while any exist.
+        $linkedPpmps = PpmpDocument::where('lib_document_id', $document->id)->count();
+        abort_if($linkedPpmps > 0, 422, "This LIB is linked to {$linkedPpmps} PPMP document(s) and can't be deleted.");
+
+        $label = ($document->project_title ?: $clientUid).' ['.($document->status ?: 'Draft').']';
         $document->delete();
+        $this->audit($request, 'LIB', 'Deleted LIB', $label);
 
         return response()->json(['message' => 'LIB document removed.']);
     }

@@ -455,9 +455,11 @@ export async function saveLibNow(doc: LibDoc): Promise<LibDoc> {
   return updated;
 }
 
-export function deleteLib(id: string) {
+/** Deletes on the server first and only then drops the local copy, so a refusal (not the owner, not a draft,
+ * linked PPMPs) leaves the LIB in place and reaches the caller as an error. */
+export async function deleteLib(id: string): Promise<void> {
+  await apiDeletePlanningLib(id);
   write(read().filter((d) => d.id !== id));
-  void apiDeletePlanningLib(id).catch(() => undefined);
 }
 
 /** Merge a server copy of a LIB into the local cache (used after workflow actions). */

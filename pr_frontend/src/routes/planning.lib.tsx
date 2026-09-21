@@ -1,7 +1,18 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { FilePlus2, FileText, Trash2 } from "lucide-react";
+import { FilePlus2, FileText, Loader2, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { useCurrentUser } from "@/lib/current-user";
 import { PageHeader } from "@/components/app/page-header";
 import { currentLibBudgetTotal, deleteLib, fmtAmount, isApprovedReprogrammedLib, listLibs, syncLibsFromDatabase, type LibDoc } from "@/lib/lib-store";
 
@@ -34,13 +45,36 @@ function LibListPage() {
     syncLibsFromDatabase().then(setLibs).catch(() => undefined);
   }, [pathname]);
 
+  const { user } = useCurrentUser();
+  const [pendingDelete, setPendingDelete] = useState<LibDoc | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   if (pathname !== "/planning/lib") return <Outlet />;
 
-  function onDelete(id: string, e: React.MouseEvent) {
+  // A draft can be removed by its preparer; a LIB that is in review or approved is a budget of record,
+  // so only a Superadmin may remove it (the server enforces the same rule).
+  const canDelete = (lib: LibDoc) =>
+    user?.tier === "superadmin" || (lib.status === "Draft" && lib.ownerId != null && lib.ownerId === user?.id);
+
+  function askToDelete(lib: LibDoc, e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    deleteLib(id);
-    setLibs(listLibs());
+    setPendingDelete(lib);
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await deleteLib(pendingDelete.id);
+      setLibs(listLibs());
+      toast.success("LIB deleted.");
+      setPendingDelete(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to delete this LIB.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -109,20 +143,50 @@ function LibListPage() {
                   <span className="hidden w-28 shrink-0 text-right text-xs text-muted-foreground md:block">
                     {new Date(lib.updatedAt).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "2-digit" })}
                   </span>
-                  <button
-                    type="button"
-                    onClick={(e) => onDelete(lib.id, e)}
-                    title="Delete LIB"
-                    className="shrink-0 text-muted-foreground hover:text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {canDelete(lib) && (
+                    <button
+                      type="button"
+                      onClick={(e) => askToDelete(lib, e)}
+                      title="Delete LIB"
+                      aria-label="Delete LIB"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </Link>
               );
             })}
           </div>
         )}
       </div>
+
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open && !deleting) setPendingDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this LIB?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  <span className="font-semibold text-navy">{pendingDelete?.projectTitle || "Untitled LIB"}</span> will be permanently deleted. This can’t be undone.
+                </p>
+                {pendingDelete && pendingDelete.status !== "Draft" && (
+                  <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-destructive">
+                    This LIB is <strong>{pendingDelete.status}</strong>. Deleting a submitted or approved LIB removes a budget of record.
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <Button variant="destructive" disabled={deleting} onClick={confirmDelete}>
+              {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Delete LIB
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
