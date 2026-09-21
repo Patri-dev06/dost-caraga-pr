@@ -242,5 +242,7 @@ class DatabaseSeeder extends Seeder
             ['procurement_item_id' => $items->firstWhere('name', 'Laptop, Business Class')->id, 'name' => 'Laptop, Business Class', 'description' => 'i7, 16GB RAM, 512GB SSD', 'uom' => 'unit', 'quantity' => 3, 'unit_cost' => 52000],
             ['procurement_item_id' => $items->firstWhere('name', 'Wireless Mouse')->id, 'name' => 'Wireless Mouse', 'description' => 'Ergonomic, optical', 'uom' => 'pc', 'quantity' => 6, 'unit_cost' => 850],
         ]);
+
+        $this->call(BacUsersSeeder::class);
     }
 }
