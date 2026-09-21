@@ -91,4 +91,62 @@ class AccessControlTest extends TestCase
         }
     }
 
+    // --- 2. Deactivated users / token revocation ---
+
+    public function test_a_deactivated_users_existing_token_stops_working(): void
+    {
+        $user = $this->makeRequester('leaver@dost.gov.ph');
+        $token = $this->tokenFor($user->email);
+        $this->withToken($token)->getJson('/api/v1/auth/me')->assertOk();
+
+        $user->forceFill(['status' => 'Deactivated'])->save();
+
+        $this->withToken($token)->getJson('/api/v1/auth/me')->assertStatus(401)->assertJsonPath('code', 'account_inactive');
+    }
+
+    public function test_deactivating_via_the_api_revokes_all_tokens(): void
+    {
+        $user = $this->makeRequester('leaver2@dost.gov.ph');
+        $this->tokenFor($user->email);
+        $this->tokenFor($user->email);
+        $this->assertSame(2, ApiToken::where('user_id', $user->id)->count());
+
+        $superadmin = $this->tokenFor('superadmin@dost.gov.ph');
+        $this->withToken($superadmin)->deleteJson("/api/v1/users/{$user->id}")->assertOk();
+
+        $this->assertSame(0, ApiToken::where('user_id', $user->id)->count());
+        $this->login($user->email)->assertStatus(422);
+    }
+
+    public function test_changing_a_password_revokes_existing_tokens(): void
+    {
+        $user = $this->makeRequester('pw@dost.gov.ph');
+        $old = $this->tokenFor($user->email);
+        $superadmin = $this->tokenFor('superadmin@dost.gov.ph');
+
+        $this->withToken($superadmin)->putJson("/api/v1/users/{$user->id}", ['password' => 'a-brand-new-password'])->assertOk();
+
+        $this->withToken($old)->getJson('/api/v1/auth/me')->assertStatus(401);
+        $this->login($user->email, 'a-brand-new-password')->assertOk();
+    }
+
+    public function test_editing_a_user_without_touching_status_or_password_keeps_sessions(): void
+    {
+        $user = $this->makeRequester('keep@dost.gov.ph');
+        $token = $this->tokenFor($user->email);
+        $superadmin = $this->tokenFor('superadmin@dost.gov.ph');
+
+        $this->withToken($superadmin)->putJson("/api/v1/users/{$user->id}", ['name' => 'Renamed'])->assertOk();
+
+        $this->withToken($token)->getJson('/api/v1/auth/me')->assertOk();
+    }
+
+    public function test_user_status_only_accepts_known_values(): void
+    {
+        $user = $this->makeRequester('status@dost.gov.ph');
+        $superadmin = $this->tokenFor('superadmin@dost.gov.ph');
+
+        $this->withToken($superadmin)->putJson("/api/v1/users/{$user->id}", ['status' => 'Whatever'])->assertStatus(422);
+    }
+
 }

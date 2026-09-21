@@ -26,6 +26,12 @@ class AuthenticateApiToken
             return response()->json(['code' => 'invalid_token', 'message' => 'The provided token is invalid or expired.'], 401);
         }
 
+        if ($token->user === null || $token->user->status !== 'Active') {
+            $token->delete();
+
+            return response()->json(['code' => 'account_inactive', 'message' => 'Your account is not active.'], 401);
+        }
+
         $idleTimeoutMinutes = (int) config('auth.api_token_idle_timeout', 30);
         $lastActivity = $token->last_used_at ?? $token->created_at;
 

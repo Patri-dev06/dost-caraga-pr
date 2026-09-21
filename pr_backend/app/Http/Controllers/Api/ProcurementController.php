@@ -1022,8 +1022,15 @@ class ProcurementController extends Controller
         $record = $this->query($resource)->findOrFail($resourceId);
         $record->fill($this->validated($request, $resource, true))->save();
 
-        if ($record instanceof User && $request->has('role_ids')) {
-            $record->roles()->sync($request->input('role_ids', []));
+        if ($record instanceof User) {
+            if ($request->has('role_ids')) {
+                $record->roles()->sync($request->input('role_ids', []));
+            }
+
+            // A password change or a move away from Active must end every open session.
+            if ($record->wasChanged('password') || ($record->wasChanged('status') && $record->status !== 'Active')) {
+                $record->revokeTokens();
+            }
         }
 
         $this->audit($request, $resource === 'users' ? 'User Management' : 'References', 'Updated '.str($resource)->headline(), $resourceId);
@@ -1039,6 +1046,7 @@ class ProcurementController extends Controller
 
         if ($record instanceof User) {
             $record->forceFill(['status' => 'Deactivated'])->save();
+            $record->revokeTokens();
         } else {
             $record->delete();
         }
@@ -2295,7 +2303,7 @@ class ProcurementController extends Controller
             'fund-sources' => $request->validate(['name' => [$required, 'string'], 'fund_type' => [$required, 'string'], 'description' => ['nullable', 'string'], 'active' => ['sometimes', 'boolean']]),
             'projects' => $request->validate(['office_id' => ['nullable', 'exists:offices,id'], 'fund_source_id' => ['nullable', 'exists:fund_sources,id'], 'code' => [$required, 'string'], 'title' => [$required, 'string'], 'description' => ['nullable', 'string'], 'fiscal_year' => [$required, 'integer'], 'status' => ['sometimes', 'string']]),
             'procurement-items' => $request->validate(['name' => [$required, 'string'], 'description' => ['nullable', 'string'], 'category' => ['nullable', 'string'], 'uom' => [$required, 'string'], 'is_cse' => ['sometimes', 'boolean'], 'active' => ['sometimes', 'boolean']]),
-            'users' => $request->validate(['name' => ['sometimes', 'string'], 'email' => ['sometimes', 'email'], 'office_id' => ['nullable', 'exists:offices,id'], 'role_ids' => ['array'], 'role_ids.*' => ['exists:roles,id'], 'status' => ['sometimes', 'string'], 'password' => ['sometimes', 'string', 'min:8'], 'tier' => ['sometimes', Rule::in(['superadmin', 'admin', 'regular'])], 'modules' => ['sometimes', 'nullable', 'array'], 'modules.*' => ['string', Rule::in(User::TOGGLEABLE_MODULES)]]),
+            'users' => $request->validate(['name' => ['sometimes', 'string'], 'email' => ['sometimes', 'email'], 'office_id' => ['nullable', 'exists:offices,id'], 'role_ids' => ['array'], 'role_ids.*' => ['exists:roles,id'], 'status' => ['sometimes', Rule::in(['Active', 'Pending', 'Deactivated', 'Inactive'])], 'password' => ['sometimes', 'string', 'min:8'], 'tier' => ['sometimes', Rule::in(['superadmin', 'admin', 'regular'])], 'modules' => ['sometimes', 'nullable', 'array'], 'modules.*' => ['string', Rule::in(User::TOGGLEABLE_MODULES)]]),
             default => [],
         };
     }
