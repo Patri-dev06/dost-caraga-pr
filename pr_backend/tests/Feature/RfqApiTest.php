@@ -250,4 +250,20 @@ class RfqApiTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1, 'data');
     }
+
+    public function test_rfq_shows_who_prepared_it_with_their_position(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token);
+
+        // No position on the profile: falls back to the account's role, like the signatory pickers.
+        $rfq = $this->createRfq($token, $prId)->assertCreated();
+        $rfq->assertJsonPath('data.prepared_by.name', 'Supply Unit Admin');
+        $this->assertContains($rfq->json('data.prepared_by.position'), ['Admin', 'Recommender']); // the seeded admin holds both roles
+
+        // A position saved on the profile wins.
+        \App\Models\User::where('email', 'admin@dost.gov.ph')->update(['position' => 'Supply Officer III']);
+        $this->withToken($token)->getJson('/api/v1/rfqs/'.$rfq->json('data.id'))
+            ->assertOk()->assertJsonPath('data.prepared_by.position', 'Supply Officer III');
+    }
 }

@@ -80,7 +80,7 @@ function AocDetailPage() {
       <PageHeader
         eyebrow={`RFQ ${aoc.rfqNo} · PR ${aoc.prNo}`}
         title="Abstract of Canvas"
-        subtitle={`${aoc.procurementCategory} procurement`}
+        subtitle={`${aoc.procurementCategory} procurement${aoc.preparedByName ? ` · Prepared by ${aoc.preparedByName}${aoc.preparedByPosition ? `, ${aoc.preparedByPosition}` : ""}` : ""}`}
         actions={<StatusBadge status={aoc.status} />}
       />
 

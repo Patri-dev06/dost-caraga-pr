@@ -276,7 +276,7 @@ class PurchaseOrderController extends Controller
 
     private function format(PurchaseOrder $po): array
     {
-        $po->loadMissing(['purchaseRequest', 'rfq', 'items', 'approvalActions']);
+        $po->loadMissing(['purchaseRequest', 'rfq', 'items', 'approvalActions', 'creator.roles']);
 
         return [
             'id' => $po->id,
@@ -285,6 +285,7 @@ class PurchaseOrderController extends Controller
             'pr_no' => $po->purchaseRequest?->pr_no,
             'rfq_id' => $po->rfq_id,
             'rfq_no' => $po->rfq?->rfq_no,
+            'prepared_by' => $this->preparedBy($po->creator),
             'supplier_name' => $po->supplier_name,
             'supplier_address' => $po->supplier_address,
             'supplier_contact_no' => $po->supplier_contact_no,

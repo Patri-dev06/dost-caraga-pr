@@ -66,6 +66,23 @@ trait HasProcurementHelpers
         );
     }
 
+    /**
+     * Name and position of whoever prepared a document, for its "Prepared by" line. A user with no
+     * position on their profile falls back to their first role, like the signatory pickers do.
+     *
+     * @return array{name: string, position: string}|null
+     */
+    private function preparedBy(?User $user): ?array
+    {
+        if ($user === null) {
+            return null;
+        }
+
+        $user->loadMissing('roles');
+
+        return ['name' => $user->name, 'position' => $user->position ?: (string) $user->roles->pluck('name')->first()];
+    }
+
     /** Persist an in-app notification and, if enabled, best-effort send an email. */
     private function notify(?User $recipient, string $type, string $title, ?string $body, ?string $link, array $data = []): void
     {

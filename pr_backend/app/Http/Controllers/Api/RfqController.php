@@ -351,7 +351,7 @@ class RfqController extends Controller
 
     private function format(Rfq $rfq): array
     {
-        $rfq->loadMissing(['purchaseRequest', 'items', 'suppliers.quoteItems', 'approvalActions', 'abstractOfCanvas']);
+        $rfq->loadMissing(['purchaseRequest', 'items', 'suppliers.quoteItems', 'approvalActions', 'abstractOfCanvas', 'creator.roles']);
 
         return [
             'id' => $rfq->id,
@@ -376,6 +376,7 @@ class RfqController extends Controller
             'bac_vice_chair_signed_at' => $rfq->bac_vice_chair_signed_at?->toISOString(),
             'supply_officer_signed_name' => $rfq->supply_officer_signed_name,
             'supply_officer_signed_at' => $rfq->supply_officer_signed_at?->toISOString(),
+            'prepared_by' => $this->preparedBy($rfq->creator),
             'status' => $rfq->status,
             'stage' => $rfq->stage,
             'date_submitted' => $rfq->submitted_at?->toDateString(),

@@ -166,7 +166,7 @@ function PurchaseOrderDetailPage() {
       <PageHeader
         eyebrow={`PR ${po.prNo} · RFQ ${po.rfqNo}`}
         title={po.poNo}
-        subtitle="Purchase Order"
+        subtitle={`Purchase Order${po.preparedByName ? ` · Prepared by ${po.preparedByName}${po.preparedByPosition ? `, ${po.preparedByPosition}` : ""}` : ""}`}
         actions={<StatusBadge status={po.status} />}
       />
 

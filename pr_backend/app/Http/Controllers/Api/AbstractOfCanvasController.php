@@ -216,7 +216,7 @@ class AbstractOfCanvasController extends Controller
 
     private function format(AbstractOfCanvas $aoc): array
     {
-        $aoc->loadMissing(['rfq.suppliers.quoteItems', 'rfq.items', 'rfq.purchaseRequest', 'winningSupplier', 'creator', 'approvalActions']);
+        $aoc->loadMissing(['rfq.suppliers.quoteItems', 'rfq.items', 'rfq.purchaseRequest', 'winningSupplier', 'creator.roles', 'approvalActions']);
 
         return [
             'id' => $aoc->id,
@@ -228,6 +228,7 @@ class AbstractOfCanvasController extends Controller
             'winning_rfq_supplier_id' => $aoc->winning_rfq_supplier_id,
             'winning_supplier_name' => $aoc->winningSupplier?->supplier_name,
             'status' => $aoc->status,
+            'prepared_by' => $this->preparedBy($aoc->creator),
             'bac_remarks' => $aoc->bac_remarks,
             'twg_response' => $aoc->twg_response,
             'submitted_at' => $aoc->submitted_at?->toISOString(),

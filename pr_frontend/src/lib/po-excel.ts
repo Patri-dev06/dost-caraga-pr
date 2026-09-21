@@ -151,6 +151,15 @@ export async function exportPurchaseOrderExcel(data: PurchaseOrder, filename: st
     ] }, { wrap: true, border: true });
     ws.getRow(r).height = 30;
   }
+  r += 2;
+
+  // Prepared by
+  if (data.preparedByName) {
+    put(`A${r}:B${r}`, "Prepared by:", { align: "right", size: 10 });
+    put(`C${r}:F${r}`, data.preparedByName, { bold: true, size: 10 });
+    r++;
+    if (data.preparedByPosition) put(`C${r}:F${r}`, data.preparedByPosition, { size: 10 });
+  }
 
   // Download
   const buffer = await wb.xlsx.writeBuffer();

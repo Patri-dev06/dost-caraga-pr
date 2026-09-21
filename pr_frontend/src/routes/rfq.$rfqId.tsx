@@ -208,7 +208,7 @@ function RfqDetailPage() {
       <PageHeader
         eyebrow={`PR ${rfq.prNo} · ${rfq.procurementCategory}`}
         title={rfq.rfqNo}
-        subtitle="Request for Quotation"
+        subtitle={`Request for Quotation${rfq.preparedByName ? ` · Prepared by ${rfq.preparedByName}${rfq.preparedByPosition ? `, ${rfq.preparedByPosition}` : ""}` : ""}`}
         actions={<StatusBadge status={rfq.status} />}
       />
 

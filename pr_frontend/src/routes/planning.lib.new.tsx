@@ -409,6 +409,14 @@ function LibForm() {
     );
   }, [currentUser, isEditing]);
 
+  // A "Prepared by" saved without a position (an older document, or a profile that had none at the
+  // time) gets it looked up by name, so the form and the Excel export both show it.
+  useEffect(() => {
+    if (!doc.preparedByName || doc.preparedByPosition) return;
+    const position = (doc.preparedByName === currentUser?.name ? currentUser.position : "") || signatories.find((o) => o.name === doc.preparedByName)?.position;
+    if (position) setDoc((d) => (d.preparedByPosition ? d : { ...d, preparedByPosition: position }));
+  }, [doc.preparedByName, doc.preparedByPosition, currentUser, signatories]);
+
   const submitted = doc.status !== "Draft"; // approved/submitted — the Approved LIB figures and labels are locked
   const preview = mode === "preview";
   const fullEdit = !submitted && !preview; // draft: every field is editable

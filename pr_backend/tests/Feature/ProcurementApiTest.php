@@ -554,4 +554,19 @@ class ProcurementApiTest extends TestCase
             'items' => [['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_cost' => 250]],
         ];
     }
+
+    public function test_pr_requester_includes_their_position(): void
+    {
+        $token = $this->loginAsAdmin();
+        $requester = User::where('email', 'mdelacruz@dost.gov.ph')->first();
+        $requester->update(['position' => 'Science Research Specialist II']);
+
+        $prId = $this->withToken($token)->postJson('/api/v1/purchase-requests', $this->prPayload() + ['requestedBy' => $requester->id])
+            ->assertCreated()->json('data.id');
+
+        $this->withToken($token)->getJson("/api/v1/purchase-requests/{$prId}")
+            ->assertOk()
+            ->assertJsonPath('data.requested_by.name', 'Maria Dela Cruz')
+            ->assertJsonPath('data.requested_by.position', 'Science Research Specialist II');
+    }
 }

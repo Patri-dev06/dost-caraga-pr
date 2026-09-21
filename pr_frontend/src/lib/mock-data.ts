@@ -34,6 +34,7 @@ export interface PurchaseRequest {
   status: PRStatus;
   dateSubmitted: string;
   requestedBy: string;
+  requestedByPosition?: string; // the requester's position, for the form's Designation line
   modeOfProcurement: string;
   projectTitle: string;
   purpose: string;

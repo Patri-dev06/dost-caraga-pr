@@ -49,6 +49,8 @@ function PRDetail() {
     exportPurchaseRequestExcel(
       {
         ...PR_FORM_DEFAULTS,
+        requestedByName: pr.requestedBy !== "Unassigned" ? pr.requestedBy : PR_FORM_DEFAULTS.requestedByName,
+        requestedByDesignation: pr.requestedByPosition || (pr.requestedBy !== "Unassigned" ? "" : PR_FORM_DEFAULTS.requestedByDesignation),
         officeName: pr.office,
         prNo: pr.prNo,
         date: submitted ? pr.dateSubmitted : new Date().toISOString().slice(0, 10),

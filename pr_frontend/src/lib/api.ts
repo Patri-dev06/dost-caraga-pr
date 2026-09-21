@@ -792,6 +792,7 @@ type BackendPurchaseRequest = {
 type BackendNamedRecord = {
   id?: number;
   name?: string | null;
+  position?: string | null;
   title?: string | null;
   code?: string | null;
   description?: string | null;
@@ -964,6 +965,7 @@ function mapPurchaseRequest(pr: BackendPurchaseRequest): PurchaseRequest {
     status: pr.status,
     dateSubmitted: dateOnly(pr.date_submitted ?? pr.submitted_at) ?? "Not submitted",
     requestedBy: textFromRelation(pr.requester ?? pr.requested_by, "Unassigned"),
+    requestedByPosition: typeof (pr.requester ?? pr.requested_by) === "object" ? ((pr.requester ?? pr.requested_by) as BackendNamedRecord | null)?.position ?? "" : "",
     modeOfProcurement: pr.mode_of_procurement,
     projectTitle: pr.project_title ?? textFromRelation(pr.project, "No project assigned"),
     purpose: pr.purpose,
@@ -1026,6 +1028,8 @@ export interface RfqSupplier {
 }
 
 export interface Rfq {
+  preparedByName: string;
+  preparedByPosition: string;
   id: string;
   rfqNo: string;
   prId: string;
@@ -1093,6 +1097,7 @@ type BackendRfqSupplier = {
 };
 
 type BackendRfq = {
+  prepared_by?: { name: string; position: string } | null;
   id: number;
   rfq_no: string;
   purchase_request_id: number;
@@ -1167,6 +1172,8 @@ function mapRfqSupplier(s: BackendRfqSupplier): RfqSupplier {
 
 function mapRfq(rfq: BackendRfq): Rfq {
   return {
+    preparedByName: rfq.prepared_by?.name ?? "",
+    preparedByPosition: rfq.prepared_by?.position ?? "",
     id: String(rfq.id),
     rfqNo: rfq.rfq_no,
     prId: String(rfq.purchase_request_id),
@@ -1310,6 +1317,8 @@ export interface AocSupplierSummary {
 }
 
 export interface AbstractOfCanvas {
+  preparedByName: string;
+  preparedByPosition: string;
   id: string;
   rfqId: string;
   rfqNo: string;
@@ -1335,6 +1344,7 @@ type BackendAocSupplierSummary = {
 };
 
 type BackendAbstractOfCanvas = {
+  prepared_by?: { name: string; position: string } | null;
   id: number;
   rfq_id: number;
   rfq_no: string | null;
@@ -1353,6 +1363,8 @@ type BackendAbstractOfCanvas = {
 
 function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
   return {
+    preparedByName: aoc.prepared_by?.name ?? "",
+    preparedByPosition: aoc.prepared_by?.position ?? "",
     id: String(aoc.id),
     rfqId: String(aoc.rfq_id),
     rfqNo: aoc.rfq_no ?? "",
@@ -1475,6 +1487,8 @@ export interface PurchaseOrderItem {
 }
 
 export interface PurchaseOrder {
+  preparedByName: string;
+  preparedByPosition: string;
   id: string;
   poNo: string;
   prId: string;
@@ -1518,6 +1532,7 @@ type BackendPurchaseOrderItem = {
 };
 
 type BackendPurchaseOrder = {
+  prepared_by?: { name: string; position: string } | null;
   id: number;
   po_no: string;
   purchase_request_id: number;
@@ -1564,6 +1579,8 @@ function mapPurchaseOrderItem(item: BackendPurchaseOrderItem): PurchaseOrderItem
 
 function mapPurchaseOrder(po: BackendPurchaseOrder): PurchaseOrder {
   return {
+    preparedByName: po.prepared_by?.name ?? "",
+    preparedByPosition: po.prepared_by?.position ?? "",
     id: String(po.id),
     poNo: po.po_no,
     prId: String(po.purchase_request_id),
@@ -1695,7 +1712,7 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     tier: user.tier ?? "regular",
     modules: user.access_modules ?? [],
     office: user.office?.name ?? "Unassigned",
-    position: user.position ?? "",
+    position: user.position || user.roles?.[0]?.name || "",
     isBudgetOfficer: Boolean(user.is_budget_officer),
     isSupervisor: Boolean(user.is_supervisor),
     isRegionalDirector: Boolean(user.is_regional_director),

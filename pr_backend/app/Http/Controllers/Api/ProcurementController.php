@@ -2380,7 +2380,7 @@ class ProcurementController extends Controller
             return $record;
         }
 
-        $record->loadMissing(['office', 'fundSource', 'project', 'requester', 'items', 'validationResults', 'approvalActions']);
+        $record->loadMissing(['office', 'fundSource', 'project', 'requester.roles', 'items', 'validationResults', 'approvalActions']);
 
         return [
             'id' => $record->id,
@@ -2396,6 +2396,7 @@ class ProcurementController extends Controller
                 'id' => $record->requester->id,
                 'name' => $record->requester->name,
                 'email' => $record->requester->email,
+                'position' => $this->preparedBy($record->requester)['position'] ?? null,
             ] : null,
             'mode_of_procurement' => $record->mode_of_procurement,
             'project_title' => $record->project?->title,

@@ -505,6 +505,11 @@ function NewPR() {
     setModeOfProcurement(existing.modeOfProcurement);
     setPurpose(existing.purpose);
     setPrNo(existing.prNo);
+    // Requested by is the PR's own requester (not whoever has it open), with their position.
+    if (existing.requestedBy && existing.requestedBy !== "Unassigned") {
+      setReqName(existing.requestedBy);
+      setReqDesig(existing.requestedByPosition ?? "");
+    }
     setItems(
       existing.items.length
         ? existing.items.map((it) => ({

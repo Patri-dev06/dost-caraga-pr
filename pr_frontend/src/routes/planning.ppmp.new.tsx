@@ -965,6 +965,14 @@ function CreatePpmpPage() {
     );
   }, [currentUser, editId]);
 
+  // A "Prepared by" saved without a position (an older document, or a profile that had none at the
+  // time) gets it looked up by name, so the form and the Excel export both show it.
+  useEffect(() => {
+    if (!doc.preparedByName || doc.preparedByPosition) return;
+    const position = (doc.preparedByName === currentUser?.name ? currentUser.position : "") || signatories.find((o) => o.name === doc.preparedByName)?.position;
+    if (position) setDoc((d) => (d.preparedByPosition ? d : { ...d, preparedByPosition: position }));
+  }, [doc.preparedByName, doc.preparedByPosition, currentUser, signatories]);
+
   // The Budget Officer certifies fund availability, so "Certified Funds Available"
   // always reflects the designated officer (the backend enforces this on save too).
   useEffect(() => {
