@@ -156,6 +156,30 @@
     transition: background-color 180ms ease, color 180ms ease;
   }
   h1, h2, h3, h4 { color: var(--color-navy); letter-spacing: -0.01em; }
+
+  /* Password fields: draw the masking dots with the OS's own UI font. Inter's bullet renders as
+     tall bars in Safari (and thin ones elsewhere), while system fonts give the native round dots
+     on macOS, iOS, Windows and Android. The placeholder keeps the app font. */
+  input[type="password"] {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: 0.06em;
+  }
+  input[type="password"]::placeholder {
+    font-family: var(--font-sans);
+    letter-spacing: normal;
+  }
+  /* The app has its own show/hide eye, so hide the browser's duplicate controls: Edge's reveal
+     and clear buttons on Windows, and Safari's autofill key/contacts badge on macOS/iOS. Browser
+     and password-manager autofill still work. */
+  input[type="password"]::-ms-reveal,
+  input[type="password"]::-ms-clear { display: none; }
+  input::-webkit-credentials-auto-fill-button,
+  input::-webkit-contacts-auto-fill-button {
+    visibility: hidden;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+  }
   .label-eyebrow {
     text-transform: uppercase;
     letter-spacing: 0.12em;

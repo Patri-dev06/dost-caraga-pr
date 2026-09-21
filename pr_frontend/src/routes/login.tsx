@@ -23,7 +23,7 @@ function AuthPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
 
   return (
-    <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-[1.1fr_1fr]">
+    <div className="grid min-h-dvh w-full grid-cols-1 lg:grid-cols-[1.1fr_1fr]">
       {/* LEFT — brand hero panel */}
       <aside className="relative hidden overflow-hidden bg-[#0b2545] px-10 py-14 text-white lg:flex lg:flex-col lg:justify-center xl:px-20">
         <div className="absolute inset-0 bg-[url('/login-bg.jpg')] bg-cover bg-center" aria-hidden="true" />
@@ -119,7 +119,7 @@ function SignInCard({ onRegister }: { onRegister: () => void }) {
           </Label>
           <div className="relative">
             <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
-            <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Enter your username" required className="h-11 border-border bg-background pl-9" />
+            <Input id="username" name="username" type="text" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="email" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Enter your username" required className="h-11 border-border bg-background pl-9" />
           </div>
         </div>
         <div className="space-y-2">
@@ -128,7 +128,7 @@ function SignInCard({ onRegister }: { onRegister: () => void }) {
           </Label>
           <div className="relative">
             <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
-            <Input id="password" type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" required className="h-11 border-border bg-background pl-9 pr-10" />
+            <Input id="password" name="password" autoComplete="current-password" type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" required className="h-11 border-border bg-background pl-9 pr-10" />
             <button
               type="button"
               onClick={() => setShow((s) => !s)}
@@ -305,7 +305,7 @@ function RegisterCard({ onBack }: { onBack: () => void }) {
           <Label htmlFor="r-pass" className="text-sm font-semibold text-navy">Password</Label>
           <div className="relative">
             <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-primary" />
-            <Input id="r-pass" type={show ? "text" : "password"} required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" className="h-11 border-border bg-background pl-9 pr-10" />
+            <Input id="r-pass" name="new-password" autoComplete="new-password" type={show ? "text" : "password"} required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" className="h-11 border-border bg-background pl-9 pr-10" />
             <button
               type="button"
               onClick={() => setShow((s) => !s)}
