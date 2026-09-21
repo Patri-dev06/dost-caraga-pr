@@ -1698,9 +1698,23 @@ class ProcurementController extends Controller
         ]);
     }
 
+    /** Read-only: refreshes and returns the item checks. Never changes the PR's status. */
     public function validatePurchaseRequest(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
-        $this->guardModule('validation');
+        // Pre-validation is part of a requester's own submit flow, so the PR module is enough;
+        // the Validation module is only needed to work from the standalone validation screen.
+        $user = $request->user();
+        abort_unless($user?->canAccessModule('pr') || $user?->canAccessModule('validation'), 403, 'You do not have access to this module.');
+
+        $validation = $this->runValidationChecks($purchaseRequest);
+        $this->audit($request, 'Validation', 'Validated Items', $purchaseRequest->pr_no);
+
+        return response()->json($validation);
+    }
+
+    /** @return array{status: string, errors: mixed, warnings: mixed, data: array<int, mixed>} */
+    private function runValidationChecks(PurchaseRequest $purchaseRequest): array
+    {
         $purchaseRequest->load('items.item', 'project', 'fundSource');
         $purchaseRequest->validationResults()->delete();
 
@@ -1714,25 +1728,36 @@ class ProcurementController extends Controller
         }
 
         $failed = collect($results)->contains(fn ($result) => $result->status === 'Failed');
-        $purchaseRequest->forceFill([
-            'status' => $failed ? 'Returned' : 'Pending Validation',
-            'stage' => $failed ? 'Returned by Validator' : 'Pre-Validation',
-        ])->save();
 
-        $this->audit($request, 'Validation', 'Validated Items', $purchaseRequest->pr_no);
-
-        return response()->json([
+        return [
             'status' => $failed ? 'Failed' : 'Passed',
             'errors' => collect($results)->where('status', 'Failed')->values(),
             'warnings' => collect($results)->where('status', 'Warning')->values(),
             'data' => $results,
-        ]);
+        ];
+    }
+
+    /**
+     * Runs the checks as part of submitting. A failure sends the PR back to the requester
+     * (status Returned, still editable); a pass leaves the status for the caller to advance.
+     */
+    private function validateForSubmission(Request $request, PurchaseRequest $purchaseRequest): array
+    {
+        $validation = $this->runValidationChecks($purchaseRequest);
+        $this->audit($request, 'Validation', 'Validated Items', $purchaseRequest->pr_no);
+
+        if ($validation['status'] === 'Failed') {
+            $purchaseRequest->forceFill(['status' => 'Returned', 'stage' => 'Returned by Validator'])->save();
+        }
+
+        return $validation;
     }
 
     public function submitPurchaseRequest(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->guardModule('pr');
-        $validation = $this->validatePurchaseRequest($request, $purchaseRequest)->getData(true);
+        abort_unless(in_array($purchaseRequest->status, ['Draft', 'Returned'], true), 422, 'Only a draft or returned Purchase Request can be submitted.');
+        $validation = $this->validateForSubmission($request, $purchaseRequest);
 
         if ($validation['status'] === 'Failed') {
             return response()->json(['message' => 'Purchase Request cannot proceed until validation failures are resolved.', 'validation' => $validation], 422);
@@ -1929,7 +1954,7 @@ class ProcurementController extends Controller
         $this->audit($request, 'Purchase Requests', 'Created PR', $purchaseRequest->pr_no);
 
         if ($data['submit'] ?? false) {
-            $validation = $this->validatePurchaseRequest($request, $purchaseRequest)->getData(true);
+            $validation = $this->validateForSubmission($request, $purchaseRequest);
 
             if ($validation['status'] === 'Failed') {
                 return response()->json([

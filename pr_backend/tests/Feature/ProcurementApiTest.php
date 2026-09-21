@@ -471,4 +471,87 @@ class ProcurementApiTest extends TestCase
         $this->assertSame('For Recommendation', \App\Models\PurchaseRequest::find($prId)->status);
     }
 
+    public function test_regular_requester_can_submit_a_draft_without_the_validation_module(): void
+    {
+        $token = $this->postJson('/api/v1/auth/login', [
+            'email' => 'mdelacruz@dost.gov.ph',
+            'password' => 'password123',
+        ])->json('token');
+
+        $payload = [
+            'office_code' => 'RO',
+            'fund_source' => 'GAA 2026 - MOOE',
+            'project_code' => 'PROJ-2026-001',
+            'mode_of_procurement' => 'Shopping',
+            'purpose' => 'Regular user continuing a draft.',
+            'items' => [['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_cost' => 250]],
+        ];
+
+        $prId = $this->withToken($token)->postJson('/api/v1/purchase-requests', $payload)
+            ->assertCreated()->assertJsonPath('data.status', 'Draft')->json('data.id');
+
+        // Editing the draft, then viewing its checks and submitting, all work with only the PR module.
+        $this->withToken($token)->putJson("/api/v1/purchase-requests/{$prId}", ['purpose' => 'Edited draft.'] + $payload)->assertOk();
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/validate")->assertOk();
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/submit")
+            ->assertOk()->assertJsonPath('data.status', 'For Recommendation');
+
+        // Create-with-submit takes the same path.
+        $this->withToken($token)->postJson('/api/v1/purchase-requests', $payload + ['submit' => true])
+            ->assertCreated()->assertJsonPath('data.status', 'For Recommendation');
+    }
+
+    public function test_viewing_checks_never_changes_a_purchase_requests_status(): void
+    {
+        $token = $this->loginAsAdmin();
+
+        // A draft must stay editable after its checks are viewed.
+        $draftId = $this->withToken($token)->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated()->json('data.id');
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$draftId}/validate")->assertOk();
+        $this->assertSame('Draft', \App\Models\PurchaseRequest::find($draftId)->status);
+
+        // So must a PR that is already moving through, or past, approval.
+        $prId = $this->createSubmittedPr($token);
+        $this->withToken($token)->postJson("/api/v1/approvals/{$prId}/recommend")->assertOk();
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/validate")->assertOk();
+        $this->assertSame('For Approval', \App\Models\PurchaseRequest::find($prId)->status);
+
+        $this->withToken($token)->postJson("/api/v1/approvals/{$prId}/approve")->assertOk();
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/validate")->assertOk();
+        $this->assertSame('Approved', \App\Models\PurchaseRequest::find($prId)->status);
+    }
+
+    public function test_an_already_submitted_purchase_request_cannot_be_submitted_again(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createSubmittedPr($token);
+        $this->withToken($token)->postJson("/api/v1/approvals/{$prId}/recommend")->assertOk();
+
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/submit")->assertStatus(422);
+        $this->assertSame('For Approval', \App\Models\PurchaseRequest::find($prId)->status);
+    }
+
+    public function test_a_failed_submit_returns_the_purchase_request_for_editing(): void
+    {
+        $token = $this->loginAsAdmin();
+        $payload = $this->prPayload();
+        $payload['items'][0]['unit_cost'] = 99999999; // blows through the line-item budget
+
+        $prId = $this->withToken($token)->postJson('/api/v1/purchase-requests', $payload)->assertCreated()->json('data.id');
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/submit")->assertStatus(422);
+
+        $this->assertSame('Returned', \App\Models\PurchaseRequest::find($prId)->status);
+    }
+
+    private function prPayload(): array
+    {
+        return [
+            'office_code' => 'RO',
+            'fund_source' => 'GAA 2026 - MOOE',
+            'project_code' => 'PROJ-2026-001',
+            'mode_of_procurement' => 'Shopping',
+            'purpose' => 'PR status tests.',
+            'items' => [['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_cost' => 250]],
+        ];
+    }
 }
