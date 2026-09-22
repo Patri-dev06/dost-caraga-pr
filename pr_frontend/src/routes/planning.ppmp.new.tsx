@@ -1082,14 +1082,23 @@ function CreatePpmpPage() {
     });
   }
 
-  /** Inserts a new blank group immediately after the given row — used to add a sibling group
-   * right where one just ended, instead of always at the bottom of the whole category. */
+  /** A new group's header row plus a few blank item rows underneath — so a freshly-added group
+   * already has somewhere to enter Goods/Qty/UOM/etc., just like an imported one does, instead
+   * of showing an empty header with nothing to fill in until "Add Line" is used separately. */
+  function newGroupRows(categoryLabel: string): PpmpRow[] {
+    const header = newSubcategoryRow(categoryLabel, "");
+    const blanks = Array.from({ length: BLANK_LINES_PER_CATEGORY }, () => newRow(categoryLabel, ""));
+    return [header, ...blanks];
+  }
+
+  /** Inserts a new group (with blank item rows) immediately after the given row — used to add a
+   * sibling group right where one just ended, instead of always at the bottom of the category. */
   function addGroupAfterRow(afterRowId: string, categoryLabel: string) {
     setDoc((d) => {
       const rows = [...d.rows];
       const i = rows.findIndex((row) => row.id === afterRowId);
       if (i < 0) return d;
-      rows.splice(i + 1, 0, newSubcategoryRow(categoryLabel, ""));
+      rows.splice(i + 1, 0, ...newGroupRows(categoryLabel));
       return { ...d, rows };
     });
   }
@@ -1104,7 +1113,7 @@ function CreatePpmpPage() {
         if (rows[j].isCategory) break;
         insertAt = j + 1;
       }
-      rows.splice(insertAt, 0, newSubcategoryRow(rows[i].categoryLabel, ""));
+      rows.splice(insertAt, 0, ...newGroupRows(rows[i].categoryLabel));
       return { ...d, rows };
     });
   }
