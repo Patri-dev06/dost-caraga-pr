@@ -1082,6 +1082,18 @@ function CreatePpmpPage() {
     });
   }
 
+  /** Inserts a new blank group immediately after the given row — used to add a sibling group
+   * right where one just ended, instead of always at the bottom of the whole category. */
+  function addGroupAfterRow(afterRowId: string, categoryLabel: string) {
+    setDoc((d) => {
+      const rows = [...d.rows];
+      const i = rows.findIndex((row) => row.id === afterRowId);
+      if (i < 0) return d;
+      rows.splice(i + 1, 0, newSubcategoryRow(categoryLabel, ""));
+      return { ...d, rows };
+    });
+  }
+
   function addSubcategoryUnderCategory(categoryId: string) {
     setDoc((d) => {
       const rows = [...d.rows];
@@ -1676,6 +1688,23 @@ function CreatePpmpPage() {
                           <td colSpan={2} className="border border-black" />
                         </tr>
                       )}
+                      {/* Right after this group's own rows end — lets the user add a sibling group here,
+                          immediately, instead of only at the very bottom of the whole category. */}
+                      {endedSubcategory && editing && (
+                        <tr className="no-print">
+                          <td colSpan={12} className="border-0 py-1 pl-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 gap-1 px-2 text-[10px] font-normal not-italic text-primary hover:bg-primary/10"
+                              onClick={() => addGroupAfterRow(r.id, endedSubcategory.categoryLabel)}
+                            >
+                              <Plus className="h-3 w-3" /> Add another group in {endedSubcategory.categoryLabel ? `"${endedSubcategory.categoryLabel}"` : "this category"}
+                            </Button>
+                          </td>
+                        </tr>
+                      )}
                       {endedCategory && (
                         <tr className="bg-gray-50/50 font-bold italic">
                           <td className="border border-black px-1 py-1 uppercase text-[9px]">
@@ -1688,7 +1717,9 @@ function CreatePpmpPage() {
                           <td colSpan={2} className="border border-black" />
                         </tr>
                       )}
-                      {endedCategory && editing && (
+                      {/* Skip this one when the group-level button above already covers the same spot
+                          (a category whose very last content is a group, with nothing after it). */}
+                      {endedCategory && editing && !endedSubcategory && (
                         <tr className="no-print">
                           <td colSpan={12} className="border-0 py-1 pl-1">
                             <Button
@@ -1807,7 +1838,7 @@ function CreatePpmpPage() {
                                 </button>
                               </div>
                             )}
-                            <TextField value={r.subcategoryLabel} onChange={(v) => setRow(r.id, { subcategoryLabel: v })} editing={editing} italic placeholder="Sub item name" />
+                            <TextField value={r.subcategoryLabel} onChange={(v) => setRow(r.id, { subcategoryLabel: v })} editing={editing} italic placeholder="Group name" />
                           </td>
                           <td colSpan={11} className="border border-black" />
                         </tr>
@@ -2043,10 +2074,10 @@ function CreatePpmpPage() {
                       {subcategories.length > 0 && (
                         <>
                           <DropdownMenuSeparator />
-                          <DropdownMenuLabel>Subcategories</DropdownMenuLabel>
+                          <DropdownMenuLabel>Groups</DropdownMenuLabel>
                           {subcategories.map((s) => (
                             <DropdownMenuItem key={s.id} onClick={() => addLineUnderSubcategory(s.id)}>
-                              <span className="truncate">{s.subcategoryLabel || "(untitled subcategory)"}</span>
+                              <span className="truncate">{s.subcategoryLabel || "(untitled group)"}</span>
                             </DropdownMenuItem>
                           ))}
                         </>
@@ -2064,11 +2095,11 @@ function CreatePpmpPage() {
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm" className={documentActionButtonClass}>
-                        <Plus className="h-3.5 w-3.5" /> Add Subcategory
+                        <Plus className="h-3.5 w-3.5" /> Add Group
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="max-h-72 w-64 overflow-y-auto">
-                      <DropdownMenuLabel>Add subcategory under…</DropdownMenuLabel>
+                      <DropdownMenuLabel>Add group under…</DropdownMenuLabel>
                       {categories.map((c) => (
                         <DropdownMenuItem key={c.id} onClick={() => addSubcategoryUnderCategory(c.id)}>
                           <span className="truncate">{c.categoryLabel || "(untitled)"}</span>
