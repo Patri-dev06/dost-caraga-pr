@@ -1688,6 +1688,21 @@ function CreatePpmpPage() {
                           <td colSpan={2} className="border border-black" />
                         </tr>
                       )}
+                      {endedCategory && editing && (
+                        <tr className="no-print">
+                          <td colSpan={12} className="border-0 py-1 pl-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 gap-1 px-2 text-[10px] font-normal not-italic text-primary hover:bg-primary/10"
+                              onClick={() => addSubcategoryUnderCategory(endedCategory.id)}
+                            >
+                              <Plus className="h-3 w-3" /> Add another group in {endedCategory.categoryLabel ? `"${endedCategory.categoryLabel}"` : "this category"}
+                            </Button>
+                          </td>
+                        </tr>
+                      )}
                     </>
                   );
 
