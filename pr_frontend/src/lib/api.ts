@@ -39,7 +39,6 @@ export type CurrentUser = {
   office: string;
   position: string;
   isBudgetOfficer: boolean; // designated Budget Officer for PPMP/LIB fund certification
-  isSupervisor: boolean; // designated Supervisor for LIB recommending approval
   isRegionalDirector: boolean; // designated Regional Director for LIB final approval
   isBacChair: boolean; // designated BAC Chairman: reviews Abstracts of Canvas
   isBacViceChair: boolean; // designated BAC Vice-Chairman: reviews Abstracts of Canvas
@@ -483,12 +482,11 @@ export async function apiGetBudgetOfficer(): Promise<BudgetOfficer | null> {
 
 export type WorkflowSignatory = { id: number; name: string; position: string; isCurrentUser: boolean };
 export type WorkflowSignatories = {
-  supervisor: WorkflowSignatory | null;
   budgetOfficer: WorkflowSignatory | null;
   regionalDirector: WorkflowSignatory | null;
 };
 
-/** The designated routing signatories (Supervisor, Budget Officer, Regional Director). */
+/** The designated routing signatories (Budget Officer, Regional Director). */
 export async function apiGetWorkflowSignatories(): Promise<WorkflowSignatories> {
   const result = await request<{ data: WorkflowSignatories }>("/workflow-signatories");
   return result.data;
@@ -838,7 +836,6 @@ type BackendUser = {
   modules?: string[] | null;
   access_modules?: string[];
   is_budget_officer?: boolean;
-  is_supervisor?: boolean;
   is_regional_director?: boolean;
   is_bac_chair?: boolean;
   is_bac_vice_chair?: boolean;
@@ -1714,7 +1711,6 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     office: user.office?.name ?? "Unassigned",
     position: user.position || user.roles?.[0]?.name || "",
     isBudgetOfficer: Boolean(user.is_budget_officer),
-    isSupervisor: Boolean(user.is_supervisor),
     isRegionalDirector: Boolean(user.is_regional_director),
     isBacChair: Boolean(user.is_bac_chair),
     isBacViceChair: Boolean(user.is_bac_vice_chair),

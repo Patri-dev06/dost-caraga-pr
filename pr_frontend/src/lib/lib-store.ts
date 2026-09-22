@@ -73,6 +73,7 @@ export interface LibDoc {
   preparedByPosition: string;
   recommendingName: string;
   recommendingPosition: string;
+  recommendingId?: number; // account picked as Recommending Approval; a submitted LIB is routed to them
   certifiedName: string;
   certifiedPosition: string;
   approvedName: string;
@@ -82,7 +83,7 @@ export interface LibDoc {
   history?: LibSnapshot[]; // snapshots captured on each revision
   ownerId?: number; // account that created this LIB (visibility scope)
   ownerName?: string; // creator's name, for display
-  // Routing workflow (preparer → supervisor → budget officer → regional director)
+  // Routing workflow (preparer → recommending approval → budget officer → regional director)
   supervisorId?: number;
   budgetOfficerId?: number;
   approvedById?: number;

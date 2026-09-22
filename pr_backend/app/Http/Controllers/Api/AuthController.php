@@ -154,14 +154,12 @@ class AuthController extends Controller
     {
         $pref = fn (string $key) => optional(SystemPreference::where('key', $key)->first())->value['value'] ?? null;
         $budgetOfficerId = $pref('budget_officer_user_id');
-        $supervisorId = $pref('supervisor_user_id');
         $regionalDirectorId = $pref('regional_director_user_id');
         $bacChairId = $pref('bac_chair_user_id');
         $bacViceChairId = $pref('bac_vice_chair_user_id');
 
         return array_merge($user->toArray(), [
             'is_budget_officer' => $budgetOfficerId !== null && (int) $budgetOfficerId === $user->id,
-            'is_supervisor' => $supervisorId !== null && (int) $supervisorId === $user->id,
             'is_regional_director' => $regionalDirectorId !== null && (int) $regionalDirectorId === $user->id,
             'is_bac_chair' => $bacChairId !== null && (int) $bacChairId === $user->id,
             'is_bac_vice_chair' => $bacViceChairId !== null && (int) $bacViceChairId === $user->id,

@@ -204,14 +204,6 @@ trait HasProcurementHelpers
                 'type' => 'text',
             ],
             [
-                'key' => 'supervisor_user_id',
-                'value' => ['value' => null],
-                'category' => 'Workflow',
-                'label' => 'Supervisor (Recommending Approval)',
-                'description' => 'Account that recommends approval on LIBs. Submitted LIBs are routed here first.',
-                'type' => 'text',
-            ],
-            [
                 'key' => 'regional_director_user_id',
                 'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
                 'category' => 'Workflow',
@@ -274,14 +266,6 @@ trait HasProcurementHelpers
     private function designatedBudgetOfficer(): ?User
     {
         $id = $this->preferenceValue('budget_officer_user_id', null);
-
-        return $id ? User::find((int) $id) : null;
-    }
-
-    /** The user currently designated as Supervisor (recommends approval on LIBs). */
-    private function designatedSupervisor(): ?User
-    {
-        $id = $this->preferenceValue('supervisor_user_id', null);
 
         return $id ? User::find((int) $id) : null;
     }

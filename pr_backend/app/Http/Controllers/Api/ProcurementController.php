@@ -138,7 +138,7 @@ class ProcurementController extends Controller
         ]);
     }
 
-    /** The designated routing signatories (Supervisor, Budget Officer, Regional Director). */
+    /** The designated routing signatories (Budget Officer, Regional Director). */
     public function workflowSignatories(Request $request): JsonResponse
     {
         $me = $request->user()?->id;
@@ -151,7 +151,6 @@ class ProcurementController extends Controller
 
         return response()->json([
             'data' => [
-                'supervisor' => $fmt($this->designatedSupervisor(), 'Supervisor'),
                 'budgetOfficer' => $fmt($this->designatedBudgetOfficer(), 'Budget Officer'),
                 'regionalDirector' => $fmt($this->designatedRegionalDirector(), 'Regional Director'),
             ],
@@ -273,6 +272,7 @@ class ProcurementController extends Controller
             'preparedByPosition' => ['nullable', 'string'],
             'recommendingName' => ['nullable', 'string'],
             'recommendingPosition' => ['nullable', 'string'],
+            'recommendingId' => ['nullable', 'integer', 'exists:users,id'],
             'certifiedName' => ['nullable', 'string'],
             'certifiedPosition' => ['nullable', 'string'],
             'approvedName' => ['nullable', 'string'],
@@ -319,6 +319,7 @@ class ProcurementController extends Controller
                 'prepared_by_position' => $data['preparedByPosition'] ?? null,
                 'recommending_name' => $data['recommendingName'] ?? null,
                 'recommending_position' => $data['recommendingPosition'] ?? null,
+                'recommending_user_id' => $data['recommendingId'] ?? null,
                 'certified_name' => $data['certifiedName'] ?? null,
                 'certified_position' => $data['certifiedPosition'] ?? null,
                 'approved_name' => $data['approvedName'] ?? null,
@@ -378,7 +379,7 @@ class ProcurementController extends Controller
         return response()->json(['message' => 'LIB document removed.']);
     }
 
-    /** Preparer submits a Draft LIB into the routing chain (→ Supervisor). */
+    /** Preparer submits a Draft LIB into the routing chain (→ the chosen Recommending Approval). */
     public function planningLibSubmit(Request $request, string $clientUid): JsonResponse
     {
         $this->guardModule('lib');
@@ -393,18 +394,22 @@ class ProcurementController extends Controller
         abort_unless(in_array($document->status, ['Draft', ''], true) || $document->status === null, 422, 'This LIB has already been submitted.');
         $this->requireSignature($user);
 
-        $supervisor = $this->designatedSupervisor();
-        abort_if($supervisor === null, 422, 'No Supervisor is designated. Set one in System Settings first.');
+        // The LIB goes to whoever the preparer picked as "Recommending Approval" on the form.
+        $recommender = $this->resolveLibRecommender($document);
+        abort_if($recommender === null, 422, 'Pick who will give the Recommending Approval on the LIB before submitting it.');
+        abort_if($recommender->id === $document->owner_id, 422, "You can't be the Recommending Approval on your own LIB. Pick someone else.");
+        abort_unless($recommender->canAccessModule('lib'), 422, "{$recommender->name} doesn't have access to the LIB module and couldn't review it. Pick someone else.");
 
         $document->forceFill([
             'status' => 'Pending Supervisor Review',
-            'supervisor_id' => $supervisor->id,
+            'recommending_user_id' => $recommender->id,
+            'supervisor_id' => $recommender->id,
             'submitted_at' => now(),
             'return_reason' => null,
         ])->save();
 
         $this->notify(
-            $supervisor,
+            $recommender,
             'lib_submitted',
             'LIB awaiting your recommendation',
             ($document->project_title ?: 'A LIB').' has been submitted for your recommending approval.',
@@ -544,11 +549,30 @@ class ProcurementController extends Controller
         return response()->json(['data' => $this->formatLibDocument($document->fresh('rows'))]);
     }
 
+    /**
+     * The account picked as "Recommending Approval" on the LIB. Drafts saved before the picker stored an id
+     * only have a name, so fall back to an exact match on an active account when it is unambiguous.
+     */
+    private function resolveLibRecommender(LibDocument $document): ?User
+    {
+        if ($document->recommending_user_id) {
+            return User::where('status', 'Active')->find($document->recommending_user_id);
+        }
+
+        if (blank($document->recommending_name)) {
+            return null;
+        }
+
+        $matches = User::where('status', 'Active')->where('name', $document->recommending_name)->limit(2)->get();
+
+        return $matches->count() === 1 ? $matches->first() : null;
+    }
+
     /** [stamped signatory id, currently-designated user] for the LIB's current stage. */
     private function libStageParticipants(LibDocument $document): array
     {
         return match ($document->status) {
-            'Pending Supervisor Review' => [$document->supervisor_id, $this->designatedSupervisor()],
+            'Pending Supervisor Review' => [$document->supervisor_id, null],
             'Forwarded to Budget Officer' => [$document->budget_officer_id, $this->designatedBudgetOfficer()],
             'Pending Regional Director Approval' => [$document->approved_by_id, $this->designatedRegionalDirector()],
             default => [null, null],
@@ -1414,6 +1438,7 @@ class ProcurementController extends Controller
             'preparedByPosition' => $document->prepared_by_position ?? '',
             'recommendingName' => $document->recommending_name ?? '',
             'recommendingPosition' => $document->recommending_position ?? '',
+            'recommendingId' => $document->recommending_user_id,
             'certifiedName' => $document->certified_name ?? '',
             'certifiedPosition' => $document->certified_position ?? '',
             'approvedName' => $document->approved_name ?? '',
@@ -1890,12 +1915,10 @@ class ProcurementController extends Controller
         return response()->json(['message' => 'Purchase Request rejected.', 'data' => $this->format($purchaseRequest->fresh())]);
     }
 
-    /** Tells everyone who can recommend a PR (Recommender role + designated Supervisor) that it is waiting. */
+    /** Tells everyone who can recommend a PR (anyone with the Recommender role) that it is waiting. */
     private function notifyPrSubmitted(PurchaseRequest $purchaseRequest): void
     {
         $recipients = User::whereHas('roles', fn ($query) => $query->where('name', 'Recommender'))->get()
-            ->push($this->designatedSupervisor())
-            ->filter()
             ->unique('id');
 
         foreach ($recipients as $recipient) {

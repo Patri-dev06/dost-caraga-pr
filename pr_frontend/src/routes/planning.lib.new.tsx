@@ -551,11 +551,13 @@ function LibForm() {
     }
   }
 
-  // --- Routing workflow: preparer → supervisor → budget officer → regional director ---
+  // --- Routing workflow: preparer → recommending approval → budget officer → regional director ---
   const isOwner = currentUser != null && doc.ownerId != null && currentUser.id === doc.ownerId;
   const isSuperadmin = currentUser?.tier === "superadmin";
   const canSubmit = (isOwner || isSuperadmin) && doc.status === "Draft";
-  const canRecommend = (Boolean(currentUser?.isSupervisor) || isSuperadmin) && doc.status === "Pending Supervisor Review";
+  // The LIB is reviewed by whoever was picked as its Recommending Approval when it was submitted.
+  const isPickedRecommender = currentUser != null && doc.supervisorId != null && currentUser.id === doc.supervisorId;
+  const canRecommend = (isPickedRecommender || isSuperadmin) && doc.status === "Pending Supervisor Review";
   const canCertify = (Boolean(currentUser?.isBudgetOfficer) || isSuperadmin) && doc.status === "Forwarded to Budget Officer";
   const canApprove = (Boolean(currentUser?.isRegionalDirector) || isSuperadmin) && doc.status === "Pending Regional Director Approval";
   const canReturn = canRecommend || canCertify || canApprove;
@@ -578,6 +580,10 @@ function LibForm() {
   }
 
   async function submitForRouting() {
+    if (!doc.recommendingName.trim()) {
+      toast.error("Pick who will give the Recommending Approval before submitting.");
+      return;
+    }
     // Persist the latest content to the server BEFORE routing so the status change sticks.
     await runWorkflow("Pending Supervisor Review", async () => {
       await saveLibNow({ ...doc, status: "Draft" });
@@ -1085,7 +1091,7 @@ function LibForm() {
             {/* Signatories */}
             <div className="mt-8 grid grid-cols-2 gap-x-10 gap-y-8">
               <Signatory label="Prepared by:" name={doc.preparedByName} position={doc.preparedByPosition} editing={fullEdit} auto options={signatories} onName={(v) => set("preparedByName", v)} onPosition={(v) => set("preparedByPosition", v)} />
-              <Signatory label="Recommending Approval:" name={doc.recommendingName} position={doc.recommendingPosition} editing={fullEdit} options={signatories} onName={(v) => set("recommendingName", v)} onPosition={(v) => set("recommendingPosition", v)} />
+              <Signatory label="Recommending Approval:" name={doc.recommendingName} position={doc.recommendingPosition} editing={fullEdit} options={signatories} onName={(v) => set("recommendingName", v)} onPosition={(v) => set("recommendingPosition", v)} onPickId={(id) => set("recommendingId", id)} />
               <Signatory label="Certified Funds Available:" name={doc.certifiedName} position={doc.certifiedPosition} editing={fullEdit} options={signatories} onName={(v) => set("certifiedName", v)} onPosition={(v) => set("certifiedPosition", v)} />
               <Signatory label="Approved by:" name={doc.approvedName} position={doc.approvedPosition} editing={fullEdit} options={signatories} onName={(v) => set("approvedName", v)} onPosition={(v) => set("approvedPosition", v)} />
             </div>
@@ -1226,6 +1232,7 @@ function Signatory({
   auto,
   onName,
   onPosition,
+  onPickId,
 }: {
   label: string;
   name: string;
@@ -1235,6 +1242,7 @@ function Signatory({
   auto?: boolean; // fixed to the signed-in user (Prepared by) — shown read-only, no dropdown
   onName: (v: string) => void;
   onPosition: (v: string) => void;
+  onPickId?: (id: number | undefined) => void; // the picked account, for signatories the workflow routes to
 }) {
   // "Prepared by" is the signed-in user: render the auto-filled name/position as
   // plain text (no picker), both while editing and in preview.
@@ -1261,6 +1269,7 @@ function Signatory({
     onName(n);
     const chosen = options.find((o) => o.name === n);
     if (chosen?.position) onPosition(chosen.position);
+    onPickId?.(chosen && chosen.id > 0 ? chosen.id : undefined);
   };
   return (
     <div>

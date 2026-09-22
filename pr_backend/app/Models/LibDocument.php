@@ -26,6 +26,7 @@ class LibDocument extends Model
         'prepared_by_position',
         'recommending_name',
         'recommending_position',
+        'recommending_user_id',
         'certified_name',
         'certified_position',
         'approved_name',
