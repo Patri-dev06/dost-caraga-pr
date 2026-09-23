@@ -96,10 +96,11 @@ function Dashboard() {
         </div>
       </section>
 
-      {/* Needs your action */}
-      <PrTrackerSection />
-
-      <RecentActivityCard libs={libs} ppmps={ppmps} rfqs={rfqs} prs={prs} />
+      {/* Needs your action + recent activity, side by side on wide screens */}
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
+        <PrTrackerSection />
+        <RecentActivityCard libs={libs} ppmps={ppmps} rfqs={rfqs} prs={prs} />
+      </div>
     </div>
   );
 }
