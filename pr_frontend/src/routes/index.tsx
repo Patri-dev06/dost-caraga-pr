@@ -1,14 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
 import {
   FilePlus2, BookOpen, ShoppingCart, ScrollText, ShieldCheck, Inbox, BarChart3, Library,
-  FileText, ArrowRight, Clock, CheckCircle2, Truck,
+  FileText, ArrowRight, Truck,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import { StatCard } from "@/components/app/stat-card";
 import { cn } from "@/lib/utils";
 import { apiGetPurchaseRequests, hasValidToken } from "@/lib/api";
 import { useCanAccess } from "@/lib/current-user";
@@ -50,7 +47,6 @@ function Dashboard() {
   const { libs, ppmps, rfqs } = local;
 
   const prPending = prs.filter((p) => /pending|validation|for approval|review/i.test(p.status)).length;
-  const prApproved = prs.filter((p) => /approved/i.test(p.status)).length;
 
   const libBudget = useMemo(() => libs.reduce((s, l) => s + libTotals(l.rows).approved, 0), [libs]);
   const ppmpBudget = useMemo(() => ppmps.reduce((s, p) => s + (p.totalBudget || 0), 0), [ppmps]);
@@ -90,16 +86,6 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Stat cards — live counts */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard label="Line Item Budgets" value={libs.length} to="/planning/lib" />
-        <StatCard label="PPMP" value={ppmps.length} to="/planning/ppmp" />
-        <StatCard label="Purchase Requests" value={prs.length} to="/purchase-requests" />
-        <StatCard label="RFQ" value={rfqs.length} to="/rfq" />
-        <StatCard label="Pending Approval" value={prPending} icon={Clock} accent to="/approval-inbox" />
-        <StatCard label="Approved PR" value={prApproved} icon={CheckCircle2} to="/purchase-requests" />
-      </div>
-
       {/* Module tiles — the heart of the dashboard */}
       <section>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Modules</h2>
@@ -110,16 +96,10 @@ function Dashboard() {
         </div>
       </section>
 
-      {/* Your Purchase Requests + what needs your action */}
+      {/* Needs your action */}
       <PrTrackerSection />
 
-      {/* Budget by module + recent activity */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <BudgetByModuleCard libBudget={libBudget} ppmpBudget={ppmpBudget} prBudget={prBudget} rfqBudget={rfqBudget} />
-        </div>
-        <RecentActivityCard libs={libs} ppmps={ppmps} rfqs={rfqs} prs={prs} />
-      </div>
+      <RecentActivityCard libs={libs} ppmps={ppmps} rfqs={rfqs} prs={prs} />
     </div>
   );
 }
@@ -163,52 +143,6 @@ function ModuleCard({ name, desc, icon: Icon, to, count, value, accent }: Module
         {value && <p className="mt-1.5 text-xs font-medium text-primary">{value}</p>}
       </div>
     </Link>
-  );
-}
-
-/* ── Budget by module chart ───────────────────────────────────────────── */
-
-const chartConfig = {
-  amount: { label: "Budget (₱K)", color: "var(--chart-1)" },
-} satisfies ChartConfig;
-
-const MODULE_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)"];
-
-function BudgetByModuleCard({ libBudget, ppmpBudget, prBudget, rfqBudget }: { libBudget: number; ppmpBudget: number; prBudget: number; rfqBudget: number }) {
-  const data = [
-    { module: "LIB", amount: Math.round(libBudget / 1000) },
-    { module: "PPMP", amount: Math.round(ppmpBudget / 1000) },
-    { module: "PR", amount: Math.round(prBudget / 1000) },
-    { module: "RFQ", amount: Math.round(rfqBudget / 1000) },
-  ];
-  const empty = data.every((d) => d.amount === 0);
-
-  return (
-    <Card className="border border-border p-5 shadow-card">
-      <div className="mb-4">
-        <h2 className="text-base font-bold text-navy">Budget by Module</h2>
-        <p className="text-xs text-muted-foreground">Total value tracked per module · ₱ thousands</p>
-      </div>
-      {empty ? (
-        <div className="flex h-[260px] items-center justify-center text-sm text-muted-foreground">
-          No budget data yet — create a LIB, PPMP, PR, or RFQ to see it here.
-        </div>
-      ) : (
-        <ChartContainer config={chartConfig} className="h-[260px] w-full">
-          <BarChart data={data} margin={{ left: -8, top: 4 }}>
-            <CartesianGrid vertical={false} stroke="var(--border)" strokeDasharray="3 3" />
-            <XAxis dataKey="module" tickLine={false} axisLine={false} tickMargin={8} className="text-xs" />
-            <YAxis tickLine={false} axisLine={false} tickMargin={6} width={52} tickFormatter={(v) => `₱${v}K`} className="text-xs" />
-            <ChartTooltip cursor={{ fill: "var(--secondary)", opacity: 0.5 }} content={<ChartTooltipContent />} />
-            <Bar dataKey="amount" radius={[4, 4, 0, 0]} maxBarSize={64}>
-              {data.map((_, i) => (
-                <Cell key={i} fill={MODULE_COLORS[i % MODULE_COLORS.length]} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ChartContainer>
-      )}
-    </Card>
   );
 }
 
