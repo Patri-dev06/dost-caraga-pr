@@ -3,6 +3,7 @@ import {
   apiApprovePlanningPpmp,
   apiDeletePlanningPpmp,
   apiGetPlanningPpmps,
+  apiGetPlanningPpmpsPage,
   apiReturnPlanningPpmp,
   apiUpsertPlanningPpmp,
   getCurrentUser,
@@ -84,7 +85,7 @@ function read(): PpmpForLib[] {
   }
 }
 
-function migratePpmp(doc: Record<string, unknown>): PpmpForLib {
+export function migratePpmp(doc: Record<string, unknown>): PpmpForLib {
   const status = typeof doc.status === "string" ? doc.status : "Draft";
   const validStatus: PpmpStatus =
     status === "Submitted to Budget Officer" ||
@@ -183,6 +184,13 @@ export async function approvePpmpAsBudgetOfficer(id: string, payload: PpmpReview
 
 export function totalPpmpBudgetForLib(libId: string): number {
   return listPpmpsForLib(libId).reduce((sum, p) => sum + p.totalBudget, 0);
+}
+
+/** The PPMP list, one page at a time (never the whole table) — used by the PPMP list page's own
+ * pagination, separate from the synced local cache other screens read for their totals/lookups. */
+export async function getPpmpsPage(page: number, perPage = 20, libId?: string) {
+  const result = await apiGetPlanningPpmpsPage<Record<string, unknown>>(page, perPage, libId);
+  return { ...result, items: result.items.map(migratePpmp).filter(canViewPpmp) };
 }
 
 export async function syncPpmpsFromDatabase(libId?: string): Promise<PpmpForLib[]> {

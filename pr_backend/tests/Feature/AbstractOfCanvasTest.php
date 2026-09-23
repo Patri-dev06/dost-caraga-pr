@@ -269,4 +269,18 @@ class AbstractOfCanvasTest extends TestCase
         $this->asBac()->getJson('/api/v1/auth/me')->assertOk()->assertJsonPath('data.is_bac_chair', true)->assertJsonPath('data.is_bac_vice_chair', false);
         $this->asBac('vice-chair')->getJson('/api/v1/auth/me')->assertOk()->assertJsonPath('data.is_bac_vice_chair', true);
     }
+
+    public function test_the_review_queue_limit_caps_the_query_instead_of_the_whole_queue(): void
+    {
+        $token = $this->loginAsAdmin();
+        foreach (['Goods', 'Goods', 'Goods'] as $category) {
+            $prId = $this->createApprovedPr($token);
+            [$rfqId] = $this->createQuotedRfq($token, $prId, $category);
+            $aocId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()->json('data.id');
+            $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/submit-for-bac-review")->assertOk();
+        }
+
+        $this->asBac()->getJson('/api/v1/aoc?status=Pending BAC Review&limit=2')->assertOk()->assertJsonCount(2, 'data');
+        $this->asBac()->getJson('/api/v1/aoc?status=Pending BAC Review')->assertOk()->assertJsonCount(3, 'data');
+    }
 }

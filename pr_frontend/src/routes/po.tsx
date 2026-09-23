@@ -1,12 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { AlertTriangle, FileCheck2, FileText, PackagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
-import { apiGenerateFromRfq, apiGetPurchaseOrders, apiGetRfqs, type Rfq } from "@/lib/api";
+import { ListPagination } from "@/components/app/list-pagination";
+import { apiGenerateFromRfq, apiGetPurchaseOrdersPage, apiGetRfqsPage, type Rfq } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+const PER_PAGE = 20;
 
 export const Route = createFileRoute("/po")({
   head: () => ({
@@ -20,17 +24,23 @@ export const Route = createFileRoute("/po")({
 
 function PurchaseOrderListPage() {
   const queryClient = useQueryClient();
+  const [rfqPage, setRfqPage] = useState(1);
+  const [poPage, setPoPage] = useState(1);
 
-  const { data: rfqs = [], isLoading: loadingRfqs, error: rfqsError } = useQuery({
-    queryKey: ["rfqs"],
-    queryFn: () => apiGetRfqs(),
+  const { data: rfqPageData, isLoading: loadingRfqs, error: rfqsError } = useQuery({
+    queryKey: ["rfqs", rfqPage],
+    queryFn: () => apiGetRfqsPage(rfqPage, PER_PAGE),
   });
+  const rfqs = rfqPageData?.items ?? [];
 
-  const { data: purchaseOrders = [], isLoading: loadingPos } = useQuery({
-    queryKey: ["purchase-orders"],
-    queryFn: () => apiGetPurchaseOrders(),
+  const { data: poPageData, isLoading: loadingPos } = useQuery({
+    queryKey: ["purchase-orders", poPage],
+    queryFn: () => apiGetPurchaseOrdersPage(poPage, PER_PAGE),
   });
+  const purchaseOrders = poPageData?.items ?? [];
 
+  // "Awaiting action" and "eligible for a PO" are read off just this page — newest-first sorting
+  // means actionable items are almost always near the top, well before pagination would hide them.
   const eligibleRfqs = rfqs.filter((rfq) => rfq.abstractOfCanvasStatus === "Approved" && !rfq.hasPurchaseOrder);
   const pendingPos = purchaseOrders.filter((po) => po.status.startsWith("Pending"));
 
@@ -113,6 +123,7 @@ function PurchaseOrderListPage() {
                   </div>
                 ))}
               </div>
+              {poPageData && <ListPagination page={poPage} lastPage={poPageData.lastPage} total={poPageData.total} onPageChange={setPoPage} />}
             </div>
           )}
 
@@ -132,6 +143,7 @@ function PurchaseOrderListPage() {
                   />
                 ))}
               </div>
+              {rfqPageData && <ListPagination page={rfqPage} lastPage={rfqPageData.lastPage} total={rfqPageData.total} onPageChange={setRfqPage} />}
             </div>
           ) : !rfqsError ? (
             <div className="rounded-xl border border-border bg-card p-10 text-center">

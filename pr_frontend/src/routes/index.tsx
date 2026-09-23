@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
 import {
   FilePlus2, BookOpen, ShoppingCart, ScrollText, ShieldCheck, Inbox, BarChart3, Library,
-  FileText, ArrowRight, Clock, CheckCircle2,
+  FileText, ArrowRight, Clock, CheckCircle2, Truck,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
@@ -11,6 +11,9 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } f
 import { StatCard } from "@/components/app/stat-card";
 import { cn } from "@/lib/utils";
 import { apiGetPurchaseRequests, hasValidToken } from "@/lib/api";
+import { useCanAccess } from "@/lib/current-user";
+import { moduleForPath } from "@/lib/modules";
+import { PrTrackerSection } from "@/components/app/pr-tracker-card";
 import { type PurchaseRequest } from "@/lib/mock-data";
 import { fmtAmount, libTotals, listLibs, type LibDoc } from "@/lib/lib-store";
 import { listAllPpmps, type PpmpForLib } from "@/lib/ppmp-store";
@@ -29,6 +32,7 @@ export const Route = createFileRoute("/")({
 const peso = (n: number) => `₱${fmtAmount(n)}`;
 
 function Dashboard() {
+  const canAccess = useCanAccess();
   const [local, setLocal] = useState<{ libs: LibDoc[]; ppmps: PpmpForLib[]; rfqs: RfqDoc[] }>({ libs: [], ppmps: [], rfqs: [] });
 
   // localStorage-backed modules are client-only — read after mount.
@@ -53,16 +57,24 @@ function Dashboard() {
   const rfqBudget = useMemo(() => rfqs.reduce((s, r) => s + (r.estimatedBudget || 0), 0), [rfqs]);
   const prBudget = useMemo(() => prs.reduce((s, p) => s + (p.amount || 0), 0), [prs]);
 
-  const modules: ModuleCardProps[] = [
+  // Every module the dashboard could show — filtered below to only what this user is actually
+  // allowed into. Was previously shown unfiltered to everyone, including modules a regular user
+  // has no access to and would just bounce off of.
+  const allModules: ModuleCardProps[] = [
     { name: "Line Item Budget", desc: "DOST Form 4 budgets & reprogramming", icon: FileText, to: "/planning/lib", count: libs.length, value: peso(libBudget) },
     { name: "PPMP", desc: "Project procurement management plans", icon: BookOpen, to: "/planning/ppmp", count: ppmps.length, value: peso(ppmpBudget) },
     { name: "Purchase Requests", desc: "Requests across offices & fund sources", icon: ShoppingCart, to: "/purchase-requests", count: prs.length, value: peso(prBudget) },
     { name: "RFQ", desc: "Requests for quotation & canvassing", icon: ScrollText, to: "/rfq", count: rfqs.length, value: peso(rfqBudget) },
+    { name: "Purchase Orders", desc: "Budget, accounting & RD approval chain", icon: Truck, to: "/po", value: "track POs" },
     { name: "Validation", desc: "Pre-approval budget & document checks", icon: ShieldCheck, to: "/validation", count: prPending, value: "items to review" },
     { name: "Approval Inbox", desc: "Recommend, approve, or return", icon: Inbox, to: "/approval-inbox", count: prPending, value: "awaiting action" },
     { name: "References", desc: "APP-CSE, APP-Non-CSE & budget", icon: Library, to: "/references/app-cse", value: "master data" },
     { name: "Reports", desc: "Analytics & exports", icon: BarChart3, to: "/reports", value: "view reports" },
   ];
+  const modules = allModules.filter((m) => {
+    const key = moduleForPath(m.to);
+    return !key || canAccess(key);
+  });
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -97,6 +109,9 @@ function Dashboard() {
           ))}
         </div>
       </section>
+
+      {/* Your Purchase Requests + what needs your action */}
+      <PrTrackerSection />
 
       {/* Budget by module + recent activity */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">

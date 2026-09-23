@@ -1,5 +1,6 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FilePlus2, FileText, Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -14,7 +15,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { useCurrentUser } from "@/lib/current-user";
 import { PageHeader } from "@/components/app/page-header";
-import { currentLibBudgetTotal, deleteLib, fmtAmount, isApprovedReprogrammedLib, listLibs, syncLibsFromDatabase, type LibDoc } from "@/lib/lib-store";
+import { ListPagination } from "@/components/app/list-pagination";
+import { currentLibBudgetTotal, deleteLib, fmtAmount, getLibsPage, isApprovedReprogrammedLib, type LibDoc } from "@/lib/lib-store";
 
 export const Route = createFileRoute("/planning/lib")({
   head: () => ({
@@ -26,6 +28,8 @@ export const Route = createFileRoute("/planning/lib")({
   component: LibListPage,
 });
 
+const PER_PAGE = 20;
+
 const STATUS_STYLES: Record<string, string> = {
   Draft: "bg-secondary text-secondary-foreground",
   "Pending Supervisor Review": "bg-warning/15 text-warning-foreground",
@@ -36,14 +40,15 @@ const STATUS_STYLES: Record<string, string> = {
 
 function LibListPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const [libs, setLibs] = useState<LibDoc[]>([]);
-
-  useEffect(() => {
-    if (pathname !== "/planning/lib") return;
-
-    setLibs(listLibs());
-    syncLibsFromDatabase().then(setLibs).catch(() => undefined);
-  }, [pathname]);
+  const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  // Never the whole table: one page at a time, so the list stays fast no matter how many LIBs pile up.
+  const { data, isLoading } = useQuery({
+    queryKey: ["planning-libs", page],
+    queryFn: () => getLibsPage(page, PER_PAGE),
+    enabled: pathname === "/planning/lib",
+  });
+  const libs = data?.items ?? [];
 
   const { user } = useCurrentUser();
   const [pendingDelete, setPendingDelete] = useState<LibDoc | null>(null);
@@ -67,7 +72,7 @@ function LibListPage() {
     setDeleting(true);
     try {
       await deleteLib(pendingDelete.id);
-      setLibs(listLibs());
+      await queryClient.invalidateQueries({ queryKey: ["planning-libs"] });
       toast.success("LIB deleted.");
       setPendingDelete(null);
     } catch (error) {
@@ -93,7 +98,9 @@ function LibListPage() {
       />
 
       <div className="rounded-xl border border-border bg-card">
-        {libs.length === 0 ? (
+        {isLoading ? (
+          <div className="p-10 text-center text-sm text-muted-foreground">Fetching data, kindly wait.</div>
+        ) : libs.length === 0 ? (
           <div className="p-10 text-center">
             <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" strokeWidth={1.5} />
             <p className="text-sm font-semibold text-navy">No Line Item Budgets yet</p>
@@ -160,6 +167,7 @@ function LibListPage() {
           </div>
         )}
       </div>
+      {data && <ListPagination page={page} lastPage={data.lastPage} total={data.total} onPageChange={setPage} />}
 
       <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open && !deleting) setPendingDelete(null); }}>
         <AlertDialogContent>

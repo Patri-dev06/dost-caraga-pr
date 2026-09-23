@@ -6,6 +6,7 @@ import {
   apiCertifyPlanningLib,
   apiDeletePlanningLib,
   apiGetPlanningLibs,
+  apiGetPlanningLibsPage,
   apiRecommendPlanningLib,
   apiReturnPlanningLib,
   apiSubmitPlanningLib,
@@ -355,7 +356,7 @@ function normalizeRows(rows: LibRow[], rounds: number): LibRow[] {
   });
 }
 
-function migrateDoc(doc: Record<string, unknown>): LibDoc {
+export function migrateDoc(doc: Record<string, unknown>): LibDoc {
   const rowsRaw = ((doc.rows as Record<string, unknown>[]) ?? []).map(migrateRow);
   const anyReprog = rowsRaw.some((r) => !r.header && r.reprogrammings.length > 0);
   const revision = typeof doc.revision === "number" ? doc.revision : anyReprog ? 1 : 0;
@@ -505,6 +506,13 @@ export async function returnLib(id: string, reason: string, comment?: string): P
   const doc = migrateDoc((await apiReturnPlanningLib<LibDoc>(id, reason, comment)) as unknown as Record<string, unknown>);
   mergeLib(doc);
   return doc;
+}
+
+/** The LIB list, one page at a time (never the whole table) — used by the LIB list page's own
+ * pagination, separate from the synced local cache other screens read for their totals/lookups. */
+export async function getLibsPage(page: number, perPage = 20, status?: string) {
+  const result = await apiGetPlanningLibsPage<Record<string, unknown>>(page, perPage, status);
+  return { ...result, items: result.items.map(migrateDoc).filter(canViewLib) };
 }
 
 export async function syncLibsFromDatabase(): Promise<LibDoc[]> {

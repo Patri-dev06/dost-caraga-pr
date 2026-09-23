@@ -1,12 +1,16 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { useState } from "react";
 import { FilePlus2, FileText, AlertTriangle, FileCheck2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
-import { apiGetPurchaseRequests, apiGetRfqs } from "@/lib/api";
+import { ListPagination } from "@/components/app/list-pagination";
+import { apiGetPurchaseRequestsPage, apiGetRfqsPage } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
 import type { PurchaseRequest } from "@/lib/mock-data";
 import { useQuery } from "@tanstack/react-query";
+
+const PER_PAGE = 20;
 
 export const Route = createFileRoute("/rfq")({
   head: () => ({
@@ -20,23 +24,27 @@ export const Route = createFileRoute("/rfq")({
 
 function RfqListPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [prPage, setPrPage] = useState(1);
+  const [rfqPage, setRfqPage] = useState(1);
 
-  const { data: prs = [], isLoading: loadingPrs, error: prsError } = useQuery({
-    queryKey: ["purchase-requests"],
-    queryFn: apiGetPurchaseRequests,
+  // Only Approved PRs, filtered on the server — one page at a time, never the whole PR table.
+  const { data: prPageData, isLoading: loadingPrs, error: prsError } = useQuery({
+    queryKey: ["purchase-requests", "approved", prPage],
+    queryFn: () => apiGetPurchaseRequestsPage(prPage, PER_PAGE, "Approved"),
     enabled: pathname === "/rfq",
   });
+  const approvedPrs = prPageData?.items ?? [];
 
-  const { data: rfqs = [], isLoading: loadingRfqs } = useQuery({
-    queryKey: ["rfqs"],
-    queryFn: () => apiGetRfqs(),
+  const { data: rfqPageData, isLoading: loadingRfqs } = useQuery({
+    queryKey: ["rfqs", rfqPage],
+    queryFn: () => apiGetRfqsPage(rfqPage, PER_PAGE),
     enabled: pathname === "/rfq",
   });
+  const rfqs = rfqPageData?.items ?? [];
 
   if (pathname !== "/rfq") return <Outlet />;
 
   const loading = loadingPrs || loadingRfqs;
-  const approvedPrs = prs.filter((pr) => pr.status === "Approved");
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
@@ -89,6 +97,7 @@ function RfqListPage() {
                   </div>
                 ))}
               </div>
+              {rfqPageData && <ListPagination page={rfqPage} lastPage={rfqPageData.lastPage} total={rfqPageData.total} onPageChange={setRfqPage} />}
             </div>
           )}
 
@@ -101,9 +110,11 @@ function RfqListPage() {
               </p>
               <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
                 {approvedPrs.map((pr) => (
+                  // Counted against just this page's RFQs, not every RFQ ever generated for this PR.
                   <ApprovedPrCard key={pr.id} pr={pr} existingRfqCount={rfqs.filter((r) => r.prId === pr.id).length} />
                 ))}
               </div>
+              {prPageData && <ListPagination page={prPage} lastPage={prPageData.lastPage} total={prPageData.total} onPageChange={setPrPage} />}
             </div>
           ) : !prsError ? (
             <div className="rounded-xl border border-border bg-card p-10 text-center">

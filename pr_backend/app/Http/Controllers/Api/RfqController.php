@@ -32,9 +32,10 @@ class RfqController extends Controller
             $query->whereIn('status', explode(',', (string) $request->query('status')));
         }
 
-        return response()->json([
-            'data' => $query->latest('id')->get()->map(fn (Rfq $rfq) => $this->format($rfq)),
-        ]);
+        // Never the whole table: capped, real pagination (defaults to 20/page).
+        $page = $query->latest('id')->paginate(min((int) $request->query('per_page', 20), 100));
+
+        return response()->json($page->through(fn (Rfq $rfq) => $this->format($rfq)));
     }
 
     public function store(Request $request): JsonResponse

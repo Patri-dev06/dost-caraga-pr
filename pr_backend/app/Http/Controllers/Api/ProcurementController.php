@@ -17,6 +17,7 @@ use App\Models\PpmpItem;
 use App\Models\ProcurementItem;
 use App\Models\Project;
 use App\Models\PurchaseRequest;
+use App\Models\PurchaseRequestItem;
 use App\Models\Role;
 use App\Models\SystemPreference;
 use App\Models\User;
@@ -90,6 +91,12 @@ class ProcurementController extends Controller
             $query->where('status', $request->query('status'));
         }
 
+        // Dashboard "My Purchase Requests" widget: only the PRs the current user themselves filed,
+        // whatever their role — separate from the broader `visibleTo` scope approvers/admins get.
+        if ($resource === 'purchase-requests' && $request->boolean('mine')) {
+            $query->where('requested_by', $request->user()?->id);
+        }
+
         if ($request->query('office_id')) {
             $query->where('office_id', $request->query('office_id'));
         }
@@ -111,6 +118,7 @@ class ProcurementController extends Controller
             ->where('status', 'Active')
             ->with('roles:id,name')
             ->orderBy('name')
+            ->limit(500)
             ->get()
             ->map(fn (User $user): array => [
                 'id' => $user->id,
@@ -228,7 +236,14 @@ class ProcurementController extends Controller
         $query = LibDocument::with('rows')->latest('updated_at');
         $this->scopeLibVisibility($query);
 
-        return response()->json(['data' => $query->get()->map(fn (LibDocument $document): array => $this->formatLibDocument($document))->all()]);
+        if ($status = $request->query('status')) {
+            $query->where('status', $status);
+        }
+
+        // Never the whole table: capped, real pagination (defaults to 20/page).
+        $page = $query->paginate(min((int) $request->query('per_page', 20), 100));
+
+        return response()->json($page->through(fn (LibDocument $document): array => $this->formatLibDocument($document)));
     }
 
     public function planningLibShow(Request $request, string $clientUid): JsonResponse
@@ -636,7 +651,10 @@ class ProcurementController extends Controller
             $query->whereHas('libDocument', fn (Builder $q) => $q->where('client_uid', $request->query('lib_id')));
         }
 
-        return response()->json(['data' => $query->get()->map(fn (PpmpDocument $document): array => $this->formatPlanningPpmp($document))->all()]);
+        // Never the whole table: capped, real pagination (defaults to 20/page).
+        $page = $query->paginate(min((int) $request->query('per_page', 20), 100));
+
+        return response()->json($page->through(fn (PpmpDocument $document): array => $this->formatPlanningPpmp($document)));
     }
 
     public function planningPpmpShow(Request $request, string $clientUid): JsonResponse
@@ -1617,7 +1635,8 @@ class ProcurementController extends Controller
         $query = AppCseItem::with('item')->orderByDesc('fiscal_year');
         $project ? $query->whereBelongsTo($project) : $query->whereNull('project_id');
 
-        return response()->json(['data' => $query->get()]);
+        // Never the whole table: capped, real pagination (defaults to 50/page — reference data).
+        return response()->json($query->paginate(min((int) request()->query('per_page', 50), 200)));
     }
 
     public function appCseStore(Request $request, ?Project $project = null): JsonResponse
@@ -1639,7 +1658,8 @@ class ProcurementController extends Controller
         $query = AppNonCseItem::with('item')->orderByDesc('fiscal_year');
         $project ? $query->whereBelongsTo($project) : $query->whereNull('project_id');
 
-        return response()->json(['data' => $query->get()]);
+        // Never the whole table: capped, real pagination (defaults to 50/page — reference data).
+        return response()->json($query->paginate(min((int) request()->query('per_page', 50), 200)));
     }
 
     public function appNonCseStore(Request $request, ?Project $project = null): JsonResponse
@@ -1832,42 +1852,59 @@ class ProcurementController extends Controller
     }
 
     /**
-     * What every live PR has already drawn against each fund source. Requesters can only list their own PRs,
-     * but the form needs the shared totals to work out what's left of a PPMP item, so this exposes just
-     * the amounts (no requester, purpose or approval details).
+     * What every live PR has already drawn against one fund source, so the form can work out what's
+     * left of a PPMP item. Summed in SQL (grouped by item name/UOM) rather than loading every PR and
+     * every item into PHP — the result is bounded by how many distinct items exist for that fund
+     * source, not by how many Purchase Requests have ever been filed against it.
      */
     public function purchaseRequestUsage(Request $request): JsonResponse
     {
         $this->guardModule('pr');
 
-        $rows = PurchaseRequest::with(['fundSource', 'items'])
-            ->whereNotIn('status', ['Rejected', 'Returned'])
-            ->get()
-            ->map(fn (PurchaseRequest $pr): array => [
-                'id' => $pr->id,
-                'status' => $pr->status,
-                'fund_source' => $pr->fundSource?->name,
-                'items' => $pr->items->map(fn ($item): array => [
-                    'name' => $item->name,
-                    'uom' => $item->uom,
-                    'quantity' => $item->quantity,
-                    'unit_cost' => $item->unit_cost,
-                ])->values(),
-            ]);
+        $query = PurchaseRequestItem::query()
+            ->join('purchase_requests', 'purchase_requests.id', '=', 'purchase_request_items.purchase_request_id')
+            ->whereNotIn('purchase_requests.status', ['Rejected', 'Returned']);
+
+        if ($fundSource = $request->query('fund_source')) {
+            $query->join('fund_sources', 'fund_sources.id', '=', 'purchase_requests.fund_source_id')
+                ->where('fund_sources.name', $fundSource);
+        }
+
+        if ($excludePrId = $request->integer('exclude_pr_id')) {
+            $query->where('purchase_requests.id', '!=', $excludePrId);
+        }
+
+        $rows = $query
+            ->groupBy('purchase_request_items.name', 'purchase_request_items.uom')
+            ->selectRaw('purchase_request_items.name as name, purchase_request_items.uom as uom, '
+                .'SUM(purchase_request_items.quantity) as quantity, '
+                .'SUM(purchase_request_items.quantity * purchase_request_items.unit_cost) as amount')
+            ->get();
 
         return response()->json(['data' => $rows]);
     }
 
-    public function approvals(): JsonResponse
+    /**
+     * `limit` returns a flat, capped list for a dashboard preview (never the whole queue, just its
+     * first few rows). Without it, the full Approval Inbox browses the queue with real pagination —
+     * either way, the query itself is bounded; it's never an unbounded `get()` of every pending PR.
+     */
+    public function approvals(Request $request): JsonResponse
     {
         $this->guardModule('approvals');
-        return response()->json([
-            'data' => PurchaseRequest::with(['office', 'fundSource', 'project', 'items'])
-                ->whereIn('status', ['For Recommendation', 'For Approval'])
-                ->latest('id')
-                ->get()
-                ->map(fn ($pr) => $this->format($pr)),
-        ]);
+        $query = PurchaseRequest::with(['office', 'fundSource', 'project', 'items'])
+            ->whereIn('status', ['For Recommendation', 'For Approval'])
+            ->latest('id');
+
+        if ($limit = $request->integer('limit')) {
+            return response()->json([
+                'data' => $query->limit(min($limit, 50))->get()->map(fn ($pr) => $this->format($pr)),
+            ]);
+        }
+
+        $page = $query->paginate(min((int) $request->query('per_page', 20), 100));
+
+        return response()->json($page->through(fn ($pr) => $this->format($pr)));
     }
 
     public function recommend(Request $request, PurchaseRequest $purchaseRequest): JsonResponse

@@ -1,12 +1,16 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { FilePlus2, FileText, AlertTriangle, CheckCircle2, Eye, Inbox, Undo2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
-import { currentLibBudgetTotal, isApprovedReprogrammedLib, listLibs, fmtAmount, syncLibsFromDatabase, type LibDoc } from "@/lib/lib-store";
+import { currentLibBudgetTotal, isApprovedReprogrammedLib, getLibsPage, fmtAmount, syncLibsFromDatabase, type LibDoc } from "@/lib/lib-store";
+import { ListPagination } from "@/components/app/list-pagination";
 import { listPpmpsForBudgetOfficer, listPpmpsForLib, syncPpmpsFromDatabase, totalPpmpBudgetForLib, type PpmpForLib } from "@/lib/ppmp-store";
 import { useCurrentUser } from "@/lib/current-user";
 import { cn } from "@/lib/utils";
+
+const PER_PAGE = 20;
 
 export const Route = createFileRoute("/planning/ppmp")({
   head: () => ({
@@ -21,14 +25,20 @@ export const Route = createFileRoute("/planning/ppmp")({
 function PpmpListPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { user } = useCurrentUser();
-  const [approvedLibs, setApprovedLibs] = useState<LibDoc[]>([]);
+  const [page, setPage] = useState(1);
   const [ppmpsByLib, setPpmpsByLib] = useState<Record<string, PpmpForLib[]>>({});
   const [reviewQueue, setReviewQueue] = useState<PpmpForLib[]>([]);
 
-  const refresh = useCallback(() => {
-    const libs = listLibs().filter((l) => l.status === "Approved");
-    setApprovedLibs(libs);
+  // Never the whole table: one page of Approved LIBs at a time. Each project's own PPMPs (usually
+  // a handful of revisions) still come from the synced local cache — that part stays small either way.
+  const { data: libPageData, isLoading } = useQuery({
+    queryKey: ["planning-libs", "approved-for-ppmp", page],
+    queryFn: () => getLibsPage(page, PER_PAGE, "Approved"),
+    enabled: pathname === "/planning/ppmp",
+  });
+  const approvedLibs = libPageData?.items ?? [];
 
+  const refreshPpmps = useCallback((libs: LibDoc[]) => {
     const map: Record<string, PpmpForLib[]> = {};
     for (const lib of libs) {
       map[lib.id] = listPpmpsForLib(lib.id);
@@ -38,16 +48,14 @@ function PpmpListPage() {
   }, []);
 
   useEffect(() => {
-    if (pathname !== "/planning/ppmp") return;
-    refresh();
-    syncLibsFromDatabase()
-      .then(() => syncPpmpsFromDatabase())
-      // A second lib sync picks up any LIBs the Budget Officer may now see
-      // (referenced by PPMPs routed to them), recorded during the PPMP sync.
+    if (pathname !== "/planning/ppmp" || approvedLibs.length === 0) return;
+    refreshPpmps(approvedLibs);
+    syncPpmpsFromDatabase()
       .then(() => syncLibsFromDatabase())
-      .then(refresh)
+      .then(() => refreshPpmps(approvedLibs))
       .catch(() => undefined);
-  }, [pathname, refresh]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname, approvedLibs.map((l) => l.id).join(",")]);
 
   if (pathname !== "/planning/ppmp") return <Outlet />;
 
@@ -117,7 +125,7 @@ function PpmpListPage() {
         </div>
       )}
 
-      {!hasApproved && (
+      {!isLoading && !hasApproved && (
         <div className="flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4">
           <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
           <div>
@@ -274,10 +282,11 @@ function PpmpListPage() {
               </div>
             );
           })}
+          {libPageData && <ListPagination page={page} lastPage={libPageData.lastPage} total={libPageData.total} onPageChange={setPage} />}
         </div>
       )}
 
-      {!hasApproved && (
+      {!isLoading && !hasApproved && (
         <div className="rounded-xl border border-border bg-card p-10 text-center">
           <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" strokeWidth={1.5} />
           <p className="text-sm font-semibold text-navy">No PPMP documents yet</p>

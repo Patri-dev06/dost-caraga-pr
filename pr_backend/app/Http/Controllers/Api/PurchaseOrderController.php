@@ -28,9 +28,10 @@ class PurchaseOrderController extends Controller
             $query->whereIn('status', explode(',', (string) $request->query('status')));
         }
 
-        return response()->json([
-            'data' => $query->latest('id')->get()->map(fn (PurchaseOrder $po) => $this->format($po)),
-        ]);
+        // Never the whole table: capped, real pagination (defaults to 20/page).
+        $page = $query->latest('id')->paginate(min((int) $request->query('per_page', 20), 100));
+
+        return response()->json($page->through(fn (PurchaseOrder $po) => $this->format($po)));
     }
 
     /** Generates a Draft PO from the RFQ's BAC-approved Abstract of Canvas, copying the winning supplier's quote. */

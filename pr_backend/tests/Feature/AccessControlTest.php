@@ -244,8 +244,89 @@ class AccessControlTest extends TestCase
 
         $this->assertNotEmpty($response->json('data'));
         $row = $response->json('data.0');
-        $this->assertSame(['id', 'status', 'fund_source', 'items'], array_keys($row));
-        $this->assertArrayNotHasKey('requested_by', $row);
-        $this->assertArrayNotHasKey('purpose', $row);
+        // Pre-summed per item (name/uom/quantity/amount) — no requester, purpose, PR id, or per-PR detail leaks through.
+        $this->assertSame(['name', 'uom', 'quantity', 'amount'], array_keys($row));
+    }
+
+    public function test_usage_endpoint_can_be_scoped_to_one_fund_source_and_exclude_a_draft(): void
+    {
+        $token = $this->tokenFor('mdelacruz@dost.gov.ph');
+        $prId = $this->withToken($token)->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated()->json('data.id');
+
+        $usageUrl = fn (array $params) => '/api/v1/purchase-requests/usage?'.http_build_query($params);
+        $hasItem = fn ($response, string $name) => collect($response->json('data'))->contains(fn ($row) => $row['name'] === $name);
+
+        // GAA already carries the seeded demo PR's items — excluding THIS PR only drops its own item.
+        $withSelf = $this->withToken($token)->getJson($usageUrl(['fund_source' => 'GAA 2026 - MOOE']))->assertOk();
+        $this->assertTrue($hasItem($withSelf, 'A4-sized Bond Paper'));
+
+        $withoutSelf = $this->withToken($token)
+            ->getJson($usageUrl(['fund_source' => 'GAA 2026 - MOOE', 'exclude_pr_id' => $prId]))->assertOk();
+        $this->assertFalse($hasItem($withoutSelf, 'A4-sized Bond Paper'));
+
+        $otherFund = $this->withToken($token)->getJson($usageUrl(['fund_source' => 'Trust Fund - SETUP']))->assertOk();
+        $this->assertEmpty($otherFund->json('data'));
+    }
+
+    public function test_mine_filter_returns_only_prs_the_user_themselves_filed(): void
+    {
+        $alice = $this->makeRequester('alice7@dost.gov.ph');
+        $aliceToken = $this->tokenFor($alice->email);
+        $alicePr = $this->withToken($aliceToken)->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated()->json('data.id');
+
+        $admin = $this->tokenFor('admin@dost.gov.ph');
+        $onBehalf = $this->withToken($admin)
+            ->postJson('/api/v1/purchase-requests', $this->prPayload() + ['requestedBy' => $alice->id])
+            ->assertCreated()->json('data.id');
+
+        // Admin sees every PR by default, but "mine" narrows it to only what admin themselves filed —
+        // none of Alice's, even the one admin filed on her behalf.
+        $ids = collect($this->withToken($admin)->getJson('/api/v1/purchase-requests?mine=1')->assertOk()->json('data'))->pluck('id');
+        $this->assertFalse($ids->contains($alicePr));
+        $this->assertFalse($ids->contains($onBehalf));
+    }
+
+    public function test_mine_filter_paginates_properly_instead_of_returning_everything(): void
+    {
+        $alice = $this->makeRequester('alice8@dost.gov.ph');
+        $token = $this->tokenFor($alice->email);
+        foreach (range(1, 3) as $n) {
+            $this->withToken($token)->postJson('/api/v1/purchase-requests', $this->prPayload())->assertCreated();
+        }
+
+        $page1 = $this->withToken($token)->getJson('/api/v1/purchase-requests?mine=1&per_page=2')->assertOk();
+        $page1->assertJsonCount(2, 'data')->assertJsonPath('total', 3)->assertJsonPath('last_page', 2);
+
+        $page2 = $this->withToken($token)->getJson('/api/v1/purchase-requests?mine=1&per_page=2&page=2')->assertOk();
+        $page2->assertJsonCount(1, 'data');
+    }
+
+    public function test_approvals_limit_caps_the_query_instead_of_the_whole_queue(): void
+    {
+        $token = $this->tokenFor('admin@dost.gov.ph');
+        foreach (range(1, 3) as $n) {
+            $this->withToken($token)->postJson('/api/v1/purchase-requests', $this->prPayload() + ['submit' => true])->assertCreated();
+        }
+
+        $this->withToken($token)->getJson('/api/v1/approvals?limit=2')->assertOk()->assertJsonCount(2, 'data');
+        $this->withToken($token)->getJson('/api/v1/approvals')->assertOk()->assertJsonCount(3, 'data');
+    }
+
+    public function test_the_lib_list_can_be_filtered_by_status(): void
+    {
+        $token = $this->tokenFor('admin@dost.gov.ph');
+
+        $draft = $this->withToken($token)->postJson('/api/v1/planning-libs', [
+            'id' => 'lib-status-draft', 'fiscalYear' => '2026', 'status' => 'Draft',
+            'rows' => [['id' => 'r1', 'label' => 'Travel', 'indent' => 0, 'header' => false, 'approved' => '100']],
+        ])->assertSuccessful();
+
+        $response = $this->withToken($token)->getJson('/api/v1/planning-libs?status=Draft')->assertOk();
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($draft->json('data.id')));
+
+        $response = $this->withToken($token)->getJson('/api/v1/planning-libs?status=Approved')->assertOk();
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertFalse($ids->contains($draft->json('data.id')));
     }
 }

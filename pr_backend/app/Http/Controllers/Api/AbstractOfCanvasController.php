@@ -56,6 +56,11 @@ class AbstractOfCanvasController extends Controller
     }
 
     /** Queue of Abstracts of Canvas, optionally filtered by status (comma-separated), for the BAC review inbox. */
+    /**
+     * `limit` returns a flat, capped list for a dashboard preview (never the whole queue). Without
+     * it, the full BAC Review tab browses the queue with real pagination — either way, the query
+     * itself is bounded; it's never an unbounded `get()` of every Abstract of Canvas ever made.
+     */
     public function index(Request $request): JsonResponse
     {
         $this->guardRfqOrApprovals();
@@ -66,9 +71,15 @@ class AbstractOfCanvasController extends Controller
             $query->whereIn('status', explode(',', (string) $request->query('status')));
         }
 
-        return response()->json([
-            'data' => $query->get()->map(fn (AbstractOfCanvas $aoc): array => $this->formatSummary($aoc)),
-        ]);
+        if ($limit = $request->integer('limit')) {
+            return response()->json([
+                'data' => $query->limit(min($limit, 50))->get()->map(fn (AbstractOfCanvas $aoc): array => $this->formatSummary($aoc)),
+            ]);
+        }
+
+        $page = $query->paginate(min((int) $request->query('per_page', 20), 100));
+
+        return response()->json($page->through(fn (AbstractOfCanvas $aoc): array => $this->formatSummary($aoc)));
     }
 
     public function show(AbstractOfCanvas $aoc): JsonResponse

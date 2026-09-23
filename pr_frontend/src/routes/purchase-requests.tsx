@@ -1,12 +1,16 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { useState } from "react";
 import { Download, FilePlus2, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
 import { PRTable } from "@/components/app/pr-table";
-import { apiGetPurchaseRequests } from "@/lib/api";
+import { ListPagination } from "@/components/app/list-pagination";
+import { apiGetPurchaseRequestsPage } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
+
+const PER_PAGE = 20;
 
 export const Route = createFileRoute("/purchase-requests")({
   head: () => ({
@@ -20,10 +24,13 @@ export const Route = createFileRoute("/purchase-requests")({
 
 function PRListPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { data: purchaseRequests = [], isLoading, error } = useQuery({
-    queryKey: ["purchase-requests"],
-    queryFn: apiGetPurchaseRequests,
+  const [page, setPage] = useState(1);
+  // Never the whole table: one page at a time, so the list stays fast no matter how many PRs pile up.
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["purchase-requests", page],
+    queryFn: () => apiGetPurchaseRequestsPage(page, PER_PAGE),
   });
+  const purchaseRequests = data?.items ?? [];
 
   if (pathname !== "/purchase-requests") {
     return <Outlet />;
@@ -83,7 +90,10 @@ function PRListPage() {
       {isLoading ? (
         <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">Fetching data, kindly wait.</div>
       ) : (
-        <PRTable rows={purchaseRequests} />
+        <>
+          <PRTable rows={purchaseRequests} />
+          {data && <ListPagination page={page} lastPage={data.lastPage} total={data.total} onPageChange={setPage} />}
+        </>
       )}
     </div>
   );

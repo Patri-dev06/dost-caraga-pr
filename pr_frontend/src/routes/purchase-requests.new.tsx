@@ -384,26 +384,25 @@ function NewPR() {
   const selectedPpmp = approvedPpmps.find((p) => ppmpChargeLabel(p) === fundSource);
   const chargeItems = useMemo(() => buildChargeItems(selectedPpmp), [selectedPpmp]);
 
-  // Every other PR already drawn against this PPMP — used to compute what's left
-  // of each item's budget and quantity before this PR takes its share.
-  const { data: allPrs } = useQuery({ queryKey: ["purchase-request-usage"], queryFn: apiGetPurchaseRequestUsage, enabled: Boolean(selectedPpmp) });
+  // Every other PR already drawn against this fund source — pre-summed on the server (grouped by
+  // item name/UOM) — used to compute what's left of each item's budget and quantity before this
+  // PR takes its share. Excludes this PR's own saved rows so re-editing a draft doesn't double-count.
+  const { data: usageRows } = useQuery({
+    queryKey: ["purchase-request-usage", fundSource, loadId],
+    queryFn: () => apiGetPurchaseRequestUsage(fundSource, loadId),
+    enabled: Boolean(selectedPpmp) && Boolean(fundSource),
+  });
   const priorUse = useMemo(() => {
     const byName = new Map<string, { amount: number; qtyByUnit: Map<string, number> }>();
-    if (!selectedPpmp) return byName;
-    for (const pr of allPrs ?? []) {
-      if (loadId && pr.id === String(loadId)) continue; // this PR's own saved rows don't count against it
-      if (pr.status === "Rejected" || pr.status === "Returned") continue;
-      if (pr.fundSource !== fundSource) continue;
-      for (const item of pr.items) {
-        const rec = byName.get(item.name) ?? { amount: 0, qtyByUnit: new Map<string, number>() };
-        rec.amount += item.qty * item.unitCost;
-        const unitKey = item.uom.trim().toLowerCase();
-        rec.qtyByUnit.set(unitKey, (rec.qtyByUnit.get(unitKey) ?? 0) + item.qty);
-        byName.set(item.name, rec);
-      }
+    for (const row of usageRows ?? []) {
+      const rec = byName.get(row.name) ?? { amount: 0, qtyByUnit: new Map<string, number>() };
+      rec.amount += row.amount;
+      const unitKey = row.uom.trim().toLowerCase();
+      rec.qtyByUnit.set(unitKey, (rec.qtyByUnit.get(unitKey) ?? 0) + row.qty);
+      byName.set(row.name, rec);
     }
     return byName;
-  }, [allPrs, fundSource, loadId, selectedPpmp]);
+  }, [usageRows]);
 
   // Remaining ceilings for one catalog item, after prior PRs and after the OTHER
   // rows of this form (so two rows drawing the same item share one ceiling).

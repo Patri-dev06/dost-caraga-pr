@@ -392,24 +392,74 @@ export async function apiGetPurchaseRequests() {
   return result.data.map(mapPurchaseRequest);
 }
 
-/** What live PRs have already drawn per fund source (all requesters), for PPMP balance checks. */
-export type PurchaseRequestUsage = {
-  id: string;
-  status: string;
-  fundSource: string;
-  items: { name: string; uom: string; qty: number; unitCost: number }[];
+/** One page of a server-paginated list — carries the total/last-page counts, unlike a plain array. */
+export type Page<T> = {
+  items: T[];
+  page: number;
+  perPage: number;
+  total: number;
+  lastPage: number;
 };
 
-export async function apiGetPurchaseRequestUsage(): Promise<PurchaseRequestUsage[]> {
-  const result = await request<{
-    data: { id: number; status: string; fund_source: string | null; items: { name: string; uom: string; quantity: string | number; unit_cost: string | number }[] }[];
-  }>("/purchase-requests/usage");
-  return result.data.map((pr) => ({
-    id: String(pr.id),
-    status: pr.status,
-    fundSource: pr.fund_source ?? "Unassigned",
-    items: pr.items.map((item) => ({ name: item.name, uom: item.uom, qty: Number(item.quantity), unitCost: Number(item.unit_cost) })),
-  }));
+/** @deprecated kept as an alias — existing code refers to this as PurchaseRequestPage. */
+export type PurchaseRequestPage = Page<PurchaseRequest>;
+
+type BackendPaginated<T> = { data: T[]; current_page: number; per_page: number; total: number; last_page: number };
+
+/** Fetches one page from an endpoint that returns Laravel's paginator shape, mapping each raw item. */
+async function fetchPage<Raw, T>(path: string, mapItem: (raw: Raw) => T): Promise<Page<T>> {
+  const result = await request<BackendPaginated<Raw>>(path);
+  return {
+    items: result.data.map(mapItem),
+    page: result.current_page,
+    perPage: result.per_page,
+    total: result.total,
+    lastPage: result.last_page,
+  };
+}
+
+/**
+ * The signed-in user's own PRs (whatever their role), one page at a time — for the dashboard's
+ * "My Purchase Requests" widget. Always asks the server for just this page, never the whole list,
+ * so it stays cheap no matter how many PRs pile up over time.
+ */
+export async function apiGetMyPurchaseRequestsPage(page: number, perPage = 5): Promise<PurchaseRequestPage> {
+  return fetchPage<BackendPurchaseRequest, PurchaseRequest>(
+    `/purchase-requests?mine=1&page=${page}&per_page=${perPage}`,
+    mapPurchaseRequest,
+  );
+}
+
+/** The main Purchase Requests list, one page at a time (never the whole table). */
+export async function apiGetPurchaseRequestsPage(page: number, perPage = 20, status?: string): Promise<Page<PurchaseRequest>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (status) params.set("status", status);
+  return fetchPage<BackendPurchaseRequest, PurchaseRequest>(`/purchase-requests?${params.toString()}`, mapPurchaseRequest);
+}
+
+/** The full Approval Inbox queue, one page at a time. */
+export async function apiGetApprovalsPage(page: number, perPage = 20): Promise<Page<PurchaseRequest>> {
+  return fetchPage<BackendPurchaseRequest, PurchaseRequest>(
+    `/approvals?page=${page}&per_page=${perPage}`,
+    mapPurchaseRequest,
+  );
+}
+
+/**
+ * One fund source's shared item totals — what every live PR (any requester) has already drawn,
+ * pre-summed on the server (grouped by item name/UOM), for PPMP balance checks. Never loads every
+ * PR into the browser: pass `fundSource` and `excludePrId` (the PR being edited, if any) so the
+ * server does the summing and returns only as many rows as there are distinct items.
+ */
+export type PurchaseRequestUsageItem = { name: string; uom: string; qty: number; amount: number };
+
+export async function apiGetPurchaseRequestUsage(fundSource: string, excludePrId?: string | number): Promise<PurchaseRequestUsageItem[]> {
+  const params = new URLSearchParams({ fund_source: fundSource });
+  if (excludePrId) params.set("exclude_pr_id", String(excludePrId));
+  const result = await request<{ data: { name: string; uom: string; quantity: string | number; amount: string | number }[] }>(
+    `/purchase-requests/usage?${params.toString()}`,
+  );
+  return result.data.map((row) => ({ name: row.name, uom: row.uom, qty: Number(row.quantity), amount: Number(row.amount) }));
 }
 
 export async function apiGetPurchaseRequest(id: string | number) {
@@ -447,8 +497,14 @@ export async function apiValidatePurchaseRequest(id: string | number) {
   return result.data.map(mapValidation);
 }
 
-export async function apiGetApprovals() {
-  const result = await request<ApiList<BackendPurchaseRequest>>("/approvals");
+/**
+ * `limit` returns a flat, capped list for a dashboard preview. Without it, the full inbox is
+ * fetched — the server caps this at 100/request regardless (real pagination underneath), so it
+ * never pulls the whole queue unbounded; `perPage` lets a caller ask for fewer if it wants to.
+ */
+export async function apiGetApprovals(limit?: number, perPage = 100) {
+  const query = limit ? `?limit=${limit}` : `?per_page=${perPage}`;
+  const result = await request<ApiList<BackendPurchaseRequest>>(`/approvals${query}`);
   return result.data.map(mapPurchaseRequest);
 }
 
@@ -594,9 +650,18 @@ export async function apiCreatePpmpDocument(payload: PpmpDocumentCreatePayload, 
   return mapPpmpDocument(result.data);
 }
 
+/** The server caps this at 100/request regardless — this just keeps today's data volumes fully
+ * visible without needing a "load more" control yet; the endpoint is real pagination underneath. */
 export async function apiGetPlanningLibs<T = unknown>(): Promise<T[]> {
-  const result = await request<ApiList<T>>("/planning-libs");
+  const result = await request<ApiList<T>>("/planning-libs?per_page=100");
   return result.data;
+}
+
+/** The LIB list, one page at a time (raw docs — the caller migrates them, as syncLibsFromDatabase does). */
+export async function apiGetPlanningLibsPage<T = unknown>(page: number, perPage = 20, status?: string): Promise<Page<T>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (status) params.set("status", status);
+  return fetchPage<T, T>(`/planning-libs?${params.toString()}`, (raw) => raw);
 }
 
 export async function apiUpsertPlanningLib<T = unknown>(payload: T & { id?: string }): Promise<T> {
@@ -638,10 +703,20 @@ export async function apiReturnPlanningLib<T = unknown>(id: string, reason: stri
   return result.data;
 }
 
+/** The server caps this at 100/request regardless — this just keeps today's data volumes fully
+ * visible without needing a "load more" control yet; the endpoint is real pagination underneath. */
 export async function apiGetPlanningPpmps<T = unknown>(libId?: string): Promise<T[]> {
-  const query = libId ? `?lib_id=${encodeURIComponent(libId)}` : "";
-  const result = await request<ApiList<T>>(`/planning-ppmps${query}`);
+  const params = new URLSearchParams({ per_page: "100" });
+  if (libId) params.set("lib_id", libId);
+  const result = await request<ApiList<T>>(`/planning-ppmps?${params.toString()}`);
   return result.data;
+}
+
+/** The PPMP list, one page at a time (raw docs — the caller migrates them, as syncPpmpsFromDatabase does). */
+export async function apiGetPlanningPpmpsPage<T = unknown>(page: number, perPage = 20, libId?: string): Promise<Page<T>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (libId) params.set("lib_id", libId);
+  return fetchPage<T, T>(`/planning-ppmps?${params.toString()}`, (raw) => raw);
 }
 
 export async function apiUpsertPlanningPpmp<T = unknown>(payload: T & { id?: string }): Promise<T> {
@@ -1244,10 +1319,20 @@ export async function apiGetRfqs(filters?: { purchaseRequestId?: string | number
   const params = new URLSearchParams();
   if (filters?.purchaseRequestId) params.set("purchase_request_id", String(filters.purchaseRequestId));
   if (filters?.status) params.set("status", filters.status);
-  const query = params.toString() ? `?${params.toString()}` : "";
+  // The server caps this at 100/request regardless — keeps today's volumes fully visible without
+  // a "load more" control yet; the endpoint is real pagination underneath.
+  params.set("per_page", "100");
 
-  const result = await request<ApiList<BackendRfq>>(`/rfqs${query}`);
+  const result = await request<ApiList<BackendRfq>>(`/rfqs?${params.toString()}`);
   return result.data.map(mapRfq);
+}
+
+/** The RFQ list, one page at a time. */
+export async function apiGetRfqsPage(page: number, perPage = 20, filters?: { purchaseRequestId?: string | number; status?: string }): Promise<Page<Rfq>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (filters?.purchaseRequestId) params.set("purchase_request_id", String(filters.purchaseRequestId));
+  if (filters?.status) params.set("status", filters.status);
+  return fetchPage<BackendRfq, Rfq>(`/rfqs?${params.toString()}`, mapRfq);
 }
 
 export async function apiGetRfq(id: string | number) {
@@ -1400,24 +1485,26 @@ export interface AocSummary {
 }
 
 /** Abstracts of Canvas, optionally limited to the given statuses (e.g. "Pending BAC Review"). */
-export async function apiGetAocs(statuses?: string[]): Promise<AocSummary[]> {
-  const query = statuses?.length ? `?status=${encodeURIComponent(statuses.join(","))}` : "";
-  const result = await request<{
-    data: {
-      id: number;
-      rfq_id: number;
-      rfq_no: string | null;
-      pr_no: string | null;
-      procurement_category: string;
-      status: string;
-      winning_supplier_name: string | null;
-      winning_total: number | string | null;
-      bac_remarks: string | null;
-      submitted_at: string | null;
-    }[];
-  }>(`/aoc${query}`);
+/**
+ * `limit` returns a flat, capped list for a dashboard preview. Without it, the full queue is
+ * fetched — the server caps this at 100/request regardless (real pagination underneath), so it
+ * never pulls every Abstract of Canvas ever made in one request.
+ */
+type BackendAocSummary = {
+  id: number;
+  rfq_id: number;
+  rfq_no: string | null;
+  pr_no: string | null;
+  procurement_category: string;
+  status: string;
+  winning_supplier_name: string | null;
+  winning_total: number | string | null;
+  bac_remarks: string | null;
+  submitted_at: string | null;
+};
 
-  return result.data.map((aoc) => ({
+function mapAocSummary(aoc: BackendAocSummary): AocSummary {
+  return {
     id: String(aoc.id),
     rfqId: String(aoc.rfq_id),
     rfqNo: aoc.rfq_no ?? "",
@@ -1428,7 +1515,24 @@ export async function apiGetAocs(statuses?: string[]): Promise<AocSummary[]> {
     winningTotal: Number(aoc.winning_total ?? 0),
     bacRemarks: aoc.bac_remarks ?? "",
     submittedAt: aoc.submitted_at ?? "",
-  }));
+  };
+}
+
+export async function apiGetAocs(statuses?: string[], limit?: number): Promise<AocSummary[]> {
+  const params = new URLSearchParams();
+  if (statuses?.length) params.set("status", statuses.join(","));
+  if (limit) params.set("limit", String(limit));
+  else params.set("per_page", "100");
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const result = await request<{ data: BackendAocSummary[] }>(`/aoc${query}`);
+  return result.data.map(mapAocSummary);
+}
+
+/** The full BAC Review queue, one page at a time. */
+export async function apiGetAocsPage(statuses: string[] | undefined, page: number, perPage = 20): Promise<Page<AocSummary>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (statuses?.length) params.set("status", statuses.join(","));
+  return fetchPage<BackendAocSummary, AocSummary>(`/aoc?${params.toString()}`, mapAocSummary);
 }
 
 export async function apiGenerateAoc(rfqId: string | number, twgEvaluationNotes?: string) {
@@ -1629,10 +1733,20 @@ export async function apiGetPurchaseOrders(filters?: { purchaseRequestId?: strin
   const params = new URLSearchParams();
   if (filters?.purchaseRequestId) params.set("purchase_request_id", String(filters.purchaseRequestId));
   if (filters?.status) params.set("status", filters.status);
-  const query = params.toString() ? `?${params.toString()}` : "";
+  // The server caps this at 100/request regardless — keeps today's volumes fully visible without
+  // a "load more" control yet; the endpoint is real pagination underneath.
+  params.set("per_page", "100");
 
-  const result = await request<ApiList<BackendPurchaseOrder>>(`/purchase-orders${query}`);
+  const result = await request<ApiList<BackendPurchaseOrder>>(`/purchase-orders?${params.toString()}`);
   return result.data.map(mapPurchaseOrder);
+}
+
+/** The Purchase Order list, one page at a time. */
+export async function apiGetPurchaseOrdersPage(page: number, perPage = 20, filters?: { purchaseRequestId?: string | number; status?: string }): Promise<Page<PurchaseOrder>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (filters?.purchaseRequestId) params.set("purchase_request_id", String(filters.purchaseRequestId));
+  if (filters?.status) params.set("status", filters.status);
+  return fetchPage<BackendPurchaseOrder, PurchaseOrder>(`/purchase-orders?${params.toString()}`, mapPurchaseOrder);
 }
 
 export async function apiGetPurchaseOrder(id: string | number) {
