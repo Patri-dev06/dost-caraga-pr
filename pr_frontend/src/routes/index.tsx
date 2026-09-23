@@ -6,11 +6,13 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { apiGetPurchaseRequests, hasValidToken } from "@/lib/api";
+import { apiGetPurchaseRequests, apiGetPurchaseRequestMonitoringPage, hasValidToken } from "@/lib/api";
 import { useCanAccess } from "@/lib/current-user";
 import { moduleForPath } from "@/lib/modules";
 import { PrTrackerSection } from "@/components/app/pr-tracker-card";
+import { MonitoringTable } from "@/components/app/monitoring-table";
 import { type PurchaseRequest } from "@/lib/mock-data";
 import { fmtAmount, libTotals, listLibs, type LibDoc } from "@/lib/lib-store";
 import { listAllPpmps, type PpmpForLib } from "@/lib/ppmp-store";
@@ -96,12 +98,53 @@ function Dashboard() {
         </div>
       </section>
 
+      {/* Purchase Request Monitoring — the same sheet /purchase-requests uses, most recent first */}
+      <PrMonitoringPreviewSection />
+
       {/* Needs your action + recent activity, side by side on wide screens */}
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
         <PrTrackerSection />
         <RecentActivityCard libs={libs} ppmps={ppmps} rfqs={rfqs} prs={prs} />
       </div>
     </div>
+  );
+}
+
+/* ── Purchase Request Monitoring preview ──────────────────────────────── */
+
+const MONITORING_PREVIEW_SIZE = 6;
+
+/** The dashboard's own slice of the Procurement Monitoring Sheet — the same columns and row
+ * format as the full /purchase-requests page, just the most recent few, with a link to the rest. */
+function PrMonitoringPreviewSection() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["purchase-requests-monitoring-preview"],
+    queryFn: () => apiGetPurchaseRequestMonitoringPage(1, MONITORING_PREVIEW_SIZE),
+    enabled: hasValidToken(),
+  });
+  const rows = data?.items ?? [];
+
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Purchase Request Monitoring</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">Most recent Purchase Requests, traced through RFQ, AOC and PO.</p>
+        </div>
+        <Button asChild variant="outline" size="sm" className="gap-1.5 border-border">
+          <Link to="/purchase-requests">View full sheet <ArrowRight className="h-3.5 w-3.5" /></Link>
+        </Button>
+      </div>
+      {isLoading ? (
+        <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">Fetching data, kindly wait.</div>
+      ) : error ? (
+        <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+          {error instanceof Error ? error.message : "Unable to load the monitoring sheet."}
+        </div>
+      ) : (
+        <MonitoringTable rows={rows} emptyMessage="No Purchase Requests yet — create one to see it tracked here." />
+      )}
+    </section>
   );
 }
 
