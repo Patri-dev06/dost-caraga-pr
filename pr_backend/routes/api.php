@@ -77,6 +77,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/purchase-requests', [ProcurementController::class, 'index'])->defaults('resource', 'purchase-requests');
         Route::post('/purchase-requests', [ProcurementController::class, 'store'])->defaults('resource', 'purchase-requests');
         Route::get('/purchase-requests/usage', [ProcurementController::class, 'purchaseRequestUsage']);
+        Route::get('/purchase-requests/monitoring', [ProcurementController::class, 'purchaseRequestMonitoring']);
         Route::get('/purchase-requests/{resourceId}', [ProcurementController::class, 'show'])->defaults('resource', 'purchase-requests');
         Route::put('/purchase-requests/{resourceId}', [ProcurementController::class, 'update'])->defaults('resource', 'purchase-requests');
         Route::post('/purchase-requests/{purchaseRequest}/validate', [ProcurementController::class, 'validatePurchaseRequest']);

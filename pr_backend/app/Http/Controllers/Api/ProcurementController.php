@@ -2447,6 +2447,72 @@ class ProcurementController extends Controller
         return (string) $request->route('resource');
     }
 
+    /**
+     * Procurement Monitoring Sheet: one row per PR, tracing it through RFQ -> AOC -> PO for
+     * whichever columns already have real data behind them. A PR that hasn't reached a later
+     * stage yet just leaves those columns null — never an error, always the honest state.
+     * Paginated like every other list here; never the whole PR table.
+     */
+    public function purchaseRequestMonitoring(Request $request): JsonResponse
+    {
+        $this->guardModule('pr');
+
+        $query = PurchaseRequest::with([
+            'office', 'fundSource', 'requester', 'items',
+            'approvalActions.user',
+            'rfqs.suppliers', 'rfqs.abstractOfCanvas.winningSupplier', 'rfqs.abstractOfCanvas.approvalActions.user',
+            'rfqs.purchaseOrders.approvalActions.user',
+        ])->visibleTo($request->user())->latest('id');
+
+        $page = $query->paginate(min((int) $request->query('per_page', 20), 100));
+
+        return response()->json($page->through(fn (PurchaseRequest $pr): array => $this->formatMonitoringRow($pr)));
+    }
+
+    /** @return array<string, mixed> */
+    private function formatMonitoringRow(PurchaseRequest $pr): array
+    {
+        $rfq = $pr->rfqs->sortByDesc('id')->first();
+        $aoc = $rfq?->abstractOfCanvas;
+        $po = $rfq?->purchaseOrders->sortByDesc('id')->first();
+
+        $prApproved = $pr->approvalActions->firstWhere('action', 'Approved');
+        $aocApproved = $aoc?->approvalActions->firstWhere('action', 'Approved');
+        $repliedSuppliers = $rfq?->suppliers->filter(fn ($s) => $s->replied_at !== null) ?? collect();
+
+        return [
+            'pr_id' => $pr->id,
+            'date' => $pr->created_at?->toDateString(),
+            'end_user_unit' => trim(($pr->office?->name ?? '').($pr->requester ? ' / '.$pr->requester->name : '')),
+            'charging' => $pr->fundSource?->name,
+            'pr_no' => $pr->pr_no,
+            'description' => $pr->items->pluck('name')->filter()->implode('; '),
+            'purpose' => $pr->purpose,
+            'amount' => $pr->items->sum(fn ($item) => (float) $item->quantity * (float) $item->unit_cost),
+            'pr_signatories' => $pr->approvalActions->map(fn ($a) => "{$a->action} by {$a->user?->name}")->implode('; ') ?: null,
+            'pr_remarks' => $pr->approvalActions->firstWhere('action', 'Rejected')?->remarks
+                ?? $pr->approvalActions->firstWhere('action', 'Returned')?->remarks,
+            'rfq_no' => $rfq?->rfq_no,
+            'rfq_out_for_signature' => $rfq?->created_at?->toDateString(),
+            'rfq_in_with_signature' => $rfq?->supply_officer_signed_at?->toDateString(),
+            'rfq_out' => $rfq?->suppliers->pluck('sent_at')->filter()->min()?->toDateString(),
+            'quotation_routed_by' => $rfq?->canvasser,
+            'in_with_quotation' => $repliedSuppliers->pluck('replied_at')->max()?->toDateString(),
+            'suppliers' => $rfq?->suppliers->pluck('supplier_name')->filter()->implode('; '),
+            'rfq_remarks' => $rfq?->suppliers->pluck('remarks')->filter()->implode('; ') ?: null,
+            'aoc_out' => $aoc?->submitted_at?->toDateString(),
+            'aoc_in_with_signature' => $aocApproved?->created_at?->toDateString(),
+            'bac_member_who_signed' => $aocApproved?->user?->name,
+            'aoc_remarks' => $aoc?->bac_remarks,
+            'awarded_supplier' => $aoc?->winningSupplier?->supplier_name,
+            'po_no' => $po?->po_no,
+            'amount_awarded' => $po?->total_amount,
+            'po_out_to_budget' => $po?->submitted_at?->toDateString(),
+            'po_approved_at' => $po?->approved_by_signed_at?->toISOString(),
+            'pr_approved_at' => $prApproved?->created_at?->toDateString(),
+        ];
+    }
+
     private function format(Model $record): mixed
     {
         if (! $record instanceof PurchaseRequest) {
@@ -2465,6 +2531,7 @@ class ProcurementController extends Controller
             'status' => $record->status,
             'stage' => $record->stage,
             'date_submitted' => $record->submitted_at?->toDateString(),
+            'created_at' => $record->created_at?->toISOString(),
             'requested_by' => $record->requester ? [
                 'id' => $record->requester->id,
                 'name' => $record->requester->name,

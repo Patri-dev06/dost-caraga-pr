@@ -1,6 +1,6 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
-import { Download, FilePlus2, Filter } from "lucide-react";
+import { Download, FilePlus2, Filter, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -44,6 +44,9 @@ function PRListPage() {
         subtitle="All Purchase Requests across offices and fund sources."
         actions={
           <>
+            <Button asChild variant="outline" className="gap-2 border-border">
+              <Link to="/purchase-requests/monitoring"><ClipboardList className="h-4 w-4" /> Monitoring Sheet</Link>
+            </Button>
             <Button variant="outline" className="gap-2 border-border"><Download className="h-4 w-4" /> Export</Button>
             <Button asChild className="gap-2"><Link to="/purchase-requests/new"><FilePlus2 className="h-4 w-4" /> Create PR</Link></Button>
           </>

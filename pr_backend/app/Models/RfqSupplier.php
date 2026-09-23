@@ -18,6 +18,7 @@ class RfqSupplier extends Model
         'supplier_by',
         'sent_at',
         'reply_due_at',
+        'replied_at',
         'status',
         'replaced_by_supplier_id',
         'is_winner',
@@ -29,6 +30,7 @@ class RfqSupplier extends Model
         return [
             'sent_at' => 'datetime',
             'reply_due_at' => 'datetime',
+            'replied_at' => 'datetime',
             'is_winner' => 'boolean',
         ];
     }

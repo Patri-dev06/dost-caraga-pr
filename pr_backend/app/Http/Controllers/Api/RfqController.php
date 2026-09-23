@@ -282,7 +282,7 @@ class RfqController extends Controller
                     ['unit_price' => $item['unit_price'], 'total_price' => (float) $item['unit_price'] * (float) $rfqItem->quantity],
                 );
             }
-            $rfqSupplier->forceFill(['status' => 'Replied'])->save();
+            $rfqSupplier->forceFill(['status' => 'Replied', 'replied_at' => now()])->save();
         });
 
         $this->audit($request, 'RFQ', 'Recorded supplier quote', $rfqSupplier->supplier_name);

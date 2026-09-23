@@ -97,6 +97,11 @@ class PurchaseRequest extends Model
         return $this->hasMany(ValidationResult::class);
     }
 
+    public function rfqs(): HasMany
+    {
+        return $this->hasMany(Rfq::class);
+    }
+
     public function approvalActions(): MorphMany
     {
         return $this->morphMany(ApprovalAction::class, 'actionable');

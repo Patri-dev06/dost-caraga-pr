@@ -437,6 +437,111 @@ export async function apiGetPurchaseRequestsPage(page: number, perPage = 20, sta
   return fetchPage<BackendPurchaseRequest, PurchaseRequest>(`/purchase-requests?${params.toString()}`, mapPurchaseRequest);
 }
 
+/**
+ * One row per PR, traced through RFQ -> AOC -> PO for whichever columns already have real data.
+ * Columns for stages the system doesn't track yet (delivery, inspection, issuance, payment) are
+ * not part of this row at all — the caller renders those as a plain dash.
+ */
+export type MonitoringRow = {
+  prId: string;
+  date: string | null;
+  endUserUnit: string | null;
+  charging: string | null;
+  prNo: string | null;
+  description: string | null;
+  purpose: string | null;
+  amount: number;
+  prSignatories: string | null;
+  prRemarks: string | null;
+  rfqNo: string | null;
+  rfqOutForSignature: string | null;
+  rfqInWithSignature: string | null;
+  rfqOut: string | null;
+  quotationRoutedBy: string | null;
+  inWithQuotation: string | null;
+  suppliers: string | null;
+  rfqRemarks: string | null;
+  aocOut: string | null;
+  aocInWithSignature: string | null;
+  bacMemberWhoSigned: string | null;
+  aocRemarks: string | null;
+  awardedSupplier: string | null;
+  poNo: string | null;
+  amountAwarded: number | null;
+  poOutToBudget: string | null;
+  poApprovedAt: string | null;
+};
+
+type BackendMonitoringRow = {
+  pr_id: number;
+  date: string | null;
+  end_user_unit: string | null;
+  charging: string | null;
+  pr_no: string | null;
+  description: string | null;
+  purpose: string | null;
+  amount: number | string;
+  pr_signatories: string | null;
+  pr_remarks: string | null;
+  rfq_no: string | null;
+  rfq_out_for_signature: string | null;
+  rfq_in_with_signature: string | null;
+  rfq_out: string | null;
+  quotation_routed_by: string | null;
+  in_with_quotation: string | null;
+  suppliers: string | null;
+  rfq_remarks: string | null;
+  aoc_out: string | null;
+  aoc_in_with_signature: string | null;
+  bac_member_who_signed: string | null;
+  aoc_remarks: string | null;
+  awarded_supplier: string | null;
+  po_no: string | null;
+  amount_awarded: number | string | null;
+  po_out_to_budget: string | null;
+  po_approved_at: string | null;
+};
+
+function mapMonitoringRow(row: BackendMonitoringRow): MonitoringRow {
+  return {
+    prId: String(row.pr_id),
+    date: row.date,
+    endUserUnit: row.end_user_unit || null,
+    charging: row.charging,
+    prNo: row.pr_no,
+    description: row.description || null,
+    purpose: row.purpose,
+    amount: Number(row.amount),
+    prSignatories: row.pr_signatories,
+    prRemarks: row.pr_remarks,
+    rfqNo: row.rfq_no,
+    rfqOutForSignature: row.rfq_out_for_signature,
+    rfqInWithSignature: row.rfq_in_with_signature,
+    rfqOut: row.rfq_out,
+    quotationRoutedBy: row.quotation_routed_by,
+    inWithQuotation: row.in_with_quotation,
+    suppliers: row.suppliers || null,
+    rfqRemarks: row.rfq_remarks,
+    aocOut: row.aoc_out,
+    aocInWithSignature: row.aoc_in_with_signature,
+    bacMemberWhoSigned: row.bac_member_who_signed,
+    aocRemarks: row.aoc_remarks,
+    awardedSupplier: row.awarded_supplier,
+    poNo: row.po_no,
+    amountAwarded: row.amount_awarded == null ? null : Number(row.amount_awarded),
+    poOutToBudget: row.po_out_to_budget,
+    poApprovedAt: row.po_approved_at,
+  };
+}
+
+/** The Procurement Monitoring Sheet, one page at a time — never the whole PR table. */
+export async function apiGetPurchaseRequestMonitoringPage(page: number, perPage = 20): Promise<Page<MonitoringRow>> {
+  return fetchPage<BackendMonitoringRow, MonitoringRow>(
+    `/purchase-requests/monitoring?page=${page}&per_page=${perPage}`,
+    mapMonitoringRow,
+  );
+}
+
 /** The full Approval Inbox queue, one page at a time. */
 export async function apiGetApprovalsPage(page: number, perPage = 20): Promise<Page<PurchaseRequest>> {
   return fetchPage<BackendPurchaseRequest, PurchaseRequest>(

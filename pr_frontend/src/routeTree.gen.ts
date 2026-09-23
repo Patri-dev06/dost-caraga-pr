@@ -27,6 +27,7 @@ import { Route as ReferencesBudgetRouteImport } from './routes/references.budget
 import { Route as ReferencesAppNonCseRouteImport } from './routes/references.app-non-cse'
 import { Route as ReferencesAppCseRouteImport } from './routes/references.app-cse'
 import { Route as PurchaseRequestsNewRouteImport } from './routes/purchase-requests.new'
+import { Route as PurchaseRequestsMonitoringRouteImport } from './routes/purchase-requests.monitoring'
 import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requests.$prId'
 import { Route as PoPoIdRouteImport } from './routes/po.$poId'
 import { Route as PlanningPpmpRouteImport } from './routes/planning.ppmp'
@@ -125,6 +126,12 @@ const PurchaseRequestsNewRoute = PurchaseRequestsNewRouteImport.update({
   path: '/new',
   getParentRoute: () => PurchaseRequestsRoute,
 } as any)
+const PurchaseRequestsMonitoringRoute =
+  PurchaseRequestsMonitoringRouteImport.update({
+    id: '/monitoring',
+    path: '/monitoring',
+    getParentRoute: () => PurchaseRequestsRoute,
+  } as any)
 const PurchaseRequestsPrIdRoute = PurchaseRequestsPrIdRouteImport.update({
   id: '/$prId',
   path: '/$prId',
@@ -178,6 +185,7 @@ export interface FileRoutesByFullPath {
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/po/$poId': typeof PoPoIdRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
+  '/purchase-requests/monitoring': typeof PurchaseRequestsMonitoringRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
@@ -205,6 +213,7 @@ export interface FileRoutesByTo {
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/po/$poId': typeof PoPoIdRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
+  '/purchase-requests/monitoring': typeof PurchaseRequestsMonitoringRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
@@ -233,6 +242,7 @@ export interface FileRoutesById {
   '/planning/ppmp': typeof PlanningPpmpRouteWithChildren
   '/po/$poId': typeof PoPoIdRoute
   '/purchase-requests/$prId': typeof PurchaseRequestsPrIdRoute
+  '/purchase-requests/monitoring': typeof PurchaseRequestsMonitoringRoute
   '/purchase-requests/new': typeof PurchaseRequestsNewRoute
   '/references/app-cse': typeof ReferencesAppCseRoute
   '/references/app-non-cse': typeof ReferencesAppNonCseRoute
@@ -262,6 +272,7 @@ export interface FileRouteTypes {
     | '/planning/ppmp'
     | '/po/$poId'
     | '/purchase-requests/$prId'
+    | '/purchase-requests/monitoring'
     | '/purchase-requests/new'
     | '/references/app-cse'
     | '/references/app-non-cse'
@@ -289,6 +300,7 @@ export interface FileRouteTypes {
     | '/planning/ppmp'
     | '/po/$poId'
     | '/purchase-requests/$prId'
+    | '/purchase-requests/monitoring'
     | '/purchase-requests/new'
     | '/references/app-cse'
     | '/references/app-non-cse'
@@ -316,6 +328,7 @@ export interface FileRouteTypes {
     | '/planning/ppmp'
     | '/po/$poId'
     | '/purchase-requests/$prId'
+    | '/purchase-requests/monitoring'
     | '/purchase-requests/new'
     | '/references/app-cse'
     | '/references/app-non-cse'
@@ -476,6 +489,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PurchaseRequestsNewRouteImport
       parentRoute: typeof PurchaseRequestsRoute
     }
+    '/purchase-requests/monitoring': {
+      id: '/purchase-requests/monitoring'
+      path: '/monitoring'
+      fullPath: '/purchase-requests/monitoring'
+      preLoaderRoute: typeof PurchaseRequestsMonitoringRouteImport
+      parentRoute: typeof PurchaseRequestsRoute
+    }
     '/purchase-requests/$prId': {
       id: '/purchase-requests/$prId'
       path: '/$prId'
@@ -540,11 +560,13 @@ const PoRouteWithChildren = PoRoute._addFileChildren(PoRouteChildren)
 
 interface PurchaseRequestsRouteChildren {
   PurchaseRequestsPrIdRoute: typeof PurchaseRequestsPrIdRoute
+  PurchaseRequestsMonitoringRoute: typeof PurchaseRequestsMonitoringRoute
   PurchaseRequestsNewRoute: typeof PurchaseRequestsNewRoute
 }
 
 const PurchaseRequestsRouteChildren: PurchaseRequestsRouteChildren = {
   PurchaseRequestsPrIdRoute: PurchaseRequestsPrIdRoute,
+  PurchaseRequestsMonitoringRoute: PurchaseRequestsMonitoringRoute,
   PurchaseRequestsNewRoute: PurchaseRequestsNewRoute,
 }
 
