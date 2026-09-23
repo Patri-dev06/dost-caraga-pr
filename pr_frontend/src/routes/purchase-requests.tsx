@@ -1,13 +1,16 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
-import { Download, FilePlus2, Filter, ClipboardList } from "lucide-react";
+import { Download, FilePlus2, Filter } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
-import { PRTable } from "@/components/app/pr-table";
 import { ListPagination } from "@/components/app/list-pagination";
-import { apiGetPurchaseRequestsPage } from "@/lib/api";
+import { apiGetPurchaseRequestMonitoringPage } from "@/lib/api";
+import { exportMonitoringSheetExcel } from "@/lib/monitoring-excel";
+import { MONITORING_COLUMNS } from "@/lib/monitoring-columns";
+import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 
 const PER_PAGE = 20;
@@ -16,7 +19,7 @@ export const Route = createFileRoute("/purchase-requests")({
   head: () => ({
     meta: [
       { title: "Purchase Requests — DOST Caraga" },
-      { name: "description", content: "Browse, filter, and track all Purchase Requests across DOST Caraga offices." },
+      { name: "description", content: "Every Purchase Request traced through RFQ, AOC and PO, in the Supply Unit's monitoring sheet format." },
     ],
   }),
   component: PRListPage,
@@ -25,29 +28,50 @@ export const Route = createFileRoute("/purchase-requests")({
 function PRListPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
   // Never the whole table: one page at a time, so the list stays fast no matter how many PRs pile up.
   const { data, isLoading, error } = useQuery({
-    queryKey: ["purchase-requests", page],
-    queryFn: () => apiGetPurchaseRequestsPage(page, PER_PAGE),
+    queryKey: ["purchase-requests-monitoring", page],
+    queryFn: () => apiGetPurchaseRequestMonitoringPage(page, PER_PAGE),
   });
-  const purchaseRequests = data?.items ?? [];
+  const rows = data?.items ?? [];
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      // Always pulls the full sheet fresh, page by page, so the file matches what "Export"
+      // implies — everything — without ever holding more than one page's worth in memory.
+      const all: typeof rows = [];
+      let p = 1;
+      while (true) {
+        const chunk = await apiGetPurchaseRequestMonitoringPage(p, 100);
+        all.push(...chunk.items);
+        if (p >= chunk.lastPage) break;
+        p += 1;
+      }
+      await exportMonitoringSheetExcel(all, "monitoring-sheet");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to export the monitoring sheet.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   if (pathname !== "/purchase-requests") {
     return <Outlet />;
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
+    <div className="mx-auto w-full max-w-[100rem] space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
       <PageHeader
         eyebrow="Procurement"
         title="Purchase Requests"
-        subtitle="All Purchase Requests across offices and fund sources."
+        subtitle="Every Purchase Request traced through RFQ, AOC and PO. Columns for delivery, inspection & acceptance, issuance and payment are listed but not yet tracked by the system, so they stay blank."
         actions={
           <>
-            <Button asChild variant="outline" className="gap-2 border-border">
-              <Link to="/purchase-requests/monitoring"><ClipboardList className="h-4 w-4" /> Monitoring Sheet</Link>
+            <Button variant="outline" className="gap-2 border-border" onClick={handleExport} disabled={exporting}>
+              <Download className="h-4 w-4" /> {exporting ? "Exporting…" : "Export"}
             </Button>
-            <Button variant="outline" className="gap-2 border-border"><Download className="h-4 w-4" /> Export</Button>
             <Button asChild className="gap-2"><Link to="/purchase-requests/new"><FilePlus2 className="h-4 w-4" /> Create PR</Link></Button>
           </>
         }
@@ -94,7 +118,65 @@ function PRListPage() {
         <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">Fetching data, kindly wait.</div>
       ) : (
         <>
-          <PRTable rows={purchaseRequests} />
+          <div className="overflow-x-auto rounded-xl border border-border bg-card">
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr className="bg-secondary/40">
+                  {MONITORING_COLUMNS.map((c, i) => (
+                    <th
+                      key={i}
+                      className={cn(
+                        "whitespace-nowrap border-b border-r border-border px-2 py-2 text-left font-semibold uppercase tracking-wide text-muted-foreground last:border-r-0",
+                        !c.tracked && "bg-muted/40",
+                      )}
+                      title={!c.tracked ? "Not tracked by the system yet" : undefined}
+                    >
+                      {c.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={MONITORING_COLUMNS.length} className="px-4 py-8 text-center text-muted-foreground">
+                      No Purchase Requests yet.
+                    </td>
+                  </tr>
+                )}
+                {rows.map((row) => (
+                  <tr key={row.prId} className="hover:bg-secondary/20">
+                    {MONITORING_COLUMNS.map((c, i) => {
+                      const value = c.get(row);
+                      // PR No. (column index 3) is the click-through into that PR's own detail page.
+                      if (i === 3) {
+                        return (
+                          <td key={i} className="max-w-[16rem] truncate border-b border-r border-border px-2 py-1.5 font-semibold text-navy last:border-r-0">
+                            <Link to="/purchase-requests/$prId" params={{ prId: row.prId }} className="hover:underline">
+                              {value || row.prId}
+                            </Link>
+                          </td>
+                        );
+                      }
+                      return (
+                        <td
+                          key={i}
+                          className={cn(
+                            "max-w-[16rem] truncate border-b border-r border-border px-2 py-1.5 last:border-r-0",
+                            !c.tracked && "bg-muted/20 text-muted-foreground/50",
+                          )}
+                          title={value || undefined}
+                        >
+                          {value || (c.tracked ? "" : "—")}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
           {data && <ListPagination page={page} lastPage={data.lastPage} total={data.total} onPageChange={setPage} />}
         </>
       )}
