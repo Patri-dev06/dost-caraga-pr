@@ -72,9 +72,10 @@ class Rfq extends Model
         return $this->hasMany(RfqItem::class);
     }
 
+    /** In the order they were canvassed, so lists (and the 3-then-replacements story) read top to bottom. */
     public function suppliers(): HasMany
     {
-        return $this->hasMany(RfqSupplier::class);
+        return $this->hasMany(RfqSupplier::class)->orderBy('id');
     }
 
     public function abstractOfCanvas(): HasOne

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\Feature\Concerns\SignsRfq;
 use Tests\TestCase;
 
@@ -12,6 +13,12 @@ class MonitoringSheetTest extends TestCase
     use SignsRfq;
 
     protected bool $seed = true;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Storage::fake('local');
+    }
 
     private function loginAsAdmin(): string
     {
@@ -42,37 +49,11 @@ class MonitoringSheetTest extends TestCase
         return $prId;
     }
 
+    /** Full RFQ lifecycle through BAC approval and Supply noting the lowest bidder; returns the RFQ id. */
     private function createApprovedAoc(string $token, int $prId): int
     {
-        $rfqId = $this->withToken($token)->postJson('/api/v1/rfqs', [
-            'purchase_request_id' => $prId,
-            'canvasser' => 'Juan Dela Cruz',
-            'items' => [
-                ['description' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_abc' => 250, 'total_abc' => 250],
-            ],
-        ])->assertCreated()->json('data.id');
-
-        $this->signRfq($rfqId, 'bac-chair')->assertOk();
-        $this->signRfq($rfqId, 'bac-vice-chair')->assertOk();
-        $this->signRfq($rfqId, 'supply-officer')->assertOk();
-
-        foreach (['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants'] as $name) {
-            $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_name' => $name])->assertCreated();
-        }
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
-
-        $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
-        $rfqItemId = $rfq['items'][0]['id'];
-
-        foreach (collect($rfq['suppliers'])->pluck('id') as $i => $supplierId) {
-            $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}/suppliers/{$supplierId}/quote", [
-                'items' => [['rfq_item_id' => $rfqItemId, 'unit_price' => 240 + $i]],
-            ])->assertOk();
-        }
-
-        $aocId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()->json('data.id');
-        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/submit-for-bac-review")->assertOk();
-        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])->assertOk();
+        [$rfqId] = $this->quotedRfq($token, $prId);
+        $this->notedAoc($token, $rfqId);
 
         return $rfqId;
     }
@@ -123,6 +104,8 @@ class MonitoringSheetTest extends TestCase
         $this->assertNotNull($row['po_no']);
         $this->assertGreaterThan(0, (float) $row['amount_awarded']);
         $this->assertNotNull($row['po_out_to_budget']);
+        $this->assertStringStartsWith('Forwarded to supplier', (string) $row['po_remarks']);
+        $this->assertNull($row['po_conformed_at']);
         $this->assertNotNull($row['po_approved_at']);
     }
 

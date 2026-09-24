@@ -1,7 +1,8 @@
 // Shared column list for the Procurement Monitoring Sheet — one definition feeds both the
 // on-screen table and its Excel export, so they can never drift apart.
 //
-// Phase 1 only wires up columns backed by real data (PR through PO approval). Everything past
+// Phase 1 wires up columns backed by real data (PR through PO approval, plus the supplier's
+// conforme/waiver from the Supplier Portal). Everything past
 // that — delivery, inspection & acceptance, issuance, payment — describes workflow stages the
 // system doesn't track yet, so those columns are listed (matching the paper logbook exactly) but
 // always render blank until that work is built. See the "Procurement Monitoring Sheet" plan for
@@ -58,11 +59,12 @@ export const MONITORING_COLUMNS: MonitoringColumn[] = [
   col("PO Out to BUDGET (MA'AM MATET- ACCTNG- ORD)", (r) => fmtDate(r.poOutToBudget)),
   col("Date & Time Received- Approved PO", (r) => fmtDate(r.poApprovedAt)),
   pending("Delivery term in calendar days"),
-  pending("Remarks (if any)"),
+  col("Remarks (if any)", (r) => r.poRemarks ?? ""),
   pending("ORS/BURS NO."),
   pending("Date / Time"),
   pending("By"),
-  pending("Date Conformed"),
+  // The supplier's conforme, given on the Supplier Portal.
+  col("Date Conformed", (r) => fmtDate(r.poConformedAt)),
   pending("Date received by Supply Unit"),
   pending("Date Stamped Received by COA"),
   pending("Due date for Delivery"),

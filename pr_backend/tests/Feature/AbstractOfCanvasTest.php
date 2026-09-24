@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\Feature\Concerns\SignsRfq;
 use Tests\TestCase;
 
@@ -12,6 +13,12 @@ class AbstractOfCanvasTest extends TestCase
     use SignsRfq;
 
     protected bool $seed = true;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Storage::fake('local');
+    }
 
     private function loginAsAdmin(): string
     {
@@ -47,31 +54,7 @@ class AbstractOfCanvasTest extends TestCase
     /** Creates a fully-canvassed, quoted RFQ (all 3 suppliers replied); returns [rfqId, rfqItemId]. */
     private function createQuotedRfq(string $token, int $prId, string $category = 'Goods'): array
     {
-        $rfqId = $this->withToken($token)->postJson('/api/v1/rfqs', [
-            'purchase_request_id' => $prId,
-            'procurement_category' => $category,
-            'items' => [
-                ['description' => 'Laptop, Business Class', 'uom' => 'unit', 'quantity' => 1, 'unit_abc' => 55000, 'total_abc' => 55000],
-            ],
-        ])->assertCreated()->json('data.id');
-
-        $this->signRfq($rfqId, 'bac-chair')->assertOk();
-        $this->signRfq($rfqId, 'bac-vice-chair')->assertOk();
-        $this->signRfq($rfqId, 'supply-officer')->assertOk();
-
-        foreach (['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants'] as $name) {
-            $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_name' => $name])->assertCreated();
-        }
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
-
-        $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
-        $rfqItemId = $rfq['items'][0]['id'];
-
-        foreach (collect($rfq['suppliers'])->pluck('id') as $i => $supplierId) {
-            $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}/suppliers/{$supplierId}/quote", [
-                'items' => [['rfq_item_id' => $rfqItemId, 'unit_price' => 54000 + ($i * 1000)]],
-            ])->assertOk();
-        }
+        [$rfqId, $rfqItemId] = $this->quotedRfq($token, $prId, $category, 54000, 1000);
 
         return [$rfqId, $rfqItemId];
     }
@@ -87,26 +70,24 @@ class AbstractOfCanvasTest extends TestCase
             ->assertJsonPath('data.procurement_category', 'Goods');
     }
 
-    public function test_equipment_aoc_requires_twg_evaluation_notes(): void
+    public function test_equipment_aoc_waits_for_the_twg_notes_and_checks(): void
     {
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
-        [$rfqId] = $this->createQuotedRfq($token, $prId, 'Equipment');
+        [$rfqId, $rfqItemId] = $this->createQuotedRfq($token, $prId, 'Equipment');
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertStatus(422);
+        $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->assertJsonPath('data.status', 'TWG Evaluation');
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertStatus(422); // no TWG notes or checks yet
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc", [
-            'twg_evaluation_notes' => 'Specs verified against DOST ICT equipment standards.',
-        ])->assertCreated();
-    }
+        $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}/twg/notes", ['notes' => 'Specs verified against DOST ICT equipment standards.'])->assertOk();
+        foreach ($this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data.suppliers') as $supplier) {
+            $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/{$supplier['id']}/twg-check", [
+                'items' => [['rfq_item_id' => $rfqItemId, 'complies' => true]],
+            ])->assertOk();
+        }
 
-    public function test_venue_category_is_not_yet_supported(): void
-    {
-        $token = $this->loginAsAdmin();
-        $prId = $this->createApprovedPr($token);
-        [$rfqId] = $this->createQuotedRfq($token, $prId, 'Venue');
-
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertStatus(422);
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()
+            ->assertJsonPath('data.twg_evaluation_notes', 'Specs verified against DOST ICT equipment standards.');
     }
 
     public function test_bac_fail_routes_to_twg_and_loops_back_to_bac_review(): void
@@ -128,33 +109,46 @@ class AbstractOfCanvasTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.status', 'BAC Returned');
 
-        // TWG responds, sending it back to BAC for another review.
+        // TWG responds; the BAC decides it is satisfied, which sends it back for another signed review.
         $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/twg-respond", [
             'response' => 'Registration confirmed valid; renewal was just delayed in PhilGEPS processing.',
         ])
             ->assertOk()
+            ->assertJsonPath('data.status', 'Pending BAC Satisfaction');
+
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-satisfaction", ['satisfied' => true])
+            ->assertOk()
             ->assertJsonPath('data.status', 'Pending BAC Review');
 
+        // "Fail? No -> AOC returned to supply to note lowest bidder".
         $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])
             ->assertOk()
-            ->assertJsonPath('data.status', 'Approved');
+            ->assertJsonPath('data.status', 'For Supply Noting');
     }
 
-    public function test_bac_can_cancel_a_returned_aoc_and_its_rfq(): void
+    public function test_bac_not_satisfied_cancels_the_pr_and_asks_the_end_user_to_re_pr(): void
     {
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         [$rfqId] = $this->createQuotedRfq($token, $prId);
-
         $aocId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()->json('data.id');
+
+        // The BAC can no longer cancel straight from its remarks: only "BAC satisfied? No" cancels.
         $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/submit-for-bac-review")->assertOk();
         $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => false, 'remarks' => 'All quotes exceed the ABC.'])->assertOk();
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-satisfaction", ['satisfied' => false, 'reason' => 'x'])->assertStatus(422);
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/cancel", ['reason' => 'x'])->assertStatus(404);
 
-        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/cancel", ['reason' => 'No viable supplier.'])
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/twg-respond", ['response' => 'Re-checked against the ABC.'])->assertOk();
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-satisfaction", ['satisfied' => false])->assertStatus(422); // reason required
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-satisfaction", ['satisfied' => false, 'reason' => 'No viable supplier.'])
             ->assertOk()
             ->assertJsonPath('data.status', 'Cancelled');
 
         $this->assertDatabaseHas('rfqs', ['id' => $rfqId, 'status' => 'Cancelled']);
+        $this->assertDatabaseHas('purchase_requests', ['id' => $prId, 'status' => 'Cancelled', 'cancelled_from' => 'AOC', 'cancel_reason' => 'No viable supplier.']);
+        $this->assertDatabaseHas('user_notifications', ['type' => 'pr_cancelled', 'user_id' => \App\Models\PurchaseRequest::find($prId)->requested_by]);
+        $this->assertSame(0, \App\Models\RfqSupplier::where('rfq_id', $rfqId)->whereNotNull('portal_token_hash')->count());
     }
 
     public function test_twg_respond_is_blocked_for_a_non_designated_lead(): void
@@ -192,10 +186,11 @@ class AbstractOfCanvasTest extends TestCase
         $memberToken = $this->postJson('/api/v1/auth/login', ['email' => 'lreyes.bac@dost.gov.ph', 'password' => 'password123'])->json('token');
         $this->withToken($memberToken)->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])->assertStatus(403);
 
-        // The Vice-Chair may return it; only a BAC signatory may then cancel.
+        // The Vice-Chair may return it; only a BAC signatory may then decide whether the BAC is satisfied.
         $this->asBac('vice-chair')->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => false, 'remarks' => 'Re-check quotes.'])->assertOk();
-        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/cancel", ['reason' => 'x'])->assertStatus(403);
-        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/cancel", ['reason' => 'No viable supplier.'])->assertOk();
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/twg-respond", ['response' => 'Re-checked.'])->assertOk();
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/bac-satisfaction", ['satisfied' => false, 'reason' => 'x'])->assertStatus(403);
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-satisfaction", ['satisfied' => false, 'reason' => 'No viable supplier.'])->assertOk();
     }
 
     public function test_submitting_for_review_notifies_the_bac_chair_and_vice_chair(): void

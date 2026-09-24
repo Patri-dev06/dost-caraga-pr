@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\PurchaseOrder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Tests\Feature\Concerns\SignsRfq;
 use Tests\TestCase;
 
@@ -13,6 +14,12 @@ class PurchaseOrderApiTest extends TestCase
     use SignsRfq;
 
     protected bool $seed = true;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Storage::fake('local');
+    }
 
     private function loginAsAdmin(): string
     {
@@ -45,38 +52,11 @@ class PurchaseOrderApiTest extends TestCase
         return $prId;
     }
 
-    /** Full RFQ lifecycle through a BAC-Approved Abstract of Canvas; returns the RFQ id. */
+    /** Full RFQ lifecycle through BAC approval and Supply noting the lowest bidder; returns the RFQ id. */
     private function createApprovedAoc(string $token, int $prId): int
     {
-        $rfqId = $this->withToken($token)->postJson('/api/v1/rfqs', [
-            'purchase_request_id' => $prId,
-            'items' => [
-                ['description' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_abc' => 250, 'total_abc' => 250],
-            ],
-        ])->assertCreated()->json('data.id');
-
-        $this->signRfq($rfqId, 'bac-chair')->assertOk();
-        $this->signRfq($rfqId, 'bac-vice-chair')->assertOk();
-        $this->signRfq($rfqId, 'supply-officer')->assertOk();
-
-        foreach (['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants'] as $name) {
-            $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_name' => $name])->assertCreated();
-        }
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
-
-        $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
-        $rfqItemId = $rfq['items'][0]['id'];
-
-        foreach (collect($rfq['suppliers'])->pluck('id') as $i => $supplierId) {
-            $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}/suppliers/{$supplierId}/quote", [
-                'items' => [['rfq_item_id' => $rfqItemId, 'unit_price' => 240 + $i]],
-            ])->assertOk();
-        }
-
-        $aocId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()->json('data.id');
-        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/submit-for-bac-review")->assertOk();
-        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])
-            ->assertOk()->assertJsonPath('data.status', 'Approved');
+        [$rfqId] = $this->quotedRfq($token, $prId);
+        $this->notedAoc($token, $rfqId);
 
         return $rfqId;
     }
@@ -98,6 +78,24 @@ class PurchaseOrderApiTest extends TestCase
             ->assertJsonStructure(['data' => ['po_no']]);
 
         $this->assertDatabaseHas('purchase_orders', ['rfq_id' => $rfqId, 'supplier_name' => 'ACME Trading']);
+    }
+
+    public function test_po_waits_for_supply_to_note_the_lowest_bidder(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token);
+        [$rfqId] = $this->quotedRfq($token, $prId);
+        $aocId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->json('data.id');
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/submit-for-bac-review")->assertOk();
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])->assertOk();
+
+        // BAC-approved but not yet noted by Supply.
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertStatus(422);
+
+        // Only the Supply Officer notes it (the BAC Chair cannot).
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/note-lowest-bidder")->assertStatus(403);
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/note-lowest-bidder")->assertOk()->assertJsonPath('data.supply_noted_name', 'Supply Unit Admin');
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated();
     }
 
     public function test_po_cannot_be_generated_before_aoc_is_bac_approved(): void
@@ -139,8 +137,13 @@ class PurchaseOrderApiTest extends TestCase
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/account")
             ->assertOk()->assertJsonPath('data.status', 'Pending RD Approval');
 
-        $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/final-approve")
-            ->assertOk()->assertJsonPath('data.status', 'Approved');
+        // RD approval generates the fully signed PO and forwards it to the Supplier Portal.
+        $final = $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/final-approve")
+            ->assertOk()->assertJsonPath('data.status', 'Forwarded to Supplier');
+        $this->assertStringContainsString('/portal/po/', $final->json('portal_link.url'));
+        $this->assertTrue($final->json('portal_link.emailed'));
+        $this->assertNotNull($final->json('data.approved_by_signature'));
+        $this->assertDatabaseHas('user_notifications', ['type' => 'po_forwarded', 'user_id' => \App\Models\PurchaseRequest::find($prId)->requested_by]);
 
         $this->assertDatabaseHas('approval_actions', [
             'actionable_id' => $poId,
@@ -208,5 +211,9 @@ class PurchaseOrderApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.status', 'Delivery Waived')
             ->assertJsonPath('data.delivery_waived', true);
+
+        // "Waived -> Cancel PR -> Notify end-user to Re-PR".
+        $this->assertDatabaseHas('purchase_requests', ['id' => $prId, 'status' => 'Cancelled', 'cancelled_from' => 'PO']);
+        $this->assertDatabaseHas('user_notifications', ['type' => 'pr_cancelled']);
     }
 }

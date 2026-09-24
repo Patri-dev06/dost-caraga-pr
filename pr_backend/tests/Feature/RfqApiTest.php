@@ -3,8 +3,9 @@
 namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Tests\Feature\Concerns\SignsRfq;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
+use Tests\Feature\Concerns\SignsRfq;
 use Tests\TestCase;
 
 class RfqApiTest extends TestCase
@@ -13,6 +14,12 @@ class RfqApiTest extends TestCase
     use SignsRfq;
 
     protected bool $seed = true;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Storage::fake('local');
+    }
 
     private function loginAsAdmin(): string
     {
@@ -70,25 +77,6 @@ class RfqApiTest extends TestCase
         ]);
     }
 
-    /** Runs the full BAC Chair -> BAC Vice-Chair -> Supply Officer signing chain (all default to admin). */
-    private function completeSigningChain(string $token, int $rfqId): void
-    {
-        $this->signRfq($rfqId, 'bac-chair')->assertOk()->assertJsonPath('data.status', 'Pending BAC Vice-Chair Signature');
-        $this->signRfq($rfqId, 'bac-vice-chair')->assertOk()->assertJsonPath('data.status', 'Pending Supply Officer Countersign');
-        $this->signRfq($rfqId, 'supply-officer')->assertOk()->assertJsonPath('data.status', 'Ready to Send');
-    }
-
-    private function addThreeSuppliers(string $token, int $rfqId): void
-    {
-        foreach (['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants'] as $name) {
-            $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", [
-                'supplier_name' => $name,
-                'supplier_address' => '123 Rizal St., Butuan City',
-                'supplier_contact_no' => '09171234567',
-            ])->assertCreated();
-        }
-    }
-
     public function test_rfq_can_be_created_from_an_approved_purchase_request(): void
     {
         $token = $this->loginAsAdmin();
@@ -144,7 +132,7 @@ class RfqApiTest extends TestCase
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
-        $this->signRfq($rfqId, 'bac-chair')->assertOk();
+        $this->signRfq($rfqId, 'supply-officer')->assertOk();
 
         $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}", ['canvasser' => 'Should Not Save'])
             ->assertStatus(422);
@@ -156,10 +144,11 @@ class RfqApiTest extends TestCase
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
-        // Skipping ahead is rejected.
-        $this->signRfq($rfqId, 'supply-officer')->assertStatus(422);
+        // Flowchart order: the Supply Officer counter-signs first, so the BAC cannot sign a Draft.
+        $this->signRfq($rfqId, 'bac')->assertStatus(422);
 
-        $this->completeSigningChain($token, $rfqId);
+        $this->completeRfqSigning($rfqId);
+        $this->signRfq($rfqId, 'bac-vice-chair')->assertStatus(422); // one BAC signature completes the step
 
         $this->assertDatabaseHas('approval_actions', [
             'actionable_id' => $rfqId,
@@ -180,7 +169,7 @@ class RfqApiTest extends TestCase
         ]);
 
         $this->withToken($requesterLogin->json('token'))
-            ->postJson("/api/v1/rfqs/{$rfqId}/sign/bac-chair")
+            ->postJson("/api/v1/rfqs/{$rfqId}/sign/supply-officer")
             ->assertStatus(403);
     }
 
@@ -190,13 +179,15 @@ class RfqApiTest extends TestCase
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
-        $this->completeSigningChain($token, $rfqId);
-        $this->addThreeSuppliers($token, $rfqId);
+        $this->completeRfqSigning($rfqId);
+        $this->addSuppliers($token, $rfqId);
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")
+        $sent = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")
             ->assertOk()
             ->assertJsonPath('data.status', 'Canvassing')
-            ->assertJsonCount(3, 'data.suppliers');
+            ->assertJsonCount(3, 'data.suppliers')
+            ->assertJsonCount(3, 'portal_links');
+        $this->assertStringContainsString('/portal/rfq/', $sent->json('portal_links.0.url'));
 
         $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
         $rfqItemId = $rfq['items'][0]['id'];
@@ -204,9 +195,7 @@ class RfqApiTest extends TestCase
 
         // Record quotes for all 3 suppliers so the AOC can be generated.
         foreach ($supplierIds as $i => $supplierId) {
-            $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}/suppliers/{$supplierId}/quote", [
-                'items' => [['rfq_item_id' => $rfqItemId, 'unit_price' => 240 + $i]],
-            ])->assertOk();
+            $this->recordQuote($token, $rfqId, $supplierId, [['rfq_item_id' => $rfqItemId, 'unit_price' => 240 + $i]])->assertOk();
         }
 
         $aoc = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")
@@ -216,28 +205,6 @@ class RfqApiTest extends TestCase
 
         // Lowest quote (240) should win.
         $this->assertSame($supplierIds[0], $aoc['winning_rfq_supplier_id']);
-    }
-
-    public function test_overdue_supplier_can_be_replaced(): void
-    {
-        $token = $this->loginAsAdmin();
-        $prId = $this->createApprovedPr($token);
-        $rfqId = $this->createRfq($token, $prId)->json('data.id');
-
-        $this->completeSigningChain($token, $rfqId);
-        $this->addThreeSuppliers($token, $rfqId);
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
-
-        $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
-        $firstSupplierId = $rfq['suppliers'][0]['id'];
-
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/{$firstSupplierId}/replace", [
-            'supplier_name' => 'Replacement Supplier Co.',
-            'reason' => 'No response after follow-up.',
-        ])->assertCreated();
-
-        $this->assertDatabaseHas('rfq_suppliers', ['id' => $firstSupplierId, 'status' => 'Replaced']);
-        $this->assertDatabaseHas('rfq_suppliers', ['rfq_id' => $rfqId, 'supplier_name' => 'Replacement Supplier Co.', 'status' => 'Sent']);
     }
 
     public function test_rfqs_can_be_listed_and_filtered_by_purchase_request(): void

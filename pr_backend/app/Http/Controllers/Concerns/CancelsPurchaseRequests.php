@@ -43,13 +43,13 @@ trait CancelsPurchaseRequests
                 AbstractOfCanvas::where('rfq_id', $rfq->id)->where('status', '!=', 'Cancelled')->update(['status' => 'Cancelled']);
             }
 
+            // An answered PO keeps its (read-only) portal link; an open one is cancelled and its link revoked.
             PurchaseOrder::where('purchase_request_id', $pr->id)
                 ->whereNotIn('status', PurchaseOrder::CLOSED_STATUSES)
-                ->update(['status' => 'Cancelled', 'stage' => 'Cancelled']);
-            PurchaseOrder::where('purchase_request_id', $pr->id)->update(['portal_token_hash' => null]);
+                ->update(['status' => 'Cancelled', 'stage' => 'Cancelled', 'portal_token_hash' => null]);
         });
 
-        $this->recordAction($request, $pr, $from === 'PO' ? 'Supply' : 'BAC', 'Cancelled PR', $reason);
+        $this->recordAction($request, $pr, $from === 'AOC' ? 'BAC' : ($request->user() ? 'Supply' : 'Supplier'), 'Cancelled PR', $reason);
 
         $pr->loadMissing('requester');
         $cause = $from === 'PO'

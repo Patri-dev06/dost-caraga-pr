@@ -32,5 +32,10 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('register', fn (Request $request) => config('auth.throttle_enabled')
             ? Limit::perHour((int) config('auth.register_attempts_per_hour'))->by($request->ip())
             : Limit::none());
+
+        // The Supplier Portal is public (link tokens, no login): cap how fast one address can probe it.
+        RateLimiter::for('portal', fn (Request $request) => config('auth.throttle_enabled')
+            ? Limit::perMinute(60)->by($request->ip())
+            : Limit::none());
     }
 }

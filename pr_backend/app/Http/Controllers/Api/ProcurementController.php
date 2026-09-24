@@ -2492,11 +2492,14 @@ class ProcurementController extends Controller
             'purpose' => $pr->purpose,
             'amount' => $pr->items->sum(fn ($item) => (float) $item->quantity * (float) $item->unit_cost),
             'pr_signatories' => $pr->approvalActions->map(fn ($a) => "{$a->action} by {$a->user?->name}")->implode('; ') ?: null,
-            'pr_remarks' => $pr->approvalActions->firstWhere('action', 'Rejected')?->remarks
+            'pr_remarks' => ($pr->status === 'Cancelled' ? 'Cancelled: '.$pr->cancel_reason : null)
+                ?? $pr->approvalActions->firstWhere('action', 'Rejected')?->remarks
                 ?? $pr->approvalActions->firstWhere('action', 'Returned')?->remarks,
+            'pr_status' => $pr->status,
             'rfq_no' => $rfq?->rfq_no,
             'rfq_out_for_signature' => $rfq?->created_at?->toDateString(),
-            'rfq_in_with_signature' => $rfq?->supply_officer_signed_at?->toDateString(),
+            // The last RFQ signature: the BAC's, now that the Supply Officer counter-signs first.
+            'rfq_in_with_signature' => ($rfq?->bac_signed_at ?? $rfq?->supply_officer_signed_at)?->toDateString(),
             'rfq_out' => $rfq?->suppliers->pluck('sent_at')->filter()->min()?->toDateString(),
             'quotation_routed_by' => $rfq?->canvasser,
             'in_with_quotation' => $repliedSuppliers->pluck('replied_at')->max()?->toDateString(),
@@ -2511,6 +2514,14 @@ class ProcurementController extends Controller
             'amount_awarded' => $po?->total_amount,
             'po_out_to_budget' => $po?->submitted_at?->toDateString(),
             'po_approved_at' => $po?->approved_by_signed_at?->toISOString(),
+            // The supplier's answer on the Supplier Portal: its conforme, or why it waived delivery.
+            'po_conformed_at' => $po?->delivery_accepted_at?->toISOString(),
+            'po_remarks' => match (true) {
+                $po === null => null,
+                $po->status === 'Delivery Waived' => 'Supplier waived delivery: '.$po->delivery_waived_reason,
+                $po->status === 'Forwarded to Supplier' => 'Forwarded to supplier '.$po->forwarded_to_supplier_at?->timezone('Asia/Manila')->format('M j, Y').'; awaiting its conforme',
+                default => null,
+            },
             'pr_approved_at' => $prApproved?->created_at?->toDateString(),
         ];
     }

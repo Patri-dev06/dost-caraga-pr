@@ -472,6 +472,9 @@ export type MonitoringRow = {
   amountAwarded: number | null;
   poOutToBudget: string | null;
   poApprovedAt: string | null;
+  poConformedAt: string | null;
+  poRemarks: string | null;
+  prStatus: string | null;
 };
 
 type BackendMonitoringRow = {
@@ -502,6 +505,9 @@ type BackendMonitoringRow = {
   amount_awarded: number | string | null;
   po_out_to_budget: string | null;
   po_approved_at: string | null;
+  po_conformed_at?: string | null;
+  po_remarks?: string | null;
+  pr_status?: string | null;
 };
 
 function mapMonitoringRow(row: BackendMonitoringRow): MonitoringRow {
@@ -533,6 +539,9 @@ function mapMonitoringRow(row: BackendMonitoringRow): MonitoringRow {
     amountAwarded: row.amount_awarded == null ? null : Number(row.amount_awarded),
     poOutToBudget: row.po_out_to_budget,
     poApprovedAt: row.po_approved_at,
+    poConformedAt: row.po_conformed_at ?? null,
+    poRemarks: row.po_remarks ?? null,
+    prStatus: row.pr_status ?? null,
   };
 }
 
