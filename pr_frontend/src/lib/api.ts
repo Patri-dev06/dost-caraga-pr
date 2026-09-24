@@ -42,6 +42,8 @@ export type CurrentUser = {
   isRegionalDirector: boolean; // designated Regional Director for LIB final approval
   isBacChair: boolean; // designated BAC Chairman: reviews Abstracts of Canvas
   isBacViceChair: boolean; // designated BAC Vice-Chairman: reviews Abstracts of Canvas
+  isSupplyOfficer: boolean; // designated Supply Officer: counter-signs RFQs, notes the lowest bidder
+  isTwgLead: boolean; // designated TWG Lead: evaluates equipment, answers BAC remarks, rates venues
   hasSignature: boolean; // an e-signature is uploaded (required to sign/approve)
 };
 
@@ -913,10 +915,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-    "Content-Type": "application/json",
-  };
+  // File uploads (signed quotations) go as multipart; the browser sets that Content-Type itself.
+  const isForm = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (!isForm) headers["Content-Type"] = "application/json";
 
   if (options.auth !== false) {
     const token = getToken();
@@ -930,7 +932,7 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: options.method ?? "GET",
     headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    body: isForm ? (options.body as FormData) : options.body ? JSON.stringify(options.body) : undefined,
   });
 
   if (!response.ok) {
@@ -943,7 +945,9 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
     const validation = Array.isArray(error?.validation?.data) ? error.validation.data.map(mapValidation) : undefined;
     const data = error?.data && typeof error.data === "object" && "pr_no" in error.data ? mapPurchaseRequest(error.data) : undefined;
 
-    throw new ApiError(error.message ?? `Backend request failed with HTTP ${response.status}.`, { validation, data });
+    // Laravel validation errors carry the field messages; show the first instead of the generic one.
+    const firstFieldError = error?.errors && typeof error.errors === "object" ? (Object.values(error.errors)[0] as string[] | undefined)?.[0] : undefined;
+    throw new ApiError(firstFieldError ?? error.message ?? `Backend request failed with HTTP ${response.status}.`, { validation, data });
   }
 
   return response.json();
@@ -1045,6 +1049,8 @@ type BackendUser = {
   is_regional_director?: boolean;
   is_bac_chair?: boolean;
   is_bac_vice_chair?: boolean;
+  is_supply_officer?: boolean;
+  is_twg_lead?: boolean;
   has_signature?: boolean;
   last_login_at: string | null;
 };
@@ -1220,6 +1226,9 @@ export interface RfqQuoteItem {
   rfqItemId: string;
   unitPrice: number | null;
   totalPrice: number | null;
+  /** TWG "check each equipment with supplier": null until checked. */
+  twgComplies: boolean | null;
+  twgRemarks: string;
 }
 
 export interface RfqSupplier {
@@ -1230,12 +1239,20 @@ export interface RfqSupplier {
   supplierContactNo: string;
   supplierTin: string;
   supplierBy: string;
-  status: string; // Pending | Sent | Replied | TimedOut | Replaced
+  supplierEmail: string;
+  status: string; // Pending | Sent | Replied | TimedOut | Replaced | Failed TWG | Cancelled
   sentAt: string;
   replyDueAt: string;
+  repliedAt: string;
   isOverdue: boolean;
   isWinner: boolean;
   replacedBySupplierId: string | null;
+  hasQuotation: boolean;
+  quotationName: string;
+  quoteSubmittedVia: string; // Portal | Staff
+  portalLinkActive: boolean;
+  twgResult: "Passed" | "Failed" | null;
+  remarks: string;
   quoteItems: RfqQuoteItem[];
 }
 
@@ -1260,12 +1277,17 @@ export interface Rfq {
   suppliers: RfqSupplier[];
   canvasser: string;
   bacAction: string;
-  bacChairSignedName: string;
-  bacChairSignedAt: string;
-  bacViceChairSignedName: string;
-  bacViceChairSignedAt: string;
+  /** Flowchart order: Supply Officer counter-signs first, then ONE of the BAC Chairman / Vice-Chairman. */
   supplyOfficerSignedName: string;
   supplyOfficerSignedAt: string;
+  bacSignedName: string;
+  bacSignedRole: string;
+  bacSignedAt: string;
+  twgEvaluationNotes: string;
+  /** Directory category the canvassed suppliers must come from: Goods (Goods/Equipment) or Services (Venue). */
+  supplierCategory: "Goods" | "Services";
+  /** Suppliers cancelled for not replying, or failed by the TWG, not yet replaced ("Choose n of supplier"). */
+  openSupplierSlots: number;
   abstractOfCanvasId: string | null;
   abstractOfCanvasStatus: string | null;
   hasPurchaseOrder: boolean;
@@ -1289,6 +1311,8 @@ type BackendRfqQuoteItem = {
   rfq_item_id: number;
   unit_price: string | number | null;
   total_price: string | number | null;
+  twg_complies?: boolean | null;
+  twg_remarks?: string | null;
 };
 
 type BackendRfqSupplier = {
@@ -1299,12 +1323,20 @@ type BackendRfqSupplier = {
   supplier_contact_no: string | null;
   supplier_tin: string | null;
   supplier_by: string | null;
+  supplier_email?: string | null;
   status: string;
   sent_at: string | null;
   reply_due_at: string | null;
+  replied_at?: string | null;
   is_overdue: boolean;
   is_winner: boolean;
   replaced_by_supplier_id: number | null;
+  has_quotation?: boolean;
+  quotation_name?: string | null;
+  quote_submitted_via?: string | null;
+  portal_link_active?: boolean;
+  twg_result?: "Passed" | "Failed" | null;
+  remarks?: string | null;
   quote_items: BackendRfqQuoteItem[];
 };
 
@@ -1326,12 +1358,14 @@ type BackendRfq = {
   fund_source: string | null;
   canvasser: string | null;
   bac_action: string | null;
-  bac_chair_signed_name: string | null;
-  bac_chair_signed_at: string | null;
-  bac_vice_chair_signed_name: string | null;
-  bac_vice_chair_signed_at: string | null;
   supply_officer_signed_name: string | null;
   supply_officer_signed_at: string | null;
+  bac_signed_name?: string | null;
+  bac_signed_role?: string | null;
+  bac_signed_at?: string | null;
+  twg_evaluation_notes?: string | null;
+  supplier_category?: "Goods" | "Services";
+  open_supplier_slots?: number;
   abstract_of_canvas_id: number | null;
   abstract_of_canvas_status: string | null;
   has_purchase_order: boolean;
@@ -1360,6 +1394,8 @@ function mapRfqQuoteItem(qi: BackendRfqQuoteItem): RfqQuoteItem {
     rfqItemId: String(qi.rfq_item_id),
     unitPrice: qi.unit_price === null || qi.unit_price === undefined ? null : Number(qi.unit_price),
     totalPrice: qi.total_price === null || qi.total_price === undefined ? null : Number(qi.total_price),
+    twgComplies: qi.twg_complies ?? null,
+    twgRemarks: qi.twg_remarks ?? "",
   };
 }
 
@@ -1372,12 +1408,20 @@ function mapRfqSupplier(s: BackendRfqSupplier): RfqSupplier {
     supplierContactNo: s.supplier_contact_no ?? "",
     supplierTin: s.supplier_tin ?? "",
     supplierBy: s.supplier_by ?? "",
+    supplierEmail: s.supplier_email ?? "",
     status: s.status,
     sentAt: s.sent_at ?? "",
     replyDueAt: s.reply_due_at ?? "",
+    repliedAt: s.replied_at ?? "",
     isOverdue: s.is_overdue,
     isWinner: s.is_winner,
     replacedBySupplierId: s.replaced_by_supplier_id !== null ? String(s.replaced_by_supplier_id) : null,
+    hasQuotation: Boolean(s.has_quotation),
+    quotationName: s.quotation_name ?? "",
+    quoteSubmittedVia: s.quote_submitted_via ?? "",
+    portalLinkActive: Boolean(s.portal_link_active),
+    twgResult: s.twg_result ?? null,
+    remarks: s.remarks ?? "",
     quoteItems: s.quote_items.map(mapRfqQuoteItem),
   };
 }
@@ -1404,12 +1448,14 @@ function mapRfq(rfq: BackendRfq): Rfq {
     suppliers: (rfq.suppliers ?? []).map(mapRfqSupplier),
     canvasser: rfq.canvasser ?? "",
     bacAction: rfq.bac_action ?? "",
-    bacChairSignedName: rfq.bac_chair_signed_name ?? "",
-    bacChairSignedAt: rfq.bac_chair_signed_at ?? "",
-    bacViceChairSignedName: rfq.bac_vice_chair_signed_name ?? "",
-    bacViceChairSignedAt: rfq.bac_vice_chair_signed_at ?? "",
     supplyOfficerSignedName: rfq.supply_officer_signed_name ?? "",
     supplyOfficerSignedAt: rfq.supply_officer_signed_at ?? "",
+    bacSignedName: rfq.bac_signed_name ?? "",
+    bacSignedRole: rfq.bac_signed_role ?? "",
+    bacSignedAt: rfq.bac_signed_at ?? "",
+    twgEvaluationNotes: rfq.twg_evaluation_notes ?? "",
+    supplierCategory: rfq.supplier_category ?? (rfq.procurement_category === "Venue" ? "Services" : "Goods"),
+    openSupplierSlots: rfq.open_supplier_slots ?? 0,
     abstractOfCanvasId: rfq.abstract_of_canvas_id !== null ? String(rfq.abstract_of_canvas_id) : null,
     abstractOfCanvasStatus: rfq.abstract_of_canvas_status,
     hasPurchaseOrder: rfq.has_purchase_order,
@@ -1446,13 +1492,34 @@ export interface RfqCreatePayload {
   items: RfqItemPayload[];
 }
 
+/** A directory supplier (supplier_id), or a new one typed in — added to the directory in the RFQ's category. */
 export interface RfqSupplierPayload {
-  supplier_id?: number;
+  supplier_id?: number | string;
   supplier_name?: string;
   supplier_address?: string;
   supplier_contact_no?: string;
+  supplier_email?: string;
   supplier_tin?: string;
   supplier_by?: string;
+}
+
+/** A Supplier Portal link as returned when an RFQ/PO is sent: staff can copy it if the supplier has no email. */
+export interface PortalLink {
+  rfqSupplierId?: string;
+  supplierName?: string;
+  url: string;
+  emailed: boolean;
+}
+
+type BackendPortalLink = { rfq_supplier_id?: number; supplier_name?: string; url: string; emailed: boolean };
+
+function mapPortalLink(link: BackendPortalLink): PortalLink {
+  return {
+    rfqSupplierId: link.rfq_supplier_id !== undefined ? String(link.rfq_supplier_id) : undefined,
+    supplierName: link.supplier_name,
+    url: link.url,
+    emailed: link.emailed,
+  };
 }
 
 export async function apiGetRfqs(filters?: { purchaseRequestId?: string | number; status?: string }) {
@@ -1490,8 +1557,8 @@ export async function apiUpdateRfq(id: string | number, payload: Partial<RfqCrea
   return mapRfq(result.data);
 }
 
-/** Pre-send signing chain: BAC Chair -> BAC Vice-Chair -> Supply Officer. */
-export async function apiSignRfq(id: string | number, step: "bac-chair" | "bac-vice-chair" | "supply-officer", remarks?: string) {
+/** Flowchart signing order: the Supply Officer counter-signs, then the BAC Chairman OR Vice-Chairman. */
+export async function apiSignRfq(id: string | number, step: "supply-officer" | "bac", remarks?: string) {
   const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${id}/sign/${step}`, {
     method: "POST",
     body: { remarks },
@@ -1504,30 +1571,156 @@ export async function apiAddRfqSupplier(rfqId: string | number, payload: RfqSupp
   return mapRfq(result.data);
 }
 
-export async function apiSendRfq(rfqId: string | number) {
-  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${rfqId}/send`, { method: "POST" });
-  return { ...result, data: mapRfq(result.data) };
+export async function apiRemoveRfqSupplier(rfqId: string | number, rfqSupplierId: string | number) {
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}`, { method: "DELETE" });
+  return mapRfq(result.data);
 }
 
-/** Canvasser records one supplier's reply — no external portal, plain staff data entry. */
+/** Sends the RFQ through the Supplier Portal; returns each supplier's link (emailed when it has an address). */
+export async function apiSendRfq(rfqId: string | number) {
+  const result = await request<ApiRecord<BackendRfq> & { message: string; portal_links: BackendPortalLink[] }>(`/rfqs/${rfqId}/send`, { method: "POST" });
+  return { message: result.message, links: result.portal_links.map(mapPortalLink), data: mapRfq(result.data) };
+}
+
+/** Issues a fresh portal link for a supplier still awaiting its reply (the old link stops working). */
+export async function apiResendRfqPortalLink(rfqId: string | number, rfqSupplierId: string | number) {
+  const result = await request<{ message: string; portal_link: BackendPortalLink }>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/portal-link`, { method: "POST" });
+  return mapPortalLink(result.portal_link);
+}
+
+/** Staff fallback for a hand-delivered quotation: prices plus the scanned signed quotation. */
 export async function apiRecordRfqSupplierQuote(
   rfqId: string | number,
   rfqSupplierId: string | number,
   items: Array<{ rfq_item_id: number | string; unit_price: number }>,
+  quotation: File,
 ) {
-  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/quote`, {
-    method: "PUT",
-    body: { items },
+  const form = new FormData();
+  items.forEach((item, i) => {
+    form.append(`items[${i}][rfq_item_id]`, String(item.rfq_item_id));
+    form.append(`items[${i}][unit_price]`, String(item.unit_price));
   });
+  form.append("quotation", quotation);
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/quote`, { method: "POST", body: form });
   return mapRfq(result.data);
 }
 
-export async function apiReplaceRfqSupplier(rfqId: string | number, rfqSupplierId: string | number, payload: RfqSupplierPayload & { reason?: string }) {
-  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/replace`, {
-    method: "POST",
-    body: payload,
-  });
+/** Flowchart: "Cancel sent RFQ of Non-responding Supplier" (the hourly sweep does this after 7 days). */
+export async function apiCancelRfqSupplier(rfqId: string | number, rfqSupplierId: string | number, reason?: string) {
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/cancel`, { method: "POST", body: { reason } });
   return mapRfq(result.data);
+}
+
+/** Flowchart: "Choose n of supplier" — fills the slots left by cancelled or TWG-failed suppliers. */
+export async function apiChooseReplacementSuppliers(rfqId: string | number, suppliers: RfqSupplierPayload[]) {
+  const result = await request<ApiRecord<BackendRfq> & { message: string; portal_links: BackendPortalLink[] }>(`/rfqs/${rfqId}/suppliers/choose`, {
+    method: "POST",
+    body: { suppliers },
+  });
+  return { message: result.message, links: result.portal_links.map(mapPortalLink), data: mapRfq(result.data) };
+}
+
+/** Downloads a supplier's signed quotation (auth-protected, so fetched here rather than linked). */
+export async function apiDownloadQuotation(rfqId: string | number, rfqSupplierId: string | number, filename: string) {
+  const token = getToken();
+  if (!token) {
+    notifyAuthExpired();
+    throw new Error("Please sign in to continue.");
+  }
+  const response = await fetch(`${API_BASE_URL}/rfqs/${rfqId}/suppliers/${rfqSupplierId}/quotation`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error("Could not download the signed quotation.");
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "signed-quotation";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Equipment: the TWG's specification evaluation notes. */
+export async function apiSaveTwgNotes(rfqId: string | number, notes: string) {
+  const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/twg/notes`, { method: "PUT", body: { notes } });
+  return mapRfq(result.data);
+}
+
+/** Equipment: "Check each equipment with supplier" — complies or not, per quoted item. */
+export async function apiTwgCheckSupplier(
+  rfqId: string | number,
+  rfqSupplierId: string | number,
+  items: Array<{ rfq_item_id: string | number; complies: boolean; remarks?: string }>,
+) {
+  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/twg-check`, { method: "POST", body: { items } });
+  return { message: result.message, data: mapRfq(result.data) };
+}
+
+// ---------- Supplier directory ----------
+
+export interface Supplier {
+  id: string;
+  name: string;
+  category: "Goods" | "Services";
+  address: string;
+  contactNo: string;
+  email: string;
+  tin: string;
+  active: boolean;
+}
+
+type BackendSupplier = {
+  id: number;
+  name: string;
+  category: "Goods" | "Services";
+  address: string | null;
+  contact_no: string | null;
+  email: string | null;
+  tin: string | null;
+  active: boolean;
+};
+
+function mapSupplier(s: BackendSupplier): Supplier {
+  return {
+    id: String(s.id),
+    name: s.name,
+    category: s.category,
+    address: s.address ?? "",
+    contactNo: s.contact_no ?? "",
+    email: s.email ?? "",
+    tin: s.tin ?? "",
+    active: s.active,
+  };
+}
+
+export interface SupplierPayload {
+  name?: string;
+  category?: "Goods" | "Services";
+  address?: string;
+  contact_no?: string;
+  email?: string;
+  tin?: string;
+  active?: boolean;
+}
+
+export async function apiGetSuppliersPage(page: number, perPage = 20, filters?: { category?: string; q?: string; active?: boolean }): Promise<Page<Supplier>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (filters?.category) params.set("category", filters.category);
+  if (filters?.q) params.set("q", filters.q);
+  if (filters?.active !== undefined) params.set("active", filters.active ? "1" : "0");
+  return fetchPage<BackendSupplier, Supplier>(`/suppliers?${params.toString()}`, mapSupplier);
+}
+
+export async function apiCreateSupplier(payload: SupplierPayload) {
+  const result = await request<ApiRecord<BackendSupplier>>("/suppliers", { method: "POST", body: payload });
+  return mapSupplier(result.data);
+}
+
+export async function apiUpdateSupplier(id: string | number, payload: SupplierPayload) {
+  const result = await request<ApiRecord<BackendSupplier>>(`/suppliers/${id}`, { method: "PUT", body: payload });
+  return mapSupplier(result.data);
+}
+
+export async function apiDeactivateSupplier(id: string | number) {
+  const result = await request<ApiRecord<BackendSupplier>>(`/suppliers/${id}`, { method: "DELETE" });
+  return mapSupplier(result.data);
 }
 
 export interface AocSupplierSummary {
@@ -1535,7 +1728,19 @@ export interface AocSupplierSummary {
   supplierName: string;
   status: string;
   isWinner: boolean;
+  twgResult: "Passed" | "Failed" | null;
   totalQuoted: number;
+  quoteItems: RfqQuoteItem[];
+}
+
+/** Venue AOCs: "Individual rating of list of venue" -> "Summary of rating". */
+export interface VenueRating {
+  criteria: string[];
+  venueIds: string[];
+  raters: Array<{ id: number; name: string; role: string; rated: boolean }>;
+  summary: Array<{ rfqSupplierId: string; supplierName: string; totalQuoted: number; criteria: Record<string, number>; overall: number; rank: number }> | null;
+  myTurn: boolean;
+  ratings: Array<{ rfqSupplierId: string; raterId: number; raterRole: string; criterion: string; score: number; remarks: string }>;
 }
 
 export interface AbstractOfCanvas {
@@ -1553,8 +1758,14 @@ export interface AbstractOfCanvas {
   bacRemarks: string;
   twgResponse: string;
   submittedAt: string;
+  purchaseRequestId: string;
+  bacApprovedAt: string;
+  supplyNotedName: string;
+  supplyNotedAt: string;
+  hasPurchaseOrder: boolean;
   suppliers: AocSupplierSummary[];
   items: RfqItem[];
+  venueRating: VenueRating | null;
 }
 
 type BackendAocSupplierSummary = {
@@ -1562,7 +1773,18 @@ type BackendAocSupplierSummary = {
   supplier_name: string | null;
   status: string;
   is_winner: boolean;
+  twg_result?: "Passed" | "Failed" | null;
   total_quoted: number | string;
+  quote_items?: BackendRfqQuoteItem[];
+};
+
+type BackendVenueRating = {
+  criteria: string[];
+  venue_ids: number[];
+  raters: Array<{ id: number; name: string; role: string; rated: boolean }>;
+  summary: Array<{ rfq_supplier_id: number; supplier_name: string; total_quoted: number; criteria: Record<string, number>; overall: number; rank: number }> | null;
+  my_turn: boolean;
+  ratings: Array<{ rfq_supplier_id: number; rater_id: number; rater_role: string; criterion: string; score: number; remarks: string | null }>;
 };
 
 type BackendAbstractOfCanvas = {
@@ -1579,8 +1801,14 @@ type BackendAbstractOfCanvas = {
   bac_remarks: string | null;
   twg_response: string | null;
   submitted_at: string | null;
+  purchase_request_id?: number | null;
+  bac_approved_at?: string | null;
+  supply_noted_name?: string | null;
+  supply_noted_at?: string | null;
+  has_purchase_order?: boolean;
   suppliers?: BackendAocSupplierSummary[];
   items?: BackendRfqItem[];
+  venue_rating?: BackendVenueRating | null;
 };
 
 function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
@@ -1599,14 +1827,47 @@ function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
     bacRemarks: aoc.bac_remarks ?? "",
     twgResponse: aoc.twg_response ?? "",
     submittedAt: aoc.submitted_at ?? "",
+    purchaseRequestId: aoc.purchase_request_id ? String(aoc.purchase_request_id) : "",
+    bacApprovedAt: aoc.bac_approved_at ?? "",
+    supplyNotedName: aoc.supply_noted_name ?? "",
+    supplyNotedAt: aoc.supply_noted_at ?? "",
+    hasPurchaseOrder: Boolean(aoc.has_purchase_order),
     suppliers: (aoc.suppliers ?? []).map((s) => ({
       id: String(s.id),
       supplierName: s.supplier_name ?? "",
       status: s.status,
       isWinner: s.is_winner,
+      twgResult: s.twg_result ?? null,
       totalQuoted: Number(s.total_quoted),
+      quoteItems: (s.quote_items ?? []).map(mapRfqQuoteItem),
     })),
     items: (aoc.items ?? []).map(mapRfqItem),
+    venueRating: aoc.venue_rating
+      ? {
+          criteria: aoc.venue_rating.criteria,
+          venueIds: aoc.venue_rating.venue_ids.map(String),
+          raters: aoc.venue_rating.raters,
+          summary: aoc.venue_rating.summary
+            ? aoc.venue_rating.summary.map((v) => ({
+                rfqSupplierId: String(v.rfq_supplier_id),
+                supplierName: v.supplier_name,
+                totalQuoted: Number(v.total_quoted),
+                criteria: v.criteria,
+                overall: Number(v.overall),
+                rank: v.rank,
+              }))
+            : null,
+          myTurn: aoc.venue_rating.my_turn,
+          ratings: aoc.venue_rating.ratings.map((r) => ({
+            rfqSupplierId: String(r.rfq_supplier_id),
+            raterId: r.rater_id,
+            raterRole: r.rater_role,
+            criterion: r.criterion,
+            score: r.score,
+            remarks: r.remarks ?? "",
+          })),
+        }
+      : null,
   };
 }
 
@@ -1709,12 +1970,31 @@ export async function apiTwgRespondAoc(aocId: string | number, response: string)
   return { ...result, data: mapAbstractOfCanvas(result.data) };
 }
 
-export async function apiCancelAoc(aocId: string | number, reason?: string) {
-  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/cancel`, {
+/** Flowchart: "BAC satisfied?" after the TWG addressed its remarks. Not satisfied cancels the PR (Re-PR). */
+export async function apiBacSatisfactionAoc(aocId: string | number, satisfied: boolean, reason?: string) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/bac-satisfaction`, {
     method: "POST",
-    body: { reason },
+    body: { satisfied, reason },
   });
   return { ...result, data: mapAbstractOfCanvas(result.data) };
+}
+
+/** Flowchart: "AOC returned to supply to note lowest bidder" — the Supply Officer confirms and signs. */
+export async function apiNoteLowestBidder(aocId: string | number) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/note-lowest-bidder`, { method: "POST" });
+  return { ...result, data: mapAbstractOfCanvas(result.data) };
+}
+
+/** One rater's scores for every venue on every criterion (1-5). */
+export async function apiRateVenues(aocId: string | number, ratings: Array<{ rfq_supplier_id: string | number; criterion: string; score: number; remarks?: string }>) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/venue-ratings`, { method: "POST", body: { ratings } });
+  return { ...result, data: mapAbstractOfCanvas(result.data) };
+}
+
+/** Venue AOCs waiting on the signed-in user's rating (for "Needs Your Action"). */
+export async function apiGetMyVenueRatings(): Promise<AocSummary[]> {
+  const result = await request<{ data: BackendAocSummary[] }>("/aoc/my-venue-ratings");
+  return result.data.map(mapAocSummary);
 }
 
 export interface PurchaseOrderItem {
@@ -1755,6 +2035,15 @@ export interface PurchaseOrder {
   deliveryWaived: boolean;
   deliveryWaivedAt: string;
   deliveryWaivedReason: string;
+  /** "Generate PO (with complete digital signature)": each signer's e-signature image (data URL). */
+  budgetOfficerSignature: string;
+  accountingOfficerSignature: string;
+  approvedBySignature: string;
+  supplierEmail: string;
+  forwardedToSupplierAt: string;
+  portalLinkActive: boolean;
+  deliveryAcceptedAt: string;
+  deliveryRespondedBy: string;
   items: PurchaseOrderItem[];
   status: string;
   stage: string;
@@ -1799,6 +2088,14 @@ type BackendPurchaseOrder = {
   delivery_waived: boolean;
   delivery_waived_at: string | null;
   delivery_waived_reason: string | null;
+  budget_officer_signature?: string | null;
+  accounting_officer_signature?: string | null;
+  approved_by_signature?: string | null;
+  supplier_email?: string | null;
+  forwarded_to_supplier_at?: string | null;
+  portal_link_active?: boolean;
+  delivery_accepted_at?: string | null;
+  delivery_responded_by?: string | null;
   status: string;
   stage: string;
   date_submitted?: string | null;
@@ -1847,6 +2144,14 @@ function mapPurchaseOrder(po: BackendPurchaseOrder): PurchaseOrder {
     deliveryWaived: po.delivery_waived,
     deliveryWaivedAt: po.delivery_waived_at ?? "",
     deliveryWaivedReason: po.delivery_waived_reason ?? "",
+    budgetOfficerSignature: po.budget_officer_signature ?? "",
+    accountingOfficerSignature: po.accounting_officer_signature ?? "",
+    approvedBySignature: po.approved_by_signature ?? "",
+    supplierEmail: po.supplier_email ?? "",
+    forwardedToSupplierAt: po.forwarded_to_supplier_at ?? "",
+    portalLinkActive: Boolean(po.portal_link_active),
+    deliveryAcceptedAt: po.delivery_accepted_at ?? "",
+    deliveryRespondedBy: po.delivery_responded_by ?? "",
     items: po.items.map(mapPurchaseOrderItem),
     status: po.status,
     stage: po.stage,
@@ -1921,9 +2226,16 @@ export async function apiAccountPo(id: string | number, remarks?: string) {
   return { ...result, data: mapPurchaseOrder(result.data) };
 }
 
+/** RD final approval; the fully signed PO is then forwarded to the Supplier Portal (link returned). */
 export async function apiFinalApprovePo(id: string | number, remarks?: string) {
-  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/final-approve`, { method: "POST", body: { remarks } });
-  return { ...result, data: mapPurchaseOrder(result.data) };
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string; portal_link?: BackendPortalLink }>(`/approvals/po/${id}/final-approve`, { method: "POST", body: { remarks } });
+  return { message: result.message, link: result.portal_link ? mapPortalLink(result.portal_link) : null, data: mapPurchaseOrder(result.data) };
+}
+
+/** Re-issues the PO's Supplier Portal link (the old one stops working) and emails it again. */
+export async function apiForwardPoToSupplier(id: string | number) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string; portal_link: BackendPortalLink }>(`/purchase-orders/${id}/forward`, { method: "POST" });
+  return { message: result.message, link: mapPortalLink(result.portal_link), data: mapPurchaseOrder(result.data) };
 }
 
 export async function apiRejectPo(id: string | number, reason: string) {
@@ -1968,6 +2280,8 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     isRegionalDirector: Boolean(user.is_regional_director),
     isBacChair: Boolean(user.is_bac_chair),
     isBacViceChair: Boolean(user.is_bac_vice_chair),
+    isSupplyOfficer: Boolean(user.is_supply_officer),
+    isTwgLead: Boolean(user.is_twg_lead),
     hasSignature: Boolean(user.has_signature),
   };
 }
@@ -2139,4 +2453,187 @@ function textFromRelation(value: string | number | BackendNamedRecord | null | u
 
 function dateOnly(value: string | null | undefined) {
   return value?.split("T")[0] ?? null;
+}
+
+// ---------- Supplier Portal (public: the link token is the only credential) ----------
+
+export interface PortalRfq {
+  agencyName: string;
+  rfqNo: string;
+  purpose: string;
+  procurementCategory: string;
+  rfqDate: string;
+  placeOfDelivery: string;
+  supplierName: string;
+  status: string;
+  canSubmit: boolean;
+  replyDueAt: string;
+  repliedAt: string;
+  quotationName: string;
+  items: Array<{ id: string; itemNo: number; description: string; uom: string; quantity: number; unitAbc: number; totalAbc: number; unitPrice: number | null; totalPrice: number | null }>;
+}
+
+type BackendPortalRfq = {
+  agency_name: string;
+  rfq_no: string;
+  purpose: string | null;
+  procurement_category: string;
+  rfq_date: string | null;
+  place_of_delivery: string | null;
+  supplier_name: string | null;
+  status: string;
+  can_submit: boolean;
+  reply_due_at: string | null;
+  replied_at: string | null;
+  quotation_name: string | null;
+  items: Array<{ id: number; item_no: number; description: string | null; uom: string | null; quantity: string | number; unit_abc: string | number | null; total_abc: string | number | null; unit_price: string | number | null; total_price: string | number | null }>;
+};
+
+function mapPortalRfq(r: BackendPortalRfq): PortalRfq {
+  return {
+    agencyName: r.agency_name,
+    rfqNo: r.rfq_no,
+    purpose: r.purpose ?? "",
+    procurementCategory: r.procurement_category,
+    rfqDate: r.rfq_date ?? "",
+    placeOfDelivery: r.place_of_delivery ?? "",
+    supplierName: r.supplier_name ?? "",
+    status: r.status,
+    canSubmit: r.can_submit,
+    replyDueAt: r.reply_due_at ?? "",
+    repliedAt: r.replied_at ?? "",
+    quotationName: r.quotation_name ?? "",
+    items: r.items.map((it) => ({
+      id: String(it.id),
+      itemNo: it.item_no,
+      description: it.description ?? "",
+      uom: it.uom ?? "",
+      quantity: Number(it.quantity),
+      unitAbc: Number(it.unit_abc ?? 0),
+      totalAbc: Number(it.total_abc ?? 0),
+      unitPrice: it.unit_price === null ? null : Number(it.unit_price),
+      totalPrice: it.total_price === null ? null : Number(it.total_price),
+    })),
+  };
+}
+
+export async function apiPortalGetRfq(token: string) {
+  const result = await request<ApiRecord<BackendPortalRfq>>(`/portal/rfq/${encodeURIComponent(token)}`, { auth: false });
+  return mapPortalRfq(result.data);
+}
+
+export async function apiPortalSubmitQuote(token: string, items: Array<{ rfq_item_id: string; unit_price: number }>, quotation: File) {
+  const form = new FormData();
+  items.forEach((item, i) => {
+    form.append(`items[${i}][rfq_item_id]`, item.rfq_item_id);
+    form.append(`items[${i}][unit_price]`, String(item.unit_price));
+  });
+  form.append("quotation", quotation);
+  const result = await request<ApiRecord<BackendPortalRfq> & { message: string }>(`/portal/rfq/${encodeURIComponent(token)}/quote`, { method: "POST", body: form, auth: false });
+  return { message: result.message, data: mapPortalRfq(result.data) };
+}
+
+export interface PortalPoSigner {
+  name: string;
+  signedAt: string;
+  signature: string;
+}
+
+export interface PortalPo {
+  agencyName: string;
+  poNo: string;
+  poDate: string;
+  prNo: string;
+  supplierName: string;
+  supplierAddress: string;
+  supplierTin: string;
+  placeOfDelivery: string;
+  deliveryDate: string;
+  modeOfProcurement: string;
+  termsAndConditions: string;
+  totalAmount: number;
+  items: Array<{ itemNo: number; description: string; uom: string; quantity: number; unitCost: number; totalCost: number }>;
+  signatures: { budgetOfficer: PortalPoSigner | null; accountingOfficer: PortalPoSigner | null; approvedBy: PortalPoSigner | null };
+  status: string;
+  canRespond: boolean;
+  deliveryWaived: boolean;
+  deliveryWaivedReason: string;
+  deliveryAcceptedAt: string;
+}
+
+type BackendPortalSigner = { name: string; signed_at: string; signature: string | null } | null;
+
+type BackendPortalPo = {
+  agency_name: string;
+  po_no: string;
+  po_date: string | null;
+  pr_no: string | null;
+  supplier_name: string | null;
+  supplier_address: string | null;
+  supplier_tin: string | null;
+  place_of_delivery: string | null;
+  delivery_date: string | null;
+  mode_of_procurement: string | null;
+  terms_and_conditions: string | null;
+  total_amount: string | number;
+  items: Array<{ item_no: number; description: string | null; uom: string | null; quantity: string | number; unit_cost: string | number; total_cost: string | number }>;
+  signatures: { budget_officer: BackendPortalSigner; accounting_officer: BackendPortalSigner; approved_by: BackendPortalSigner };
+  status: string;
+  can_respond: boolean;
+  delivery_waived: boolean;
+  delivery_waived_reason: string | null;
+  delivery_accepted_at: string | null;
+};
+
+function mapPortalSigner(s: BackendPortalSigner): PortalPoSigner | null {
+  return s ? { name: s.name, signedAt: s.signed_at, signature: s.signature ?? "" } : null;
+}
+
+function mapPortalPo(p: BackendPortalPo): PortalPo {
+  return {
+    agencyName: p.agency_name,
+    poNo: p.po_no,
+    poDate: p.po_date ?? "",
+    prNo: p.pr_no ?? "",
+    supplierName: p.supplier_name ?? "",
+    supplierAddress: p.supplier_address ?? "",
+    supplierTin: p.supplier_tin ?? "",
+    placeOfDelivery: p.place_of_delivery ?? "",
+    deliveryDate: p.delivery_date ?? "",
+    modeOfProcurement: p.mode_of_procurement ?? "",
+    termsAndConditions: p.terms_and_conditions ?? "",
+    totalAmount: Number(p.total_amount),
+    items: p.items.map((it) => ({
+      itemNo: it.item_no,
+      description: it.description ?? "",
+      uom: it.uom ?? "",
+      quantity: Number(it.quantity),
+      unitCost: Number(it.unit_cost),
+      totalCost: Number(it.total_cost),
+    })),
+    signatures: {
+      budgetOfficer: mapPortalSigner(p.signatures.budget_officer),
+      accountingOfficer: mapPortalSigner(p.signatures.accounting_officer),
+      approvedBy: mapPortalSigner(p.signatures.approved_by),
+    },
+    status: p.status,
+    canRespond: p.can_respond,
+    deliveryWaived: p.delivery_waived,
+    deliveryWaivedReason: p.delivery_waived_reason ?? "",
+    deliveryAcceptedAt: p.delivery_accepted_at ?? "",
+  };
+}
+
+export async function apiPortalGetPo(token: string) {
+  const result = await request<ApiRecord<BackendPortalPo>>(`/portal/po/${encodeURIComponent(token)}`, { auth: false });
+  return mapPortalPo(result.data);
+}
+
+export async function apiPortalRespondPo(token: string, waived: boolean, reason?: string) {
+  const result = await request<ApiRecord<BackendPortalPo> & { message: string }>(`/portal/po/${encodeURIComponent(token)}/respond`, {
+    method: "POST",
+    body: { waived, reason },
+    auth: false,
+  });
+  return { message: result.message, data: mapPortalPo(result.data) };
 }

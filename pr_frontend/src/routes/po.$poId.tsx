@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, FileSpreadsheet, Loader2, PackageCheck, PackageX, Save, SendHorizontal, XCircle } from "lucide-react";
+import { ArrowLeft, Ban, CheckCircle2, FileSpreadsheet, Link2, Loader2, PackageCheck, PackageX, Save, SendHorizontal, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,18 +17,24 @@ import {
   apiFinalApprovePo,
   apiRejectPo,
   apiDeliverPo,
+  apiForwardPoToSupplier,
+  type PortalLink,
   type PurchaseOrder,
   type PurchaseOrderItem,
 } from "@/lib/api";
+import { PortalLinksCard } from "@/components/app/supplier-picker";
 import { fmtAmount } from "@/lib/lib-store";
 import { exportPurchaseOrderExcel } from "@/lib/po-excel";
 import { toast } from "sonner";
 
 const PO_CHAIN_STEPS = [
-  { pendingStatus: "Pending Budget Obligation", label: "Budget Officer", nameKey: "budgetOfficerName" as const, atKey: "budgetOfficerSignedAt" as const },
-  { pendingStatus: "Pending Accounting", label: "Accounting Officer", nameKey: "accountingOfficerName" as const, atKey: "accountingOfficerSignedAt" as const },
-  { pendingStatus: "Pending RD Approval", label: "Regional Director", nameKey: "approvedByName" as const, atKey: "approvedBySignedAt" as const },
+  { pendingStatus: "Pending Budget Obligation", label: "Budget Officer (obligation)", nameKey: "budgetOfficerName" as const, atKey: "budgetOfficerSignedAt" as const, sigKey: "budgetOfficerSignature" as const },
+  { pendingStatus: "Pending Accounting", label: "Accounting Officer", nameKey: "accountingOfficerName" as const, atKey: "accountingOfficerSignedAt" as const, sigKey: "accountingOfficerSignature" as const },
+  { pendingStatus: "Pending RD Approval", label: "Regional Director (final approval)", nameKey: "approvedByName" as const, atKey: "approvedBySignedAt" as const, sigKey: "approvedBySignature" as const },
 ];
+
+/** Statuses after the RD signed: the PO is with the supplier, or the supplier has answered. */
+const AWAITING_SUPPLIER = ["Approved", "Forwarded to Supplier"];
 
 export const Route = createFileRoute("/po/$poId")({
   head: () => ({ meta: [{ title: "Purchase Order — DOST Caraga" }] }),
@@ -55,6 +61,7 @@ function PurchaseOrderDetailPage() {
   const [terms, setTerms] = useState("");
   const [items, setItems] = useState<EditableItem[]>([]);
   const [chainBusy, setChainBusy] = useState(false);
+  const [issuedLinks, setIssuedLinks] = useState<PortalLink[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -78,11 +85,12 @@ function PurchaseOrderDetailPage() {
   const editable = po?.status === "Draft";
   const total = items.reduce((sum, it) => sum + (Number(it.quantityInput) || 0) * (Number(it.unitCostInput) || 0), 0);
 
-  async function runChainAction(action: () => Promise<{ data: PurchaseOrder; message: string }>) {
+  async function runChainAction(action: () => Promise<{ data: PurchaseOrder; message: string; link?: PortalLink | null }>) {
     setChainBusy(true);
     try {
       const result = await action();
       setPo(result.data);
+      if (result.link) setIssuedLinks([{ ...result.link, supplierName: result.data.supplierName }]);
       toast.success(result.message);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Action failed.");
@@ -98,7 +106,7 @@ function PurchaseOrderDetailPage() {
   }
 
   function handleDeliver(waived: boolean) {
-    const reason = waived ? window.prompt("Reason the supplier waived delivery:") : undefined;
+    const reason = waived ? window.prompt("Reason the supplier waived delivery (this cancels the Purchase Request so the end-user can Re-PR):") : undefined;
     if (waived && !reason) return;
     runChainAction(() => apiDeliverPo(poId, waived, reason ?? undefined));
   }
@@ -136,7 +144,7 @@ function PurchaseOrderDetailPage() {
     try {
       const updated = await apiSubmitPurchaseOrder(po.id);
       setPo(updated);
-      toast.success("Purchase Order submitted for recommendation.");
+      toast.success("Purchase Order submitted to Budget for obligation.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to submit Purchase Order.");
     } finally {
@@ -277,7 +285,10 @@ function PurchaseOrderDetailPage() {
                     {step.label}
                   </p>
                   {isDone ? (
-                    <p className="mt-1 text-muted-foreground">Signed by {signedName}<br />{signedAt && new Date(signedAt).toLocaleString("en-PH")}</p>
+                    <>
+                      {po[step.sigKey] && <img src={po[step.sigKey]} alt={`${signedName}'s e-signature`} className="mt-1 h-10 max-w-full object-contain" />}
+                      <p className="mt-1 text-muted-foreground">Signed by {signedName}<br />{signedAt && new Date(signedAt).toLocaleString("en-PH")}</p>
+                    </>
                   ) : isCurrent ? (
                     <div className="mt-2 flex gap-1.5">
                       <Button
@@ -310,29 +321,57 @@ function PurchaseOrderDetailPage() {
         </Card>
       )}
 
-      {/* Delivery outcome */}
-      {po.status === "Approved" && (
-        <Card className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-4">
+      <PortalLinksCard links={issuedLinks} onDismiss={() => setIssuedLinks([])} />
+
+      {po.status === "Cancelled" && (
+        <Card className="flex items-start gap-3 border border-destructive/30 bg-destructive/5 p-4 text-sm">
+          <Ban className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+          <p className="font-semibold text-destructive">This Purchase Order was cancelled with its Purchase Request.</p>
+        </Card>
+      )}
+
+      {/* Flowchart: Forward signed PO to Supplier Portal -> Does supplier waive to deliver? */}
+      {AWAITING_SUPPLIER.includes(po.status) && (
+        <Card className="space-y-3 border border-border bg-card p-4">
           <div>
-            <h2 className="text-sm font-semibold text-navy">Delivery</h2>
-            <p className="text-xs text-muted-foreground">Record whether the winning supplier delivered or waived.</p>
+            <h2 className="text-sm font-semibold text-navy">With the supplier</h2>
+            <p className="text-xs text-muted-foreground">
+              {po.forwardedToSupplierAt
+                ? `The fully signed PO was forwarded to ${po.supplierName} on the Supplier Portal ${new Date(po.forwardedToSupplierAt).toLocaleString("en-PH")}${po.supplierEmail ? ` and emailed to ${po.supplierEmail}` : " — no email on file, so copy its link"}. The supplier confirms delivery or waives it there; you can also record its answer here.`
+                : "The PO is fully signed. Forward it to the supplier through the Supplier Portal."}
+            </p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" className="gap-1.5 border-warning/40 text-warning-foreground hover:bg-warning/10" disabled={chainBusy} onClick={() => handleDeliver(true)}>
-              <PackageX className="h-4 w-4" /> Supplier Waived Delivery
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" disabled={chainBusy} onClick={() => runChainAction(() => apiForwardPoToSupplier(poId))}>
+              <Link2 className="h-4 w-4" /> {po.forwardedToSupplierAt ? "New portal link" : "Forward to supplier"}
             </Button>
-            <Button className="gap-1.5" disabled={chainBusy} onClick={() => handleDeliver(false)}>
-              <PackageCheck className="h-4 w-4" /> Delivery Accepted
+            <Button variant="outline" size="sm" className="gap-1.5 border-warning/40 text-warning-foreground hover:bg-warning/10" disabled={chainBusy} onClick={() => handleDeliver(true)}>
+              <PackageX className="h-4 w-4" /> Supplier waived delivery
+            </Button>
+            <Button size="sm" className="gap-1.5" disabled={chainBusy} onClick={() => handleDeliver(false)}>
+              <PackageCheck className="h-4 w-4" /> Supplier will deliver
             </Button>
           </div>
+        </Card>
+      )}
+      {po.status === "Delivery Accepted" && (
+        <Card className="border border-success/30 bg-success/5 p-4 text-sm">
+          <p className="font-semibold text-success">
+            <CheckCircle2 className="mr-1 inline h-4 w-4" /> The supplier confirmed it will deliver.
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            {po.deliveryRespondedBy ? `Answered by ${po.deliveryRespondedBy}` : "Answered"}
+            {po.deliveryAcceptedAt ? ` on ${new Date(po.deliveryAcceptedAt).toLocaleString("en-PH")}` : ""}.
+          </p>
         </Card>
       )}
       {po.status === "Delivery Waived" && (
         <Card className="border border-warning/30 bg-warning/5 p-4">
           <p className="text-sm font-semibold text-warning-foreground">Supplier waived delivery</p>
           <p className="mt-1 text-sm text-foreground">{po.deliveryWaivedReason}</p>
-          <Button asChild size="sm" className="mt-3 gap-1.5">
-            <Link to="/rfq">Start a New RFQ Canvass</Link>
+          <p className="mt-1 text-xs text-muted-foreground">The Purchase Request was cancelled and the end-user was asked to Re-PR.</p>
+          <Button asChild size="sm" variant="outline" className="mt-3 gap-1.5 border-border">
+            <Link to="/purchase-requests/$prId" params={{ prId: po.prId }}>Open PR {po.prNo}</Link>
           </Button>
         </Card>
       )}

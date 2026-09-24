@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ValidationRouteImport } from './routes/validation'
 import { Route as UsersRouteImport } from './routes/users'
+import { Route as SuppliersRouteImport } from './routes/suppliers'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as RfqRouteImport } from './routes/rfq'
 import { Route as ReportsRouteImport } from './routes/reports'
@@ -32,6 +33,8 @@ import { Route as PoPoIdRouteImport } from './routes/po.$poId'
 import { Route as PlanningPpmpRouteImport } from './routes/planning.ppmp'
 import { Route as PlanningLibRouteImport } from './routes/planning.lib'
 import { Route as AocAocIdRouteImport } from './routes/aoc.$aocId'
+import { Route as PortalRfqTokenRouteImport } from './routes/portal.rfq.$token'
+import { Route as PortalPoTokenRouteImport } from './routes/portal.po.$token'
 import { Route as PlanningPpmpNewRouteImport } from './routes/planning.ppmp.new'
 import { Route as PlanningLibNewRouteImport } from './routes/planning.lib.new'
 
@@ -43,6 +46,11 @@ const ValidationRoute = ValidationRouteImport.update({
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuppliersRoute = SuppliersRouteImport.update({
+  id: '/suppliers',
+  path: '/suppliers',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -150,6 +158,16 @@ const AocAocIdRoute = AocAocIdRouteImport.update({
   path: '/aoc/$aocId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PortalRfqTokenRoute = PortalRfqTokenRouteImport.update({
+  id: '/portal/rfq/$token',
+  path: '/portal/rfq/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortalPoTokenRoute = PortalPoTokenRouteImport.update({
+  id: '/portal/po/$token',
+  path: '/portal/po/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PlanningPpmpNewRoute = PlanningPpmpNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -171,6 +189,7 @@ export interface FileRoutesByFullPath {
   '/reports': typeof ReportsRoute
   '/rfq': typeof RfqRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/suppliers': typeof SuppliersRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
   '/aoc/$aocId': typeof AocAocIdRoute
@@ -187,6 +206,8 @@ export interface FileRoutesByFullPath {
   '/rfq/new': typeof RfqNewRoute
   '/planning/lib/new': typeof PlanningLibNewRoute
   '/planning/ppmp/new': typeof PlanningPpmpNewRoute
+  '/portal/po/$token': typeof PortalPoTokenRoute
+  '/portal/rfq/$token': typeof PortalRfqTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -198,6 +219,7 @@ export interface FileRoutesByTo {
   '/reports': typeof ReportsRoute
   '/rfq': typeof RfqRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/suppliers': typeof SuppliersRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
   '/aoc/$aocId': typeof AocAocIdRoute
@@ -214,6 +236,8 @@ export interface FileRoutesByTo {
   '/rfq/new': typeof RfqNewRoute
   '/planning/lib/new': typeof PlanningLibNewRoute
   '/planning/ppmp/new': typeof PlanningPpmpNewRoute
+  '/portal/po/$token': typeof PortalPoTokenRoute
+  '/portal/rfq/$token': typeof PortalRfqTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -226,6 +250,7 @@ export interface FileRoutesById {
   '/reports': typeof ReportsRoute
   '/rfq': typeof RfqRouteWithChildren
   '/settings': typeof SettingsRoute
+  '/suppliers': typeof SuppliersRoute
   '/users': typeof UsersRoute
   '/validation': typeof ValidationRoute
   '/aoc/$aocId': typeof AocAocIdRoute
@@ -242,6 +267,8 @@ export interface FileRoutesById {
   '/rfq/new': typeof RfqNewRoute
   '/planning/lib/new': typeof PlanningLibNewRoute
   '/planning/ppmp/new': typeof PlanningPpmpNewRoute
+  '/portal/po/$token': typeof PortalPoTokenRoute
+  '/portal/rfq/$token': typeof PortalRfqTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -255,6 +282,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/rfq'
     | '/settings'
+    | '/suppliers'
     | '/users'
     | '/validation'
     | '/aoc/$aocId'
@@ -271,6 +299,8 @@ export interface FileRouteTypes {
     | '/rfq/new'
     | '/planning/lib/new'
     | '/planning/ppmp/new'
+    | '/portal/po/$token'
+    | '/portal/rfq/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -282,6 +312,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/rfq'
     | '/settings'
+    | '/suppliers'
     | '/users'
     | '/validation'
     | '/aoc/$aocId'
@@ -298,6 +329,8 @@ export interface FileRouteTypes {
     | '/rfq/new'
     | '/planning/lib/new'
     | '/planning/ppmp/new'
+    | '/portal/po/$token'
+    | '/portal/rfq/$token'
   id:
     | '__root__'
     | '/'
@@ -309,6 +342,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/rfq'
     | '/settings'
+    | '/suppliers'
     | '/users'
     | '/validation'
     | '/aoc/$aocId'
@@ -325,6 +359,8 @@ export interface FileRouteTypes {
     | '/rfq/new'
     | '/planning/lib/new'
     | '/planning/ppmp/new'
+    | '/portal/po/$token'
+    | '/portal/rfq/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -337,6 +373,7 @@ export interface RootRouteChildren {
   ReportsRoute: typeof ReportsRoute
   RfqRoute: typeof RfqRouteWithChildren
   SettingsRoute: typeof SettingsRoute
+  SuppliersRoute: typeof SuppliersRoute
   UsersRoute: typeof UsersRoute
   ValidationRoute: typeof ValidationRoute
   AocAocIdRoute: typeof AocAocIdRoute
@@ -346,6 +383,8 @@ export interface RootRouteChildren {
   ReferencesAppNonCseRoute: typeof ReferencesAppNonCseRoute
   ReferencesBudgetRoute: typeof ReferencesBudgetRoute
   ReferencesPpmpRoute: typeof ReferencesPpmpRoute
+  PortalPoTokenRoute: typeof PortalPoTokenRoute
+  PortalRfqTokenRoute: typeof PortalRfqTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -362,6 +401,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/users'
       preLoaderRoute: typeof UsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/suppliers': {
+      id: '/suppliers'
+      path: '/suppliers'
+      fullPath: '/suppliers'
+      preLoaderRoute: typeof SuppliersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -511,6 +557,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AocAocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/portal/rfq/$token': {
+      id: '/portal/rfq/$token'
+      path: '/portal/rfq/$token'
+      fullPath: '/portal/rfq/$token'
+      preLoaderRoute: typeof PortalRfqTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portal/po/$token': {
+      id: '/portal/po/$token'
+      path: '/portal/po/$token'
+      fullPath: '/portal/po/$token'
+      preLoaderRoute: typeof PortalPoTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/planning/ppmp/new': {
       id: '/planning/ppmp/new'
       path: '/new'
@@ -597,6 +657,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReportsRoute: ReportsRoute,
   RfqRoute: RfqRouteWithChildren,
   SettingsRoute: SettingsRoute,
+  SuppliersRoute: SuppliersRoute,
   UsersRoute: UsersRoute,
   ValidationRoute: ValidationRoute,
   AocAocIdRoute: AocAocIdRoute,
@@ -606,6 +667,8 @@ const rootRouteChildren: RootRouteChildren = {
   ReferencesAppNonCseRoute: ReferencesAppNonCseRoute,
   ReferencesBudgetRoute: ReferencesBudgetRoute,
   ReferencesPpmpRoute: ReferencesPpmpRoute,
+  PortalPoTokenRoute: PortalPoTokenRoute,
+  PortalRfqTokenRoute: PortalRfqTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

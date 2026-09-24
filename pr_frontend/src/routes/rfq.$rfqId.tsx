@@ -1,6 +1,20 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, ClipboardCheck, FileSpreadsheet, Loader2, Plus, RefreshCw, Save, Send, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Ban,
+  CheckCircle2,
+  ClipboardCheck,
+  Download,
+  FileSpreadsheet,
+  Link2,
+  Loader2,
+  Plus,
+  Save,
+  Send,
+  Trash2,
+  XCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,19 +23,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
+import { PortalLinksCard, SupplierPicker } from "@/components/app/supplier-picker";
 import {
   apiGetRfq,
   apiUpdateRfq,
   apiSignRfq,
   apiAddRfqSupplier,
+  apiRemoveRfqSupplier,
   apiSendRfq,
+  apiResendRfqPortalLink,
   apiRecordRfqSupplierQuote,
-  apiReplaceRfqSupplier,
+  apiCancelRfqSupplier,
+  apiChooseReplacementSuppliers,
+  apiDownloadQuotation,
+  apiSaveTwgNotes,
+  apiTwgCheckSupplier,
   apiGenerateAoc,
+  type PortalLink,
   type Rfq,
   type RfqCreatePayload,
+  type RfqSupplier,
+  type RfqSupplierPayload,
 } from "@/lib/api";
 import { fmtAmount, parseAmount } from "@/lib/lib-store";
+import { useCurrentUser } from "@/lib/current-user";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/rfq/$rfqId")({
@@ -29,11 +54,8 @@ export const Route = createFileRoute("/rfq/$rfqId")({
   component: RfqDetailPage,
 });
 
-const SIGN_STEPS = [
-  { key: "bac-chair" as const, label: "BAC Chair", pendingStatus: "Draft" },
-  { key: "bac-vice-chair" as const, label: "BAC Vice-Chair", pendingStatus: "Pending BAC Vice-Chair Signature" },
-  { key: "supply-officer" as const, label: "Supply Officer", pendingStatus: "Pending Supply Officer Countersign" },
-];
+/** Statuses before the RFQ goes out, when its 3 suppliers are still being chosen. */
+const PRE_SEND = ["Draft", "Pending Supply Officer Countersign", "Pending BAC Signature", "Ready to Send"];
 
 interface EditDoc {
   procurementCategory: string;
@@ -89,24 +111,37 @@ function itemsFromRfq(rfq: Rfq): EditItem[] {
   }));
 }
 
+const fmtDateTime = (value: string) => (value ? new Date(value).toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" }) : "");
+const quoteTotal = (s: RfqSupplier) => s.quoteItems.reduce((sum, qi) => sum + (qi.totalPrice ?? 0), 0);
+
 function RfqDetailPage() {
   const { rfqId } = Route.useParams();
   const navigate = useNavigate();
+  const { user } = useCurrentUser();
+  const isSuperadmin = user?.tier === "superadmin";
+  const canSignAsSupply = Boolean(user?.isSupplyOfficer || isSuperadmin);
+  const canSignAsBac = Boolean(user?.isBacChair || user?.isBacViceChair || isSuperadmin);
+  const isTwgLead = Boolean(user?.isTwgLead || isSuperadmin);
 
   const [rfq, setRfq] = useState<Rfq | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [newSupplierName, setNewSupplierName] = useState("");
-  const [twgNotes, setTwgNotes] = useState("");
-  const [quoteDrafts, setQuoteDrafts] = useState<Record<string, Record<string, string>>>({});
   const [editDoc, setEditDoc] = useState<EditDoc | null>(null);
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [savingDetails, setSavingDetails] = useState(false);
+  const [issuedLinks, setIssuedLinks] = useState<PortalLink[]>([]);
+  const [quoteFor, setQuoteFor] = useState<string | null>(null);
+  const [quoteDraft, setQuoteDraft] = useState<Record<string, string>>({});
+  const [quoteFile, setQuoteFile] = useState<File | null>(null);
+  const [replacements, setReplacements] = useState<Array<{ payload: RfqSupplierPayload; label: string }>>([]);
+  const [twgNotes, setTwgNotes] = useState("");
+  const [twgDrafts, setTwgDrafts] = useState<Record<string, Record<string, { complies: boolean | null; remarks: string }>>>({});
 
   async function reload() {
     try {
       const data = await apiGetRfq(rfqId);
       setRfq(data);
+      setTwgNotes(data.twgEvaluationNotes);
       if (data.status === "Draft") {
         setEditDoc(docFromRfq(data));
         setEditItems(itemsFromRfq(data));
@@ -130,8 +165,10 @@ function RfqDetailPage() {
       await action();
       toast.success(successMessage);
       await reload();
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Action failed.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -198,10 +235,24 @@ function RfqDetailPage() {
   }
   if (!rfq) return null;
 
-  const activeSuppliers = rfq.suppliers.filter((s) => s.status !== "Replaced");
+  const preSend = PRE_SEND.includes(rfq.status);
   const pendingSuppliers = rfq.suppliers.filter((s) => s.status === "Pending");
-  const allResolved = activeSuppliers.length > 0 && activeSuppliers.every((s) => s.status === "Replied" || s.status === "TimedOut");
-  const anyReplied = activeSuppliers.some((s) => s.status === "Replied");
+  const canvassed = rfq.suppliers.filter((s) => s.status !== "Pending");
+  const awaiting = rfq.suppliers.filter((s) => s.status === "Sent");
+  const replied = rfq.suppliers.filter((s) => s.status === "Replied");
+  const canvassOpen = (rfq.status === "Canvassing" || rfq.status === "TWG Evaluation") && !rfq.abstractOfCanvasId;
+  const onRfq = rfq.suppliers.filter((s) => s.status !== "Replaced").map((s) => s.supplierId).filter((id): id is string => !!id);
+  const isEquipment = rfq.procurementCategory === "Equipment";
+  const twgDone = replied.length > 0 && replied.every((s) => s.twgResult !== null);
+  const anyPassed = replied.some((s) => s.twgResult === "Passed");
+  const aocReady = isEquipment
+    ? rfq.status === "TWG Evaluation" && twgDone && anyPassed && !!rfq.twgEvaluationNotes
+    : rfq.status === "Canvassing" && awaiting.length === 0 && replied.length > 0;
+
+  function twgDraftFor(s: RfqSupplier) {
+    const saved = Object.fromEntries(s.quoteItems.map((qi) => [qi.rfqItemId, { complies: qi.twgComplies, remarks: qi.twgRemarks }]));
+    return { ...saved, ...(twgDrafts[s.id] ?? {}) };
+  }
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
@@ -235,40 +286,44 @@ function RfqDetailPage() {
         </div>
       </Card>
 
-      {/* Pre-send signing chain */}
-      <Card className="border border-border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold text-navy">Pre-Send Signing Chain</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {SIGN_STEPS.map((step) => {
-            const signedName =
-              step.key === "bac-chair" ? rfq.bacChairSignedName : step.key === "bac-vice-chair" ? rfq.bacViceChairSignedName : rfq.supplyOfficerSignedName;
-            const signedAt =
-              step.key === "bac-chair" ? rfq.bacChairSignedAt : step.key === "bac-vice-chair" ? rfq.bacViceChairSignedAt : rfq.supplyOfficerSignedAt;
-            const isCurrent = rfq.status === step.pendingStatus;
-            const isDone = !!signedName;
+      {rfq.status === "Cancelled" && (
+        <Card className="flex items-start gap-3 border border-destructive/30 bg-destructive/5 p-4 text-sm">
+          <Ban className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+          <div>
+            <p className="font-semibold text-destructive">This RFQ was cancelled with its Purchase Request.</p>
+            <Link to="/purchase-requests/$prId" params={{ prId: rfq.prId }} className="text-primary underline-offset-2 hover:underline">Open PR {rfq.prNo}</Link>
+          </div>
+        </Card>
+      )}
 
-            return (
-              <div key={step.key} className={`rounded-lg border p-3 text-xs ${isDone ? "border-success/30 bg-success/5" : isCurrent ? "border-primary/40 bg-primary/5" : "border-border"}`}>
-                <p className="flex items-center gap-1.5 font-semibold text-navy">
-                  {isDone && <CheckCircle2 className="h-3.5 w-3.5 text-success" />}
-                  {step.label}
-                </p>
-                {isDone ? (
-                  <p className="mt-1 text-muted-foreground">Signed by {signedName}<br />{signedAt && new Date(signedAt).toLocaleString("en-PH")}</p>
-                ) : isCurrent ? (
-                  <Button size="sm" className="mt-2 h-7 gap-1 text-xs" disabled={busy} onClick={() => run(() => apiSignRfq(rfq.id, step.key), `Signed as ${step.label}.`)}>
-                    Sign now
-                  </Button>
-                ) : (
-                  <p className="mt-1 text-muted-foreground">Awaiting prior signature</p>
-                )}
-              </div>
-            );
-          })}
+      {/* Flowchart: Generate RFQ -> Supply Officer counter-sign -> BAC Chair / Vice-Chair sign */}
+      <Card className="border border-border bg-card p-4">
+        <h2 className="mb-3 text-sm font-semibold text-navy">RFQ Signatures</h2>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <SignStep
+            label="1 · Supply Officer (counter-sign)"
+            signedName={rfq.supplyOfficerSignedName}
+            signedAt={rfq.supplyOfficerSignedAt}
+            current={rfq.status === "Draft" || rfq.status === "Pending Supply Officer Countersign"}
+            canSign={canSignAsSupply}
+            waitingFor="the designated Supply Officer"
+            busy={busy}
+            onSign={() => run(() => apiSignRfq(rfq.id, "supply-officer"), "Counter-signed as Supply Officer.")}
+          />
+          <SignStep
+            label="2 · BAC Chairman or Vice-Chairman"
+            signedName={rfq.bacSignedName ? `${rfq.bacSignedName}${rfq.bacSignedRole ? ` (${rfq.bacSignedRole})` : ""}` : ""}
+            signedAt={rfq.bacSignedAt}
+            current={rfq.status === "Pending BAC Signature"}
+            canSign={canSignAsBac}
+            waitingFor="the BAC Chairman or Vice-Chairman (either one)"
+            busy={busy}
+            onSign={() => run(() => apiSignRfq(rfq.id, "bac"), "Signed for the BAC.")}
+          />
         </div>
       </Card>
 
-      {/* Draft details — editable until the signing chain starts */}
+      {/* Draft details — editable until the Supply Officer counter-signs */}
       {rfq.status === "Draft" && editDoc ? (
         <>
           <Card className="space-y-4 border border-border bg-card p-4">
@@ -286,8 +341,8 @@ function RfqDetailPage() {
                   <SelectTrigger className="border-border"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Goods">Goods</SelectItem>
-                    <SelectItem value="Equipment">Equipment</SelectItem>
-                    <SelectItem value="Venue" disabled>Venue (not yet supported)</SelectItem>
+                    <SelectItem value="Equipment">Equipment (TWG checks each item)</SelectItem>
+                    <SelectItem value="Venue">List of Venue (rated)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -337,46 +392,48 @@ function RfqDetailPage() {
           </Card>
 
           <Card className="overflow-hidden border border-border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-secondary/40 hover:bg-secondary/40">
-                  <TableHead className="label-eyebrow w-12">No.</TableHead>
-                  <TableHead className="label-eyebrow">Description</TableHead>
-                  <TableHead className="label-eyebrow">UOM</TableHead>
-                  <TableHead className="label-eyebrow text-right">Qty</TableHead>
-                  <TableHead className="label-eyebrow text-right">Unit ABC</TableHead>
-                  <TableHead className="label-eyebrow text-right">Total ABC</TableHead>
-                  <TableHead className="w-8" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {editItems.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="text-center font-semibold text-navy">{item.itemNo}</TableCell>
-                    <TableCell>
-                      <Input value={item.description} onChange={(e) => setEditItemField(item.id, { description: e.target.value })} className="h-8 border-border" />
-                    </TableCell>
-                    <TableCell>
-                      <Input value={item.unit} onChange={(e) => setEditItemField(item.id, { unit: e.target.value })} className="h-8 w-20 border-border" />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Input value={item.qty} onChange={(e) => setEditItemField(item.id, { qty: e.target.value })} className="h-8 w-16 border-border text-right tabular-nums" />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Input value={item.unitAbc} onChange={(e) => setEditItemField(item.id, { unitAbc: e.target.value })} className="h-8 w-24 border-border text-right tabular-nums" />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Input value={item.totalAbc} onChange={(e) => setEditItemField(item.id, { totalAbc: e.target.value })} className="h-8 w-24 border-border text-right tabular-nums" />
-                    </TableCell>
-                    <TableCell>
-                      <button type="button" onClick={() => removeEditItem(item.id)} className="text-muted-foreground hover:text-destructive">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-secondary/40 hover:bg-secondary/40">
+                    <TableHead className="label-eyebrow w-12">No.</TableHead>
+                    <TableHead className="label-eyebrow">Description</TableHead>
+                    <TableHead className="label-eyebrow">UOM</TableHead>
+                    <TableHead className="label-eyebrow text-right">Qty</TableHead>
+                    <TableHead className="label-eyebrow text-right">Unit ABC</TableHead>
+                    <TableHead className="label-eyebrow text-right">Total ABC</TableHead>
+                    <TableHead className="w-8" />
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {editItems.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell className="text-center font-semibold text-navy">{item.itemNo}</TableCell>
+                      <TableCell>
+                        <Input value={item.description} onChange={(e) => setEditItemField(item.id, { description: e.target.value })} className="h-8 border-border" />
+                      </TableCell>
+                      <TableCell>
+                        <Input value={item.unit} onChange={(e) => setEditItemField(item.id, { unit: e.target.value })} className="h-8 w-20 border-border" />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input value={item.qty} onChange={(e) => setEditItemField(item.id, { qty: e.target.value })} className="h-8 w-16 border-border text-right tabular-nums" />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input value={item.unitAbc} onChange={(e) => setEditItemField(item.id, { unitAbc: e.target.value })} className="h-8 w-24 border-border text-right tabular-nums" />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input value={item.totalAbc} onChange={(e) => setEditItemField(item.id, { totalAbc: e.target.value })} className="h-8 w-24 border-border text-right tabular-nums" />
+                      </TableCell>
+                      <TableCell>
+                        <button type="button" onClick={() => removeEditItem(item.id)} className="text-muted-foreground hover:text-destructive" aria-label={`Remove item ${item.itemNo}`}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
             <div className="border-t border-border p-2">
               <Button variant="outline" size="sm" onClick={addEditItem} className="h-7 gap-1.5 border-border">
                 <Plus className="h-3.5 w-3.5" /> Add Item Row
@@ -386,176 +443,436 @@ function RfqDetailPage() {
         </>
       ) : (
         <Card className="overflow-hidden border border-border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-secondary/40 hover:bg-secondary/40">
-                <TableHead className="label-eyebrow w-12">No.</TableHead>
-                <TableHead className="label-eyebrow">Description</TableHead>
-                <TableHead className="label-eyebrow">UOM</TableHead>
-                <TableHead className="label-eyebrow text-right">Qty</TableHead>
-                <TableHead className="label-eyebrow text-right">Unit ABC</TableHead>
-                <TableHead className="label-eyebrow text-right">Total ABC</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rfq.items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="text-center font-semibold text-navy">{item.itemNo}</TableCell>
-                  <TableCell>{item.description}</TableCell>
-                  <TableCell>{item.unit}</TableCell>
-                  <TableCell className="text-right tabular-nums">{item.qty}</TableCell>
-                  <TableCell className="text-right tabular-nums">₱{fmtAmount(item.unitAbc)}</TableCell>
-                  <TableCell className="text-right tabular-nums">₱{fmtAmount(item.totalAbc)}</TableCell>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-secondary/40 hover:bg-secondary/40">
+                  <TableHead className="label-eyebrow w-12">No.</TableHead>
+                  <TableHead className="label-eyebrow">Description</TableHead>
+                  <TableHead className="label-eyebrow">UOM</TableHead>
+                  <TableHead className="label-eyebrow text-right">Qty</TableHead>
+                  <TableHead className="label-eyebrow text-right">Unit ABC</TableHead>
+                  <TableHead className="label-eyebrow text-right">Total ABC</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {rfq.items.map((item) => (
+                  <TableRow key={item.id}>
+                    <TableCell className="text-center font-semibold text-navy">{item.itemNo}</TableCell>
+                    <TableCell>{item.description}</TableCell>
+                    <TableCell>{item.unit}</TableCell>
+                    <TableCell className="text-right tabular-nums">{item.qty}</TableCell>
+                    <TableCell className="text-right tabular-nums">₱{fmtAmount(item.unitAbc)}</TableCell>
+                    <TableCell className="text-right tabular-nums">₱{fmtAmount(item.totalAbc)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         </Card>
       )}
 
-      {/* Supplier canvass */}
-      {(rfq.status === "Ready to Send" || rfq.status === "Canvassing" || rfq.suppliers.length > 0) && (
+      {/* Flowchart: Filter Supplier based on category -> Choose 3 supplier -> Send RFQ (Supplier Portal) */}
+      {rfq.status !== "Cancelled" && (
         <Card className="space-y-4 border border-border bg-card p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-navy">Supplier Canvass</h2>
-            {rfq.status === "Canvassing" && (
-              <span className="text-xs text-muted-foreground">Suppliers have 7 calendar days to reply.</span>
-            )}
+            <span className="text-xs text-muted-foreground">
+              {rfq.supplierCategory} suppliers · each gets its own Supplier Portal link and 7 calendar days to reply
+            </span>
           </div>
 
-          <div className="space-y-2">
-            {rfq.suppliers.map((s) => (
-              <div key={s.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-navy">{s.supplierName || "Unnamed supplier"}</p>
-                  <p className="text-xs text-muted-foreground">{s.supplierAddress}</p>
-                </div>
-                <StatusBadge status={s.isOverdue ? "Warning" : s.status} />
-                {s.isWinner && <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-success">Winner</span>}
+          <PortalLinksCard links={issuedLinks} onDismiss={() => setIssuedLinks([])} />
 
-                {s.status === "Sent" && (
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1">
-                      {rfq.items.map((item) => (
-                        <Input
-                          key={item.id}
-                          placeholder={`₱ ${item.description.slice(0, 12)}`}
-                          className="h-8 w-28 border-border text-xs"
-                          value={quoteDrafts[s.id]?.[item.id] ?? ""}
-                          onChange={(e) =>
-                            setQuoteDrafts((prev) => ({ ...prev, [s.id]: { ...prev[s.id], [item.id]: e.target.value } }))
-                          }
-                        />
-                      ))}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 gap-1 border-border text-xs"
-                      disabled={busy}
-                      onClick={() =>
-                        run(
-                          () =>
-                            apiRecordRfqSupplierQuote(
-                              rfq.id,
-                              s.id,
-                              rfq.items.map((item) => ({ rfq_item_id: item.id, unit_price: parseAmount(quoteDrafts[s.id]?.[item.id] ?? "") })),
-                            ),
-                          "Quote recorded.",
-                        )
-                      }
-                    >
-                      <ClipboardCheck className="h-3.5 w-3.5" /> Record Quote
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 gap-1 border-warning/40 text-xs text-warning-foreground hover:bg-warning/10"
-                      disabled={busy}
-                      onClick={() => {
-                        const name = window.prompt("Replacement supplier name:");
-                        if (!name) return;
-                        run(() => apiReplaceRfqSupplier(rfq.id, s.id, { supplier_name: name, reason: "Non-responding supplier replaced." }), "Supplier replaced.");
-                      }}
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" /> Replace
-                    </Button>
+          {preSend && (
+            <div className="space-y-2">
+              <p className="label-eyebrow">Chosen suppliers ({pendingSuppliers.length}/3)</p>
+              {pendingSuppliers.length === 0 && <p className="text-xs text-muted-foreground">Choose 3 {rfq.supplierCategory} suppliers from the directory.</p>}
+              {pendingSuppliers.map((s) => (
+                <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-navy">{s.supplierName}</p>
+                    <p className="truncate text-xs text-muted-foreground">{s.supplierEmail || "No email — copy its portal link after sending"}</p>
                   </div>
-                )}
-                {s.status === "Replied" && (
-                  <p className="text-xs font-semibold tabular-nums text-navy">
-                    ₱{fmtAmount(s.quoteItems.reduce((sum, qi) => sum + (qi.totalPrice ?? 0), 0))}
-                  </p>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {rfq.status === "Ready to Send" && pendingSuppliers.length < 3 && (
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Supplier name"
-                className="h-9 max-w-xs border-border"
-                value={newSupplierName}
-                onChange={(e) => setNewSupplierName(e.target.value)}
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5 border-border"
-                disabled={busy || !newSupplierName.trim()}
-                onClick={() => {
-                  const name = newSupplierName.trim();
-                  setNewSupplierName("");
-                  run(() => apiAddRfqSupplier(rfq.id, { supplier_name: name }), "Supplier added to canvass.");
-                }}
-              >
-                <Plus className="h-4 w-4" /> Add Supplier ({activeSuppliers.length}/3)
-              </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-muted-foreground hover:text-destructive" disabled={busy} onClick={() => run(() => apiRemoveRfqSupplier(rfq.id, s.id), "Supplier removed.")} aria-label={`Remove ${s.supplierName}`}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+              {pendingSuppliers.length < 3 && (
+                <SupplierPicker
+                  category={rfq.supplierCategory}
+                  excludeSupplierIds={onRfq}
+                  disabled={busy}
+                  onPick={(payload, label) => run(() => apiAddRfqSupplier(rfq.id, payload), `${label} added to the canvass.`)}
+                />
+              )}
+              {rfq.status === "Ready to Send" && pendingSuppliers.length === 3 && (
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      const result = await apiSendRfq(rfq.id);
+                      setIssuedLinks(result.links);
+                      toast.success(result.message);
+                      await reload();
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Unable to send the RFQ.");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  <Send className="h-4 w-4" /> Send RFQ to the 3 Suppliers
+                </Button>
+              )}
+              {rfq.status !== "Ready to Send" && pendingSuppliers.length === 3 && (
+                <p className="text-xs text-muted-foreground">The RFQ can be sent once the Supply Officer and the BAC have signed.</p>
+              )}
             </div>
           )}
 
-          {rfq.status === "Ready to Send" && pendingSuppliers.length === 3 && (
-            <Button size="sm" className="gap-1.5" disabled={busy} onClick={() => run(() => apiSendRfq(rfq.id), "RFQ sent to all 3 suppliers.")}>
-              <Send className="h-4 w-4" /> Send RFQ to Suppliers
-            </Button>
+          {canvassed.length > 0 && (
+            <div className="space-y-2">
+              {canvassed.map((s) => (
+                <div key={s.id} className={`space-y-2 rounded-lg border p-3 text-sm ${s.status === "Replaced" ? "border-border opacity-60" : "border-border"}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-navy">
+                        {s.supplierName || "Unnamed supplier"}
+                        {s.isWinner && <span className="ml-2 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-success">Winner</span>}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {s.status === "Sent" && s.replyDueAt && `Reply due ${fmtDateTime(s.replyDueAt)}`}
+                        {s.status === "Replied" && `Quotation in ${fmtDateTime(s.repliedAt)}${s.quoteSubmittedVia ? ` · via ${s.quoteSubmittedVia === "Portal" ? "Supplier Portal" : "staff"}` : ""}`}
+                        {(s.status === "TimedOut" || s.status === "Failed TWG") && (s.remarks || "")}
+                        {s.status === "Replaced" && "Replaced by a newly chosen supplier"}
+                      </p>
+                    </div>
+                    {s.twgResult && <StatusBadge status={s.twgResult === "Passed" ? "Passed" : "Failed"} />}
+                    <StatusBadge status={s.isOverdue ? "Warning" : s.status} />
+                    {s.status === "Replied" && <p className="text-xs font-semibold tabular-nums text-navy">₱{fmtAmount(quoteTotal(s))}</p>}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {s.hasQuotation && (
+                      <Button size="sm" variant="outline" className="h-7 gap-1 border-border text-xs" onClick={() => apiDownloadQuotation(rfq.id, s.id, s.quotationName).catch((e) => toast.error(e.message))}>
+                        <Download className="h-3.5 w-3.5" /> Signed quotation
+                      </Button>
+                    )}
+                    {s.status === "Sent" && canvassOpen && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1 border-border text-xs"
+                          disabled={busy}
+                          onClick={async () => {
+                            try {
+                              const link = await apiResendRfqPortalLink(rfq.id, s.id);
+                              setIssuedLinks([{ ...link, supplierName: s.supplierName }]);
+                              toast.success(link.emailed ? "A new portal link was emailed." : "A new portal link was issued — copy it below.");
+                            } catch (error) {
+                              toast.error(error instanceof Error ? error.message : "Unable to issue a new link.");
+                            }
+                          }}
+                        >
+                          <Link2 className="h-3.5 w-3.5" /> New portal link
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1 border-border text-xs"
+                          onClick={() => {
+                            setQuoteFor(quoteFor === s.id ? null : s.id);
+                            setQuoteDraft({});
+                            setQuoteFile(null);
+                          }}
+                        >
+                          <ClipboardCheck className="h-3.5 w-3.5" /> Record hand-delivered quote
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1 border-warning/40 text-xs text-warning-foreground hover:bg-warning/10"
+                          disabled={busy}
+                          onClick={() => {
+                            const reason = window.prompt(`Cancel the RFQ sent to ${s.supplierName}? Reason:`, "No reply from the supplier.");
+                            if (reason === null) return;
+                            run(() => apiCancelRfqSupplier(rfq.id, s.id, reason || undefined), "RFQ to this supplier cancelled. Choose a replacement below.");
+                          }}
+                        >
+                          <XCircle className="h-3.5 w-3.5" /> Cancel (no reply)
+                        </Button>
+                      </>
+                    )}
+                  </div>
+
+                  {quoteFor === s.id && s.status === "Sent" && (
+                    <div className="space-y-2 rounded-md bg-secondary/40 p-3">
+                      <p className="text-xs text-muted-foreground">Enter the unit price for every item and attach the supplier's signed quotation (PDF or photo, up to 10 MB).</p>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {rfq.items.map((item) => (
+                          <label key={item.id} className="space-y-1 text-xs">
+                            <span className="block truncate text-muted-foreground">{item.itemNo}. {item.description} ({item.qty} {item.unit})</span>
+                            <Input inputMode="decimal" placeholder="Unit price ₱" value={quoteDraft[item.id] ?? ""} onChange={(e) => setQuoteDraft((d) => ({ ...d, [item.id]: e.target.value }))} className="h-8 border-border" />
+                          </label>
+                        ))}
+                      </div>
+                      <Input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setQuoteFile(e.target.files?.[0] ?? null)} className="h-9 border-border text-xs" aria-label="Signed quotation file" />
+                      <Button
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={busy}
+                        onClick={async () => {
+                          if (rfq.items.some((item) => !(quoteDraft[item.id] ?? "").trim())) {
+                            toast.error("Enter a unit price for every item.");
+                            return;
+                          }
+                          if (!quoteFile) {
+                            toast.error("Attach the signed quotation.");
+                            return;
+                          }
+                          const ok = await run(
+                            () => apiRecordRfqSupplierQuote(rfq.id, s.id, rfq.items.map((item) => ({ rfq_item_id: item.id, unit_price: parseAmount(quoteDraft[item.id] ?? "") })), quoteFile),
+                            "Quotation recorded.",
+                          );
+                          if (ok) setQuoteFor(null);
+                        }}
+                      >
+                        <Save className="h-4 w-4" /> Save quotation
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
+
+          {/* Flowchart: "Choose n of supplier" (no reply) / "Choose n of supplier needed" (all failed the TWG check) */}
+          {canvassOpen && rfq.openSupplierSlots > 0 && (
+            <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-3">
+              <p className="text-sm font-semibold text-navy">
+                Choose {rfq.openSupplierSlots} replacement supplier{rfq.openSupplierSlots > 1 ? "s" : ""}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {rfq.suppliers.some((s) => s.status === "Failed TWG" && !s.replacedBySupplierId)
+                  ? "Every supplier failed the TWG check. Choose new suppliers to canvass."
+                  : "Suppliers whose RFQ was cancelled for not replying leave a slot. The RFQ goes to each replacement right away."}
+              </p>
+              {replacements.map((r, i) => (
+                <div key={`${r.label}-${i}`} className="flex items-center gap-2 rounded-md bg-card p-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate font-medium text-navy">{r.label}</span>
+                  <Button size="sm" variant="ghost" className="h-7" onClick={() => setReplacements((cur) => cur.filter((_, j) => j !== i))} aria-label={`Remove ${r.label}`}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))}
+              {replacements.length < rfq.openSupplierSlots && (
+                <SupplierPicker
+                  category={rfq.supplierCategory}
+                  excludeSupplierIds={[...onRfq, ...replacements.map((r) => String(r.payload.supplier_id ?? "")).filter(Boolean)]}
+                  actionLabel="Choose"
+                  disabled={busy}
+                  onPick={(payload, label) => setReplacements((cur) => [...cur, { payload, label }])}
+                />
+              )}
+              {replacements.length > 0 && (
+                <Button
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      const result = await apiChooseReplacementSuppliers(rfq.id, replacements.map((r) => r.payload));
+                      setIssuedLinks(result.links);
+                      setReplacements([]);
+                      toast.success(result.message);
+                      await reload();
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Unable to send to the replacement suppliers.");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  <Send className="h-4 w-4" /> Send RFQ to {replacements.length} replacement{replacements.length > 1 ? "s" : ""}
+                </Button>
+              )}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Equipment: TWG Specification evaluation -> Check each equipment with supplier */}
+      {isEquipment && rfq.status === "TWG Evaluation" && !rfq.abstractOfCanvasId && (
+        <Card className="space-y-4 border border-border bg-card p-4">
+          <div>
+            <h2 className="text-sm font-semibold text-navy">TWG Evaluation</h2>
+            <p className="text-xs text-muted-foreground">
+              {isTwgLead
+                ? "Record the specification evaluation, then check each quoted equipment item against the specifications, supplier by supplier."
+                : "Waiting for the designated TWG Lead to check each supplier's equipment."}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <p className="label-eyebrow">Specification evaluation notes</p>
+            <Textarea rows={3} value={twgNotes} onChange={(e) => setTwgNotes(e.target.value)} disabled={!isTwgLead} className="border-border" />
+            {isTwgLead && (
+              <Button size="sm" variant="outline" className="gap-1.5 border-border" disabled={busy || !twgNotes.trim()} onClick={() => run(() => apiSaveTwgNotes(rfq.id, twgNotes.trim()), "TWG notes saved.")}>
+                <Save className="h-4 w-4" /> Save notes
+              </Button>
+            )}
+          </div>
+          {replied.map((s) => {
+            const draft = twgDraftFor(s);
+            return (
+              <div key={s.id} className="space-y-2 rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-navy">{s.supplierName}</p>
+                  {s.twgResult ? <StatusBadge status={s.twgResult === "Passed" ? "Passed" : "Failed"} /> : <span className="text-xs text-muted-foreground">Not checked yet</span>}
+                </div>
+                {rfq.items.map((item) => {
+                  const row = draft[item.id] ?? { complies: null, remarks: "" };
+                  const set = (patch: Partial<{ complies: boolean | null; remarks: string }>) =>
+                    setTwgDrafts((cur) => ({ ...cur, [s.id]: { ...(cur[s.id] ?? {}), [item.id]: { ...row, ...patch } } }));
+                  return (
+                    <div key={item.id} className="grid grid-cols-1 items-center gap-2 text-xs sm:grid-cols-[1fr_auto_1fr]">
+                      <span className="truncate text-foreground">{item.itemNo}. {item.description}</span>
+                      <div className="flex gap-1" role="group" aria-label={`${item.description}: complies?`}>
+                        <Button type="button" size="sm" variant={row.complies === true ? "default" : "outline"} className="h-7 border-border text-xs" disabled={!isTwgLead} onClick={() => set({ complies: true })}>
+                          Complies
+                        </Button>
+                        <Button type="button" size="sm" variant={row.complies === false ? "destructive" : "outline"} className="h-7 border-border text-xs" disabled={!isTwgLead} onClick={() => set({ complies: false })}>
+                          Does not
+                        </Button>
+                      </div>
+                      <Input placeholder="Remarks" value={row.remarks} onChange={(e) => set({ remarks: e.target.value })} disabled={!isTwgLead} className="h-7 border-border text-xs" />
+                    </div>
+                  );
+                })}
+                {isTwgLead && (
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={busy}
+                    onClick={async () => {
+                      if (rfq.items.some((item) => draft[item.id]?.complies == null)) {
+                        toast.error("Mark every item as complying or not.");
+                        return;
+                      }
+                      setBusy(true);
+                      try {
+                        const result = await apiTwgCheckSupplier(rfq.id, s.id, rfq.items.map((item) => ({ rfq_item_id: item.id, complies: Boolean(draft[item.id]?.complies), remarks: draft[item.id]?.remarks || undefined })));
+                        setTwgDrafts((cur) => ({ ...cur, [s.id]: {} }));
+                        toast.success(result.message);
+                        await reload();
+                      } catch (error) {
+                        toast.error(error instanceof Error ? error.message : "Unable to save the TWG check.");
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    <ClipboardCheck className="h-4 w-4" /> Save check for {s.supplierName}
+                  </Button>
+                )}
+              </div>
+            );
+          })}
         </Card>
       )}
 
       {/* Abstract of Canvas */}
-      {rfq.status === "Canvassing" && (
+      {(rfq.abstractOfCanvasId || rfq.status === "Canvassing" || rfq.status === "TWG Evaluation") && (
         <Card className="space-y-3 border border-border bg-card p-4">
           <h2 className="text-sm font-semibold text-navy">Abstract of Canvas</h2>
           {rfq.abstractOfCanvasId ? (
-            <Button asChild size="sm" className="gap-1.5">
-              <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId }}>
-                View Abstract of Canvas
-              </Link>
-            </Button>
-          ) : allResolved && anyReplied ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={rfq.abstractOfCanvasStatus ?? ""} />
+              <Button asChild size="sm" className="gap-1.5">
+                <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId }}>View Abstract of Canvas</Link>
+              </Button>
+            </div>
+          ) : aocReady ? (
             <>
-              {rfq.procurementCategory === "Equipment" && (
-                <div className="space-y-1.5">
-                  <p className="label-eyebrow">TWG Evaluation Notes (required for Equipment)</p>
-                  <Input value={twgNotes} onChange={(e) => setTwgNotes(e.target.value)} className="border-border" />
-                </div>
-              )}
-              <Button
-                size="sm"
-                className="gap-1.5"
-                disabled={busy}
-                onClick={() => run(() => apiGenerateAoc(rfq.id, twgNotes || undefined), "Abstract of Canvas generated.")}
-              >
+              <p className="text-xs text-muted-foreground">
+                {rfq.procurementCategory === "Venue"
+                  ? "Next the TWG Lead, the end-user and the Supply Officer rate each venue; the top-rated venue wins."
+                  : isEquipment
+                    ? "Built from the suppliers that passed the TWG check; the lowest of them wins."
+                    : "The lowest quotation wins."}
+              </p>
+              <Button size="sm" className="gap-1.5" disabled={busy} onClick={() => run(() => apiGenerateAoc(rfq.id), "Abstract of Canvas generated.")}>
                 Generate Abstract of Canvas
               </Button>
             </>
           ) : (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <AlertTriangle className="h-4 w-4" /> All suppliers must reply or be marked as timed out first.
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {isEquipment && rfq.status === "TWG Evaluation"
+                ? !rfq.twgEvaluationNotes
+                  ? "The TWG Lead must save the specification evaluation notes."
+                  : !twgDone
+                    ? "The TWG Lead must check every supplier's equipment."
+                    : "No supplier passed the TWG check."
+                : awaiting.length > 0
+                  ? `Waiting on ${awaiting.length} supplier${awaiting.length > 1 ? "s" : ""} to reply (or be cancelled after 7 days).`
+                  : "At least one supplier must send a quotation."}
             </div>
           )}
         </Card>
+      )}
+    </div>
+  );
+}
+
+function SignStep({
+  label,
+  signedName,
+  signedAt,
+  current,
+  canSign,
+  waitingFor,
+  busy,
+  onSign,
+}: {
+  label: string;
+  signedName: string;
+  signedAt: string;
+  current: boolean;
+  canSign: boolean;
+  waitingFor: string;
+  busy: boolean;
+  onSign: () => void;
+}) {
+  const done = !!signedName;
+  return (
+    <div className={`rounded-lg border p-3 text-xs ${done ? "border-success/30 bg-success/5" : current ? "border-primary/40 bg-primary/5" : "border-border"}`}>
+      <p className="flex items-center gap-1.5 font-semibold text-navy">
+        {done && <CheckCircle2 className="h-3.5 w-3.5 text-success" />}
+        {label}
+      </p>
+      {done ? (
+        <p className="mt-1 text-muted-foreground">
+          Signed by {signedName}
+          <br />
+          {fmtDateTime(signedAt)}
+        </p>
+      ) : current ? (
+        canSign ? (
+          <Button size="sm" className="mt-2 h-7 gap-1 text-xs" disabled={busy} onClick={onSign}>
+            Sign now
+          </Button>
+        ) : (
+          <p className="mt-1 text-muted-foreground">Waiting for {waitingFor}.</p>
+        )
+      ) : (
+        <p className="mt-1 text-muted-foreground">Awaiting the previous signature</p>
       )}
     </div>
   );

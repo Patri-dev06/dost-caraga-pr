@@ -41,7 +41,8 @@ function PurchaseOrderListPage() {
 
   // "Awaiting action" and "eligible for a PO" are read off just this page — newest-first sorting
   // means actionable items are almost always near the top, well before pagination would hide them.
-  const eligibleRfqs = rfqs.filter((rfq) => rfq.abstractOfCanvasStatus === "Approved" && !rfq.hasPurchaseOrder);
+  // Flowchart: a PO is created once Supply has noted the lowest bidder on the BAC-approved AOC.
+  const eligibleRfqs = rfqs.filter((rfq) => rfq.abstractOfCanvasStatus === "Lowest Bidder Noted" && !rfq.hasPurchaseOrder);
   const pendingPos = purchaseOrders.filter((po) => po.status.startsWith("Pending"));
 
   const generateMutation = useMutation({
@@ -61,7 +62,7 @@ function PurchaseOrderListPage() {
       <PageHeader
         eyebrow="Procurement"
         title="Purchase Orders"
-        subtitle="Generate a Purchase Order once an RFQ's Abstract of Canvas is BAC-approved."
+        subtitle="Generate a Purchase Order once the BAC approves an Abstract of Canvas and Supply notes the lowest bidder."
       />
 
       {rfqsError && (
@@ -129,7 +130,7 @@ function PurchaseOrderListPage() {
 
           {eligibleRfqs.length > 0 ? (
             <div className="space-y-3">
-              <h2 className="text-sm font-semibold text-navy">Generate PO from a BAC-Approved RFQ</h2>
+              <h2 className="text-sm font-semibold text-navy">Generate PO — lowest bidder noted</h2>
               <p className="text-xs text-muted-foreground">
                 Select the winning supplier's RFQ to generate its Purchase Order.
               </p>
@@ -148,7 +149,7 @@ function PurchaseOrderListPage() {
           ) : !rfqsError ? (
             <div className="rounded-xl border border-border bg-card p-10 text-center">
               <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" strokeWidth={1.5} />
-              <p className="text-sm font-semibold text-navy">No BAC-Approved RFQs Awaiting a PO</p>
+              <p className="text-sm font-semibold text-navy">No RFQs with a noted lowest bidder awaiting a PO</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Complete an RFQ's canvass and get its Abstract of Canvas approved by BAC, then generate its Purchase Order here.
               </p>

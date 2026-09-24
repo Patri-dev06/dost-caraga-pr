@@ -186,12 +186,16 @@ class AuthController extends Controller
         $regionalDirectorId = $pref('regional_director_user_id');
         $bacChairId = $pref('bac_chair_user_id');
         $bacViceChairId = $pref('bac_vice_chair_user_id');
+        $supplyOfficerId = $pref('supply_officer_user_id');
+        $twgLeadId = $pref('twg_lead_user_id');
 
         return array_merge($user->toArray(), [
             'is_budget_officer' => $budgetOfficerId !== null && (int) $budgetOfficerId === $user->id,
             'is_regional_director' => $regionalDirectorId !== null && (int) $regionalDirectorId === $user->id,
             'is_bac_chair' => $bacChairId !== null && (int) $bacChairId === $user->id,
             'is_bac_vice_chair' => $bacViceChairId !== null && (int) $bacViceChairId === $user->id,
+            'is_supply_officer' => $supplyOfficerId !== null && (int) $supplyOfficerId === $user->id,
+            'is_twg_lead' => $twgLeadId !== null && (int) $twgLeadId === $user->id,
         ]);
     }
 

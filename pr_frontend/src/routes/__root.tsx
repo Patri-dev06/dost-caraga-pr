@@ -25,11 +25,16 @@ const themeInitializationScript = `
   })();
 `;
 
+/** Pages anyone can open without signing in: the login page and the Supplier Portal. */
+function isPublicPath(path: string) {
+  return path === "/login" || path === "/portal" || path.startsWith("/portal/");
+}
+
 const authRedirectScript = `
   (() => {
     try {
       const path = window.location.pathname;
-      if (path === "/login") return;
+      if (path === "/login" || path === "/portal" || path.startsWith("/portal/")) return;
 
       const token = localStorage.getItem("pr_backend_token");
       const expiresAt = Number(localStorage.getItem("pr_backend_token_expires_at") || 0);
@@ -46,7 +51,8 @@ const authRedirectScript = `
         window.location.replace("/login");
       }
     } catch {
-      if (window.location.pathname !== "/login") window.location.replace("/login");
+      const path = window.location.pathname;
+      if (path !== "/login" && path !== "/portal" && !path.startsWith("/portal/")) window.location.replace("/login");
     }
   })();
 `;
@@ -120,13 +126,13 @@ function RootComponent() {
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [authChecked, setAuthChecked] = useState(false);
-  const isAuth = pathname === "/login";
+  const isAuth = isPublicPath(pathname);
 
   useEffect(() => {
     setAuthChecked(true);
 
     function redirectIfSignedOut() {
-      if (window.location.pathname !== "/login" && !hasValidToken()) {
+      if (!isPublicPath(window.location.pathname) && !hasValidToken()) {
         router.navigate({ to: "/login", replace: true });
       }
     }
@@ -134,7 +140,7 @@ function RootComponent() {
     let lastActivityRecordedAt = 0;
 
     function handleUserActivity() {
-      if (window.location.pathname === "/login") return;
+      if (isPublicPath(window.location.pathname)) return;
 
       if (!hasValidToken()) {
         redirectIfSignedOut();

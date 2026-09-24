@@ -31,7 +31,7 @@ export const Route = createFileRoute("/approval-inbox")({
   component: Inbox,
 });
 
-const BAC_STATUSES = ["Pending BAC Review", "BAC Returned", "Approved", "Cancelled"];
+const BAC_STATUSES = ["Pending BAC Review", "Pending BAC Satisfaction", "BAC Returned", "For Supply Noting", "Lowest Bidder Noted", "Cancelled"];
 const PER_PAGE = 20;
 
 function Inbox() {
@@ -46,7 +46,7 @@ function Inbox() {
   // A capped preview just for the tab badge — never the whole queue.
   const { data: pendingBacPreview = [] } = useQuery({
     queryKey: ["aocs", "pending-count"],
-    queryFn: () => apiGetAocs(["Pending BAC Review"], 100),
+    queryFn: () => apiGetAocs(["Pending BAC Review", "Pending BAC Satisfaction"], 100),
   });
   const pendingBac = pendingBacPreview.length;
 
@@ -199,9 +199,9 @@ function Inbox() {
 }
 
 const BAC_FILTERS: { key: string; label: string; statuses: string[] }[] = [
-  { key: "pending", label: "Needs review", statuses: ["Pending BAC Review"] },
+  { key: "pending", label: "Needs the BAC", statuses: ["Pending BAC Review", "Pending BAC Satisfaction"] },
   { key: "returned", label: "Returned to TWG", statuses: ["BAC Returned"] },
-  { key: "approved", label: "Approved", statuses: ["Approved"] },
+  { key: "approved", label: "Approved", statuses: ["For Supply Noting", "Lowest Bidder Noted"] },
   { key: "cancelled", label: "Cancelled", statuses: ["Cancelled"] },
   { key: "all", label: "All", statuses: BAC_STATUSES },
 ];
@@ -270,7 +270,7 @@ function BacReviewQueue({ canReview }: { canReview: boolean }) {
                   <TableCell className="text-right">
                     <Button asChild size="sm" variant="outline" className="gap-1.5 border-border">
                       <Link to="/aoc/$aocId" params={{ aocId: aoc.id }}>
-                        <Eye className="h-3.5 w-3.5" /> {canReview && aoc.status === "Pending BAC Review" ? "Review" : "View"}
+                        <Eye className="h-3.5 w-3.5" /> {canReview && (aoc.status === "Pending BAC Review" || aoc.status === "Pending BAC Satisfaction") ? "Review" : "View"}
                       </Link>
                     </Button>
                   </TableCell>

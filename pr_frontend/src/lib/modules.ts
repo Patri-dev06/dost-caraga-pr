@@ -39,11 +39,15 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
 export function moduleForPath(pathname: string): ModuleKey | null {
   if (pathname === "/") return "dashboard";
   if (pathname === "/login") return null;
+  // The Supplier Portal is public (checked before "/po", which it would otherwise match).
+  if (pathname === "/portal" || pathname.startsWith("/portal/")) return null;
   if (pathname.startsWith("/planning/lib")) return "lib";
   if (pathname.startsWith("/planning/ppmp")) return "ppmp";
   if (pathname.startsWith("/purchase-requests")) return "pr";
   if (pathname.startsWith("/rfq")) return "rfq";
-  if (pathname.startsWith("/aoc")) return "rfq";
+  // An AOC is also opened by its venue raters (e.g. the end-user); the server decides who may see it.
+  if (pathname.startsWith("/aoc")) return null;
+  if (pathname.startsWith("/suppliers")) return "rfq";
   if (pathname.startsWith("/po")) return "po";
   if (pathname.startsWith("/validation")) return "validation";
   if (pathname.startsWith("/approval-inbox")) return "approvals";
