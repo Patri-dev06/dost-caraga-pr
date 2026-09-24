@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { AlertTriangle, FileCheck2, FileText, PackagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,9 @@ export const Route = createFileRoute("/po")({
 });
 
 function PurchaseOrderListPage() {
+  // /po/$poId is a child of this route: the list only renders at /po itself (same as /rfq).
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isList = pathname === "/po";
   const queryClient = useQueryClient();
   const [rfqPage, setRfqPage] = useState(1);
   const [poPage, setPoPage] = useState(1);
@@ -30,12 +33,14 @@ function PurchaseOrderListPage() {
   const { data: rfqPageData, isLoading: loadingRfqs, error: rfqsError } = useQuery({
     queryKey: ["rfqs", rfqPage],
     queryFn: () => apiGetRfqsPage(rfqPage, PER_PAGE),
+    enabled: isList,
   });
   const rfqs = rfqPageData?.items ?? [];
 
   const { data: poPageData, isLoading: loadingPos } = useQuery({
     queryKey: ["purchase-orders", poPage],
     queryFn: () => apiGetPurchaseOrdersPage(poPage, PER_PAGE),
+    enabled: isList,
   });
   const purchaseOrders = poPageData?.items ?? [];
 
@@ -54,6 +59,8 @@ function PurchaseOrderListPage() {
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to generate Purchase Order."),
   });
+
+  if (!isList) return <Outlet />;
 
   const loading = loadingRfqs || loadingPos;
 
