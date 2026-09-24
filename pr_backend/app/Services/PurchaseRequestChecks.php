@@ -181,7 +181,7 @@ class PurchaseRequestChecks
             $available = $budget - $otherPrs;
 
             return $thisPr <= $available + 0.005
-                ? [true, 'Within the PPMP budget: ₱'.$this->money($thisPr).' of ₱'.$this->money(max(0, $available)).' remaining.']
+                ? [true, 'Within the PPMP budget: ₱'.$this->money($thisPr).' requested; ₱'.$this->money(max(0, $available)).' of this item\'s budget was available.']
                 : [false, '₱'.$this->money($thisPr).' requested, but only ₱'.$this->money(max(0, $available)).' of this item\'s PPMP budget remains.'];
         }
 

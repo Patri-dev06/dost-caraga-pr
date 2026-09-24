@@ -1,92 +1,84 @@
-# RFQ → BAC → PO Workflow (from provided flowchart)
+# Procurement workflow — flowchart to implementation
 
-This documents my understanding of the flowchart shared on 2026-09-17, describing the target end-to-end procurement process from PR creation through Purchase Order delivery. It has two parts: **Module 1** (Purchase Request creation/approval, shaded blue on the diagram) and the unshaded flow that follows it (RFQ canvassing → Abstract of Canvas → BAC review → PO issuance → delivery).
+The Procurement System Flowchart has four lanes: **Module 1 / Approved PR** (blue), **PR / Request for
+Quotation** (green), **BAC review** (orange), and **Purchase Order** (yellow). This document maps every
+box and Yes/No arrow to the status, endpoint and screen that implement it. All API paths are under
+`/api/v1`.
 
-## Module 1 — Purchase Request Creation & Approval
+Signatories are chosen in **Settings** (system preferences): Budget Officer, Regional Director, BAC
+Chairman, BAC Vice-Chairman, Supply Officer, Accounting Officer, TWG Lead. Every "digital sign" step
+needs the signer's uploaded e-signature. Each routing step creates an in-app notification and sends a
+queued email that links back into the app (`FRONTEND_URL`).
 
-1. **Login** — account login triggers an email notification to the account owner.
-2. **User initiates PR creation**, inputs PR details.
-3. **Regular fund?**
-   - **No** → Identify Project, then:
-     - **Items in PPMP?**
-       - No → error: *"Item not in PPMP" / "Item not within budget/(LIB)"*
-       - Yes → **Items within Budget?**
-         - No → same error as above
-         - Yes → proceeds to the APP-CSE check below
-   - **Yes** (regular fund) → skips the PPMP/budget check and goes straight to the APP-CSE check.
-4. **Items in APP-CSE?**
-   - Yes → Proceed to Create PR
-   - No → **Items in APP-Non-CSE?**
-     - Yes → Proceed to Create PR
-     - No → error: *"Item is not in APP-Non-CSE & APP-CSE"*
-5. **Proceed to Create PR** → forwarded to **Supervisor/Recommending Approval** (digital sign + email notification) → forwarded to **RD for Digital Sign** (+ email notification) → **Approved Purchase Request** (+ email notification).
+## Blue — Module 1: Approved PR
 
-Approved PR is the hand-off point into the RFQ flow.
+| Flowchart | Implementation |
+|---|---|
+| Account login → email to account owner | `POST /auth/login` queues a "New sign-in" email (time, IP, browser). Off when *Email Notifications* is off. |
+| User initiates PR, inputs details | `POST /purchase-requests`; screen `/purchase-requests/new`. "Charged to" sends the planning PPMP (`ppmp_client_uid` → `purchase_requests.ppmp_document_id`). |
+| **Regular fund?** | `PurchaseRequestChecks::isRegularFund`: a PR charged to a **Regular** PPMP is regular, and one charged to a **Project** PPMP is not. Otherwise the fund type decides, per the *Regular Fund Types* setting (default `GAA`). |
+| Yes → Items in APP-CSE? → No → Items in APP-Non-CSE? → No → error | Validation rows `APP-CSE` then `APP-Non-CSE`; error text *"Items is not in APP-Non-CSE & APP-CSE"*. An item counts as "in" an APP when an APP row exists for it, or an approved PPMP line with the same CSE / Non-CSE classification does (the APP is consolidated from those lines). |
+| No → Identify Project | Row `Project`: the LIB behind the charged Project PPMP (or the PR's own project). Fails if none. |
+| → Items in PPMP? → error *"Item not in PPMP"* | Row `PPMP`: the item must be a line of the charged PPMP (older PRs: the project's PPMP). This now **blocks** submission; it used to be only a warning. |
+| → Items within Budget (LIB)? → error *"Item not within budget (LIB)"* | Row `Line-Item Budget`: all of this PR's rows for the item, plus what other live PRs charged to the same PPMP already drew, must fit that item's PPMP budget. Older project PRs compare the **PR total** with the project's available allocation. |
+| → Items in APP-Non-CSE? | Row `APP-Non-CSE` (this path never checks APP-CSE, as drawn). |
+| Proceed to Create PR → Supervisor/Recommending Approval → RD → Approved PR (email each) | `POST /purchase-requests/{id}/submit` (runs the checks; a failure returns the PR as **Returned**) → `POST /approvals/{id}/recommend` → `POST /approvals/{id}/approve`. |
 
-## RFQ Generation & Supplier Canvassing
+## Green — PR / Request for Quotation
 
-1. **Generate RFQ** (from the Approved PR).
-2. Forwarded to **BAC Chair/BAC Vice-chair for Digital Sign**.
-3. Forwarded to **Supply Officer for counter Digital Sign**.
-4. **Filter Supplier based on category** (Goods, Services).
-5. **Choose 3 suppliers.**
-6. **Send RFQ** with complete details/specifications to the 3 selected suppliers.
-7. **Supplier receives RFQ** via a **Supplier Portal**.
-8. **Does supplier reply?**
-   - Yes → supplier sends back a **signed quotation**.
-   - No, after **7 calendar days** → the sent RFQ to that non-responding supplier is **cancelled**, and a **replacement supplier is chosen** (loops back to sending the RFQ to the new pick).
-9. Separately, **"Choose n of supplier"** (a supplier-count/replacement control) feeds into **"Did all suppliers fail?"**
-   - Yes → **Fail?** branch — re-checks whether the canvass overall failed.
-   - No → loops back to re-attempt canvassing with the remaining/replacement suppliers.
+| Flowchart | Implementation |
+|---|---|
+| Generate RFQ | `POST /rfqs` from an Approved PR; the Supply Officer is notified. Status `Draft`. Screen `/rfq/{id}`. |
+| Forward to Supply Officer for counter digital sign | `POST /rfqs/{id}/sign/supply-officer` → `Pending BAC Signature`. |
+| Forward to BAC Chair / BAC Vice-chair for digital sign | `POST /rfqs/{id}/sign/bac`: **one** signature from either → `Ready to Send`. |
+| Filter supplier based on category (Goods, Services) | Supplier directory `GET/POST/PUT/DELETE /suppliers`, screen `/suppliers`. Goods and Equipment RFQs take **Goods** suppliers; Venue RFQs take **Services** suppliers. `POST /rfqs/{id}/suppliers` accepts a directory supplier, or a new one that is first added to the directory. |
+| Choose 3 suppliers → Send RFQ with complete details | `POST /rfqs/{id}/send` (exactly 3) → `Canvassing`. Each supplier gets a 7-day reply window and its own portal link, emailed and also returned for copying. |
+| Supplier receives RFQ (Supplier Portal) | Public page `/portal/rfq/{token}` (`GET /portal/rfq/{token}`). Only the token's hash is stored, and one token opens one supplier's RFQ. |
+| Does supplier reply? **Yes** → sends back signed quotation | `POST /portal/rfq/{token}/quote`: a price for every item plus the signed quotation (PDF/JPG/PNG, max 10 MB) → supplier `Replied`. Staff fallback for a hand-delivered quote: `POST /rfqs/{id}/suppliers/{s}/quote`, with the scan required. |
+| **No** (after 7 calendar days) → Cancel sent RFQ of non-responding supplier | `php artisan rfq:expire-unanswered`, hourly via the scheduler → supplier `TimedOut`, link revoked, supplier emailed, Supply told to choose a replacement. Staff can cancel early: `POST /rfqs/{id}/suppliers/{s}/cancel`. |
+| Choose n of supplier | `POST /rfqs/{id}/suppliers/choose`: up to n replacements (n = open slots), sent right away with fresh links. |
+| Procurement category check → **If goods** | `POST /rfqs/{id}/aoc` once every supplier has replied or been cancelled; the lowest total wins. |
+| **If equipment** → TWG specification evaluation → Check each equipment with supplier → Fail? | With all quotes in, the RFQ moves to `TWG Evaluation`. The TWG Lead saves notes (`PUT /rfqs/{id}/twg/notes`) and marks each item Complies / Does not (`POST /rfqs/{id}/suppliers/{s}/twg-check`); any failed item fails the supplier. |
+| Did all supplier fail? **Yes** → Choose n of supplier needed | Every supplier's status becomes `Failed TWG`; the RFQ goes back to `Canvassing` and Supply chooses n new suppliers (same endpoint as above). |
+| Did all supplier fail? **No** → keep checking → Generate AOC | Once every supplier is checked, the AOC is built from the suppliers that **passed**; the lowest of them wins. |
+| **If list of venue** → Generate AOC → Individual rating of list of venue → Summary of rating | AOC status `For Venue Rating`. The raters (TWG Lead, end-user / PR requester, Supply Officer; one person holding several roles rates once) score each venue 1–5 on each *Venue Rating Criteria* setting (`POST /aoc/{id}/venue-ratings`). When the last rater submits, the summary is saved; the highest average wins and the lower quote breaks a tie. The AOC returns to `Draft`. |
 
-## Evaluation & Abstract of Canvas (AOC)
+## Orange — BAC review
 
-1. Once quotations are in, **check each equipment with supplier**.
-2. **TWG Specification evaluation** (Technical Working Group reviews specs).
-3. **Procurement category check** branches three ways:
-   - **If Equipment** → routes through the TWG specification evaluation path above.
-   - **If List of Venue** → **individual rating of list of venue** (per winning-supplier candidate) → **summary of rating**.
-   - **If Goods** → straight to generating the AOC.
-4. All three paths converge on **Generate Abstract of Canvas (AOC)**.
+| Flowchart | Implementation |
+|---|---|
+| BAC Review (digital sign) | `POST /aoc/{id}/submit-for-bac-review` → `Pending BAC Review`; `POST /aoc/{id}/bac-review` by the BAC Chairman or Vice-Chairman. Screen `/aoc/{id}`; queue in Approval Inbox → BAC. |
+| Fail? **Yes** → Committee add remarks → Notify TWG, End-user, Supply | `pass: false` with remarks → `BAC Returned`; notifies the TWG Lead, the requester, the Supply Officer and the preparer. |
+| TWG address BAC remarks | `POST /aoc/{id}/twg-respond` (TWG Lead) → `Pending BAC Satisfaction`. |
+| BAC satisfied? **Yes** → BAC Review | `POST /aoc/{id}/bac-satisfaction` `satisfied: true` → `Pending BAC Review` (a fresh signed review). |
+| BAC satisfied? **No** → Cancel PR → Notify end-user to Re-PR | `satisfied: false` + reason → PR `Cancelled` (`cancelled_from = AOC`). Its RFQ, AOC and open PO are cancelled and their portal links revoked; the requester is asked to Re-PR. |
+| Fail? **No** | `pass: true` → `For Supply Noting`. |
 
-## BAC Review
+## Yellow — Purchase Order
 
-1. **AOC → BAC Review (Digital-sign)**.
-2. **Fail?**
-   - Yes → **Committee adds remarks** → **notify TWG, End-user, Supply** → **TWG addresses BAC remarks** → **BAC satisfied?**
-     - No → **Cancel PR** → **notify end-user to re-PR** → END.
-     - Yes → loops back to BAC Review for re-approval.
-   - No (passes) → **AOC returned to Supply to note the lowest bidder**.
+| Flowchart | Implementation |
+|---|---|
+| AOC returned to supply to note lowest bidder | `POST /aoc/{id}/note-lowest-bidder` (Supply Officer, signed) → `Lowest Bidder Noted`. |
+| Create PO | `POST /rfqs/{id}/generate-po`, allowed only from `Lowest Bidder Noted`. Screen `/po/{id}`. |
+| Forwarded to Budget for Obligation → Accounting → RD final approval | `POST /purchase-orders/{id}/submit` → `approvals/po/{id}/obligate` → `/account` → `/final-approve`. |
+| Generate PO (with complete digital signature) | The PO carries every signer's name, date and e-signature image (screen and portal). |
+| Forward signed PO to Supplier Portal (notify supplier & end-user of winning bidder) | Automatic on RD approval → `Forwarded to Supplier`. The portal link is emailed to the supplier and the requester is told who won. `POST /purchase-orders/{id}/forward` re-issues the link. Public page `/portal/po/{token}`. |
+| Does supplier waive to deliver? **No** → END | The supplier confirms on the portal (`POST /portal/po/{token}/respond`), or Supply records it (`POST /purchase-orders/{id}/deliver`) → `Delivery Accepted` (fills *Date Conformed* on the monitoring sheet). |
+| **Yes** → Cancel PR → Notify end-user to Re-PR | → `Delivery Waived`, then the same Cancel PR path (`cancelled_from = PO`). |
+| Notify end-user to Re-PR | `POST /purchase-requests/{id}/re-pr` copies the cancelled PR (items, fund source, charged PPMP, purpose) into a new Draft, once per PR. The PR page shows the cancellation and a **Re-PR** button. |
 
-## PO Creation, Approval & Delivery
-
-1. **Create PO** (from the AOC's noted lowest/winning bidder).
-2. Forwarded to **Budget for Obligation (Digital Sign)**.
-3. Forwarded to **Accounting (Digital Sign)**.
-4. Forwarded to **RD for final approval (E-Sign)**.
-5. **Generate PO** with complete digital signatures.
-6. **Forward signed PO to Supplier Portal** — notifies both the supplier and the end-user of the winning bidder.
-7. **Does supplier waive delivery?**
-   - Yes → loops back into the BAC-satisfaction / re-procurement cycle.
-   - No → **END** (delivery proceeds).
-
-## Open question noted directly on the diagram
+## Still open
 
 > "Need to clarify to budgeting and accounting if they can disapprove goods being procured."
 
-This suggests it's still undecided whether Budget/Accounting sign-off is a genuine approve/reject gate (like BAC's) or a pass-through confirmation step.
+Budget, Accounting and the RD can still **reject** a PO (`POST /approvals/po/{id}/reject`), as before,
+but the flowchart does not say what happens next, so a rejected PO stops there. Decide the path
+(revise and resubmit, re-canvass, or Cancel PR → Re-PR) before building it.
 
-## How this compares to the current implementation
+## Running it
 
-The RFQ and PO features built so far (backend-persisted, in `pr_backend`/`pr_frontend`) are a simplified first pass relative to this diagram:
-
-| Diagram | Current implementation |
-|---|---|
-| One RFQ canvass = exactly **3 suppliers**, sent via a Supplier Portal, with reply tracking and a 7-day timeout/replacement loop | One RFQ = **one supplier** (free-text fields), created directly from an Approved PR |
-| **BAC Chair/Vice-chair + Supply Officer countersign the RFQ itself** before it's sent to suppliers | No pre-send signing step on the RFQ document |
-| **Abstract of Canvas (AOC)** step with category-based branching (goods / equipment / venue) and TWG spec evaluation | No AOC step exists |
-| **BAC Review** with a specific remarks → TWG-addresses → re-review loop, or cancel-and-re-PR | Generic recommend → approve → reject (no remarks loop, no PR-cancellation path) |
-| PO routed through **Budget (obligation) → Accounting → RD** as three distinct sign-offs | Generic recommend → approve → reject on the PO |
-| **Supplier delivery-waiver** step after PO issuance | Not modeled — nothing tracks delivery acceptance |
-
-This gap is worth keeping in mind if/when the RFQ/PO module gets built out further to match this target process.
+- **Email:** set `MAIL_MAILER=smtp` and the SMTP account in `pr_backend/.env`, and `FRONTEND_URL` to the
+  public address. Mail is queued, so run the queue worker (`scripts/systemd/dost-caraga-pr-queue.service`).
+- **7-day sweep:** run the scheduler (`scripts/systemd/dost-caraga-pr-scheduler.service`).
+- **Settings to review:** *Regular Fund Types*, *Venue Rating Criteria*, and the Supply Officer and TWG
+  Lead accounts.
