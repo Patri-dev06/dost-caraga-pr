@@ -165,6 +165,8 @@ export type PurchaseRequestCreatePayload = {
   modeOfProcurement?: string;
   mode_of_procurement?: string;
   purpose: string;
+  /** "Charged to": the planning PPMP's client uid. Its class decides the flowchart's "Regular fund?". */
+  ppmp_client_uid?: string | null;
   submit?: boolean;
   items: Array<{
     name: string;
@@ -595,6 +597,12 @@ export async function apiSubmitPurchaseRequest(id: string | number) {
   return mapPurchaseRequest(result.data);
 }
 
+/** Flowchart "Notify End-user to Re-PR": copies a cancelled PR into a new Draft for its requester. */
+export async function apiRePurchaseRequest(id: string | number) {
+  const result = await request<ApiRecord<BackendPurchaseRequest> & { message: string }>(`/purchase-requests/${id}/re-pr`, { method: "POST" });
+  return { message: result.message, data: mapPurchaseRequest(result.data) };
+}
+
 export async function apiValidatePurchaseRequest(id: string | number) {
   const result = await request<{ data: BackendValidation[] }>(`/purchase-requests/${id}/validate`, {
     method: "POST",
@@ -965,6 +973,15 @@ type BackendPurchaseRequest = {
   items: BackendPrItem[];
   validation?: BackendValidation[];
   approval_trail?: BackendApproval[];
+  regular_fund?: boolean;
+  identified_project?: string | null;
+  ppmp_client_uid?: string | null;
+  ppmp_class?: "Regular" | "Project" | null;
+  cancelled_at?: string | null;
+  cancel_reason?: string | null;
+  cancelled_from?: "AOC" | "PO" | null;
+  re_pr_of?: { id: number; pr_no: string } | null;
+  re_pr?: { id: number; pr_no: string } | null;
 };
 
 type BackendNamedRecord = {
@@ -1148,6 +1165,15 @@ function mapPurchaseRequest(pr: BackendPurchaseRequest): PurchaseRequest {
     purpose: pr.purpose,
     items: pr.items.map(mapPrItem),
     stage: pr.stage,
+    regularFund: pr.regular_fund,
+    identifiedProject: pr.identified_project ?? null,
+    ppmpClientUid: pr.ppmp_client_uid ?? null,
+    ppmpClass: pr.ppmp_class ?? null,
+    cancelledAt: pr.cancelled_at ?? null,
+    cancelReason: pr.cancel_reason ?? null,
+    cancelledFrom: pr.cancelled_from ?? null,
+    rePrOf: pr.re_pr_of ? { id: String(pr.re_pr_of.id), prNo: pr.re_pr_of.pr_no } : null,
+    rePr: pr.re_pr ? { id: String(pr.re_pr.id), prNo: pr.re_pr.pr_no } : null,
   };
 }
 

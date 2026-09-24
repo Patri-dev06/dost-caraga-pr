@@ -12,6 +12,8 @@ class RfqQuoteItem extends Model
         'rfq_item_id',
         'unit_price',
         'total_price',
+        'twg_complies',
+        'twg_remarks',
     ];
 
     protected function casts(): array
@@ -19,6 +21,7 @@ class RfqQuoteItem extends Model
         return [
             'unit_price' => 'decimal:2',
             'total_price' => 'decimal:2',
+            'twg_complies' => 'boolean',
         ];
     }
 

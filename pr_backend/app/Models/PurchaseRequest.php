@@ -15,17 +15,25 @@ class PurchaseRequest extends Model
         'office_id',
         'fund_source_id',
         'project_id',
+        'ppmp_document_id',
         'requested_by',
         'mode_of_procurement',
         'purpose',
         'status',
         'stage',
         'submitted_at',
+        'cancelled_at',
+        'cancel_reason',
+        'cancelled_from',
+        're_pr_of_id',
     ];
+
+    /** Statuses that no longer draw on a PPMP's budget or quantities. */
+    public const RELEASED_STATUSES = ['Rejected', 'Returned', 'Cancelled'];
 
     protected function casts(): array
     {
-        return ['submitted_at' => 'datetime'];
+        return ['submitted_at' => 'datetime', 'cancelled_at' => 'datetime'];
     }
 
     /** Modules whose holders work on every PR (approvers, BAC/supply, validators), not just their own. */
@@ -82,6 +90,18 @@ class PurchaseRequest extends Model
         return $this->belongsTo(Project::class);
     }
 
+    /** The planning PPMP this PR is "Charged to". */
+    public function ppmpDocument(): BelongsTo
+    {
+        return $this->belongsTo(PpmpDocument::class);
+    }
+
+    /** The cancelled PR this one was re-filed from (the flowchart's "Re-PR"). */
+    public function rePrOf(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 're_pr_of_id');
+    }
+
     public function requester(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
@@ -100,6 +120,11 @@ class PurchaseRequest extends Model
     public function rfqs(): HasMany
     {
         return $this->hasMany(Rfq::class);
+    }
+
+    public function purchaseOrders(): HasMany
+    {
+        return $this->hasMany(PurchaseOrder::class);
     }
 
     public function approvalActions(): MorphMany

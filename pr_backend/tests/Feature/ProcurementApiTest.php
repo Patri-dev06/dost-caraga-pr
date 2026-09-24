@@ -535,7 +535,9 @@ class ProcurementApiTest extends TestCase
     {
         $token = $this->loginAsAdmin();
         $payload = $this->prPayload();
-        $payload['items'][0]['unit_cost'] = 99999999; // blows through the line-item budget
+        // A non-regular fund goes through the LIB check (a regular one only checks the APP).
+        $payload['fund_source'] = 'Trust Fund - SETUP';
+        $payload['items'][0] = ['name' => 'WiFi Router', 'uom' => 'unit', 'quantity' => 1, 'unit_cost' => 99999999]; // blows through the line-item budget
 
         $prId = $this->withToken($token)->postJson('/api/v1/purchase-requests', $payload)->assertCreated()->json('data.id');
         $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/submit")->assertStatus(422);

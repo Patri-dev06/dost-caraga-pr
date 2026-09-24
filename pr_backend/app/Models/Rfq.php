@@ -34,6 +34,11 @@ class Rfq extends Model
         'supply_officer_signed_by',
         'supply_officer_signed_name',
         'supply_officer_signed_at',
+        'bac_signed_by',
+        'bac_signed_name',
+        'bac_signed_role',
+        'bac_signed_at',
+        'twg_evaluation_notes',
         'status',
         'stage',
         'created_by',
@@ -47,6 +52,7 @@ class Rfq extends Model
             'bac_chair_signed_at' => 'datetime',
             'bac_vice_chair_signed_at' => 'datetime',
             'supply_officer_signed_at' => 'datetime',
+            'bac_signed_at' => 'datetime',
             'submitted_at' => 'datetime',
         ];
     }

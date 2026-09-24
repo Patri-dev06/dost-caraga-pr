@@ -82,6 +82,7 @@ Route::prefix('v1')->group(function (): void {
         Route::put('/purchase-requests/{resourceId}', [ProcurementController::class, 'update'])->defaults('resource', 'purchase-requests');
         Route::post('/purchase-requests/{purchaseRequest}/validate', [ProcurementController::class, 'validatePurchaseRequest']);
         Route::post('/purchase-requests/{purchaseRequest}/submit', [ProcurementController::class, 'submitPurchaseRequest']);
+        Route::post('/purchase-requests/{purchaseRequest}/re-pr', [ProcurementController::class, 'rePurchaseRequest']);
 
         Route::get('/approvals', [ProcurementController::class, 'approvals']);
         Route::post('/approvals/{purchaseRequest}/recommend', [ProcurementController::class, 'recommend']);

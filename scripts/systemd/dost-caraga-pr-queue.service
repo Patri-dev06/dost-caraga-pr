@@ -1,0 +1,19 @@
+# Sends the queued emails (routing notices, sign-in alerts, Supplier Portal links).
+# Install: sudo cp scripts/systemd/dost-caraga-pr-queue.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now dost-caraga-pr-queue.service
+[Unit]
+Description=DOST Caraga PR Queue Worker (Laravel)
+After=network.target postgresql.service dost-caraga-pr-backend.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=talinoserver2
+WorkingDirectory=/home/talinoserver2/Documents/dost-caraga-pr/pr_backend
+# --max-time lets systemd restart the worker hourly so it picks up deployed code.
+ExecStart=/usr/bin/php artisan queue:work --sleep=3 --tries=3 --max-time=3600
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -5,7 +5,8 @@ export type PRStatus =
   | "For Approval"
   | "Approved"
   | "Returned"
-  | "Rejected";
+  | "Rejected"
+  | "Cancelled";
 
 export type ValidationStatus = "Passed" | "Failed" | "Warning" | "N/A";
 
@@ -40,6 +41,17 @@ export interface PurchaseRequest {
   purpose: string;
   items: PRItem[];
   stage: string;
+  /** Flowchart "Regular fund?": true = APP-CSE/APP-Non-CSE checks only; false = project, PPMP, LIB, APP-Non-CSE. */
+  regularFund?: boolean;
+  /** The project a non-regular PR is charged to (the LIB behind its Project PPMP). */
+  identifiedProject?: string | null;
+  ppmpClientUid?: string | null;
+  ppmpClass?: "Regular" | "Project" | null;
+  cancelledAt?: string | null;
+  cancelReason?: string | null;
+  cancelledFrom?: "AOC" | "PO" | null;
+  rePrOf?: { id: string; prNo: string } | null;
+  rePr?: { id: string; prNo: string } | null;
 }
 
 export const purchaseRequests: PurchaseRequest[] = [

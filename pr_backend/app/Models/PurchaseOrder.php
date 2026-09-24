@@ -17,6 +17,7 @@ class PurchaseOrder extends Model
         'supplier_address',
         'supplier_contact_no',
         'supplier_tin',
+        'supplier_email',
         'po_date',
         'delivery_date',
         'place_of_delivery',
@@ -35,11 +36,20 @@ class PurchaseOrder extends Model
         'approved_by_id',
         'approved_by_name',
         'approved_by_signed_at',
+        'forwarded_to_supplier_at',
+        'portal_token_hash',
+        'delivery_accepted_at',
+        'delivery_responded_by',
         'delivery_waived',
         'delivery_waived_at',
         'delivery_waived_reason',
         'submitted_at',
     ];
+
+    protected $hidden = ['portal_token_hash'];
+
+    /** A PO past these is finished (or dead) and is left alone when its PR is cancelled. */
+    public const CLOSED_STATUSES = ['Delivery Accepted', 'Delivery Waived', 'Rejected', 'Cancelled'];
 
     protected function casts(): array
     {
@@ -48,6 +58,8 @@ class PurchaseOrder extends Model
             'budget_officer_signed_at' => 'datetime',
             'accounting_officer_signed_at' => 'datetime',
             'approved_by_signed_at' => 'datetime',
+            'forwarded_to_supplier_at' => 'datetime',
+            'delivery_accepted_at' => 'datetime',
             'delivery_waived' => 'boolean',
             'delivery_waived_at' => 'datetime',
             'submitted_at' => 'datetime',

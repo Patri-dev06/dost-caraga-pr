@@ -22,6 +22,7 @@ use App\Models\Role;
 use App\Models\SystemPreference;
 use App\Models\User;
 use App\Models\UserNotification;
+use App\Services\PurchaseRequestChecks;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -954,7 +955,7 @@ class ProcurementController extends Controller
         $nonCse = [];
         foreach ($items as $item) {
             $key = $item->procurement_item_id ?: 'name:'.mb_strtolower((string) $item->item_name);
-            $isCse = $this->isCseExpense($item->expense_category, $item->expense_subcategory);
+            $isCse = PurchaseRequestChecks::isCseExpense($item->expense_category, $item->expense_subcategory);
             $group = $isCse ? $cse : $nonCse;
 
             if (! isset($group[$key])) {
@@ -1006,27 +1007,6 @@ class ProcurementController extends Controller
                 'estimated_cost' => round($row['budget'], 2),
             ]);
         }
-    }
-
-    /**
-     * Classify a PPMP line as Common-Use Supplies & Equipment (APP-CSE) from its expense labels.
-     */
-    private function isCseExpense(?string ...$labels): bool
-    {
-        $needles = ['common-use', 'common use', 'cse', 'office supplies', 'office supply'];
-        foreach ($labels as $label) {
-            $text = mb_strtolower(trim((string) $label));
-            if ($text === '') {
-                continue;
-            }
-            foreach ($needles as $needle) {
-                if (str_contains($text, $needle)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     public function planningPpmpDestroy(Request $request, string $clientUid): JsonResponse
@@ -1789,16 +1769,12 @@ class ProcurementController extends Controller
     /** @return array{status: string, errors: mixed, warnings: mixed, data: array<int, mixed>} */
     private function runValidationChecks(PurchaseRequest $purchaseRequest): array
     {
-        $purchaseRequest->load('items.item', 'project', 'fundSource');
+        $purchaseRequest->load('items.item', 'project', 'fundSource', 'ppmpDocument.libDocument');
         $purchaseRequest->validationResults()->delete();
 
         $results = [];
-        foreach ($purchaseRequest->items as $item) {
-            foreach ($this->checksFor($purchaseRequest, $item) as $check) {
-                $results[] = $purchaseRequest->validationResults()->create($check + [
-                    'purchase_request_item_id' => $item->id,
-                ]);
-            }
+        foreach ($this->prChecks()->run($purchaseRequest) as $check) {
+            $results[] = $purchaseRequest->validationResults()->create($check);
         }
 
         $failed = collect($results)->contains(fn ($result) => $result->status === 'Failed');
@@ -1852,6 +1828,44 @@ class ProcurementController extends Controller
     }
 
     /**
+     * Flowchart: "Notify End-user to Re-PR". Copies a cancelled PR (items, fund source, charged PPMP,
+     * project, purpose) into a new Draft for the same requester, who reviews and submits it as usual.
+     */
+    public function rePurchaseRequest(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->guardModule('pr');
+        abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
+        abort_unless($purchaseRequest->isManageableBy($request->user()), 403, 'Only the requester who owns this Purchase Request may re-file it.');
+        abort_unless($purchaseRequest->status === 'Cancelled', 422, 'Only a cancelled Purchase Request can be re-filed (Re-PR).');
+
+        $existing = PurchaseRequest::where('re_pr_of_id', $purchaseRequest->id)->first();
+        abort_if($existing !== null, 422, "This Purchase Request was already re-filed as {$existing?->pr_no}.");
+
+        $copy = DB::transaction(function () use ($purchaseRequest): PurchaseRequest {
+            $copy = PurchaseRequest::create([
+                'pr_no' => $this->nextPrNo(),
+                'office_id' => $purchaseRequest->office_id,
+                'fund_source_id' => $purchaseRequest->fund_source_id,
+                'project_id' => $purchaseRequest->project_id,
+                'ppmp_document_id' => $purchaseRequest->ppmp_document_id,
+                'requested_by' => $purchaseRequest->requested_by,
+                'mode_of_procurement' => $purchaseRequest->mode_of_procurement,
+                'purpose' => $purchaseRequest->purpose,
+                're_pr_of_id' => $purchaseRequest->id,
+            ]);
+            $copy->items()->createMany($purchaseRequest->items()->get()
+                ->map(fn (PurchaseRequestItem $item): array => $item->only(['procurement_item_id', 'name', 'description', 'uom', 'quantity', 'unit_cost']))
+                ->all());
+
+            return $copy;
+        });
+
+        $this->audit($request, 'Purchase Requests', 'Re-PR', "{$purchaseRequest->pr_no} -> {$copy->pr_no}");
+
+        return response()->json(['message' => "Re-filed as {$copy->pr_no}. Review it and submit.", 'data' => $this->format($copy->fresh())], 201);
+    }
+
+    /**
      * What every live PR has already drawn against one fund source, so the form can work out what's
      * left of a PPMP item. Summed in SQL (grouped by item name/UOM) rather than loading every PR and
      * every item into PHP — the result is bounded by how many distinct items exist for that fund
@@ -1863,7 +1877,7 @@ class ProcurementController extends Controller
 
         $query = PurchaseRequestItem::query()
             ->join('purchase_requests', 'purchase_requests.id', '=', 'purchase_request_items.purchase_request_id')
-            ->whereNotIn('purchase_requests.status', ['Rejected', 'Returned']);
+            ->whereNotIn('purchase_requests.status', PurchaseRequest::RELEASED_STATUSES);
 
         if ($fundSource = $request->query('fund_source')) {
             $query->join('fund_sources', 'fund_sources.id', '=', 'purchase_requests.fund_source_id')
@@ -2040,6 +2054,7 @@ class ProcurementController extends Controller
             'office_id' => ['required', 'exists:offices,id'],
             'fund_source_id' => ['required', 'exists:fund_sources,id'],
             'project_id' => ['nullable', 'exists:projects,id'],
+            'ppmp_document_id' => ['nullable', Rule::exists('ppmp_documents', 'id')->where('status', 'Approved')],
             'requested_by' => ['nullable', 'exists:users,id'],
             'mode_of_procurement' => ['required', 'string'],
             'purpose' => ['required', 'string'],
@@ -2059,6 +2074,7 @@ class ProcurementController extends Controller
                 'office_id' => $data['office_id'],
                 'fund_source_id' => $data['fund_source_id'],
                 'project_id' => $data['project_id'] ?? null,
+                'ppmp_document_id' => $data['ppmp_document_id'] ?? null,
                 // Only Admin/Superadmin may file a PR on someone else's behalf; everyone else is always the requester.
                 'requested_by' => in_array($request->user()->tier, ['superadmin', 'admin'], true)
                     ? ($data['requested_by'] ?? $request->user()->id)
@@ -2105,6 +2121,11 @@ class ProcurementController extends Controller
         $data['fund_source_id'] = $data['fund_source_id'] ?? $this->resolveFundSourceId($data['fund_source'] ?? $data['fundSource'] ?? $data['source_of_funds'] ?? null);
         $data['project_id'] = $data['project_id'] ?? $this->resolveProjectId($data['project_code'] ?? $data['project_title'] ?? $data['projectTitle'] ?? $data['project'] ?? null);
         $data['requested_by'] = $data['requested_by'] ?? $data['requestedBy'] ?? $data['requester_id'] ?? $data['requesterId'] ?? null;
+        // "Charged to": the planning PPMP, sent by its client uid (what the PR form knows it by).
+        $ppmpUid = $data['ppmp_client_uid'] ?? $data['ppmpClientUid'] ?? null;
+        if (! isset($data['ppmp_document_id']) && $ppmpUid) {
+            $data['ppmp_document_id'] = PpmpDocument::where('client_uid', $ppmpUid)->value('id') ?? 0; // 0 fails "exists" below
+        }
         $data['mode_of_procurement'] = $data['mode_of_procurement'] ?? $data['modeOfProcurement'] ?? null;
 
         $data['items'] = collect($data['items'] ?? [])->map(function (array $item): array {
@@ -2226,6 +2247,7 @@ class ProcurementController extends Controller
             'office_id' => ['sometimes', 'exists:offices,id'],
             'fund_source_id' => ['sometimes', 'exists:fund_sources,id'],
             'project_id' => ['nullable', 'exists:projects,id'],
+            'ppmp_document_id' => ['nullable', Rule::exists('ppmp_documents', 'id')->where('status', 'Approved')],
             'mode_of_procurement' => ['sometimes', 'string'],
             'purpose' => ['sometimes', 'string'],
             'items' => ['sometimes', 'array', 'min:1'],
@@ -2278,30 +2300,10 @@ class ProcurementController extends Controller
         return response()->json(['data' => $user->load('office', 'roles')], 201);
     }
 
-    private function checksFor(PurchaseRequest $pr, $item): array
+    /** The flowchart's Module 1 checks, with the regular fund types from Settings. */
+    private function prChecks(): PurchaseRequestChecks
     {
-        $projectId = $pr->project_id;
-        $procurementItemId = $item->procurement_item_id;
-        $name = mb_strtolower($item->name);
-        $amount = (float) $item->quantity * (float) $item->unit_cost;
-        $cse = AppCseItem::where(function ($query) use ($projectId): void {
-            $query->whereNull('project_id')->orWhere('project_id', $projectId);
-        })->where('procurement_item_id', $procurementItemId)->exists();
-        $nonCse = AppNonCseItem::where(function ($query) use ($projectId): void {
-            $query->whereNull('project_id')->orWhere('project_id', $projectId);
-        })->where('procurement_item_id', $procurementItemId)->exists();
-
-        if (! $procurementItemId) {
-            $cse = AppCseItem::whereHas('item', fn ($query) => $query->whereRaw('LOWER(name) like ?', ["%{$name}%"]))->exists();
-            $nonCse = AppNonCseItem::whereHas('item', fn ($query) => $query->whereRaw('LOWER(name) like ?', ["%{$name}%"]))->exists();
-        }
-
-        return [
-            $this->ppmpCheck($projectId, $procurementItemId, $item->name),
-            $this->lineItemBudgetCheck($projectId, $amount),
-            ['label' => 'APP-CSE', 'status' => $cse ? 'Passed' : 'N/A', 'message' => $cse ? 'Item matches an APP-CSE entry.' : 'Item is not found in APP-CSE.'],
-            ['label' => 'APP-Non-CSE', 'status' => $nonCse ? 'Passed' : ($cse ? 'N/A' : 'Failed'), 'message' => $nonCse ? 'Item matches an APP-Non-CSE entry.' : ($cse ? 'Not applicable; item is CSE.' : 'Item is not found in APP-Non-CSE.')],
-        ];
+        return new PurchaseRequestChecks(PurchaseRequestChecks::parseFundTypes((string) $this->preferenceValue('regular_fund_types', 'GAA')));
     }
 
     private function validatedCheckPayload(Request $request, bool $withAmount, bool $withItem): array
@@ -2519,7 +2521,8 @@ class ProcurementController extends Controller
             return $record;
         }
 
-        $record->loadMissing(['office', 'fundSource', 'project', 'requester.roles', 'items', 'validationResults', 'approvalActions']);
+        $record->loadMissing(['office', 'fundSource', 'project', 'ppmpDocument.libDocument', 'rePrOf', 'requester.roles', 'items', 'validationResults', 'approvalActions']);
+        $checks = $this->prChecks();
 
         return [
             'id' => $record->id,
@@ -2540,6 +2543,17 @@ class ProcurementController extends Controller
             ] : null,
             'mode_of_procurement' => $record->mode_of_procurement,
             'project_title' => $record->project?->title,
+            // Flowchart Module 1: which path the pre-checks take, and the project a non-regular PR is for.
+            'regular_fund' => $checks->isRegularFund($record),
+            'identified_project' => $checks->projectName($record),
+            'ppmp_client_uid' => $record->ppmpDocument?->client_uid,
+            'ppmp_class' => $record->ppmpDocument?->ppmp_class,
+            'cancelled_at' => $record->cancelled_at?->toISOString(),
+            'cancel_reason' => $record->cancel_reason,
+            'cancelled_from' => $record->cancelled_from,
+            're_pr_of' => $record->rePrOf ? ['id' => $record->rePrOf->id, 'pr_no' => $record->rePrOf->pr_no] : null,
+            're_pr' => ($refiled = PurchaseRequest::where('re_pr_of_id', $record->id)->latest('id')->first(['id', 'pr_no']))
+                ? ['id' => $refiled->id, 'pr_no' => $refiled->pr_no] : null,
             'purpose' => $record->purpose,
             'items' => $record->items,
             'validation' => $record->validationResults,

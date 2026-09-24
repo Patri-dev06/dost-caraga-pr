@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class AbstractOfCanvas extends Model
@@ -16,13 +17,23 @@ class AbstractOfCanvas extends Model
         'status',
         'bac_remarks',
         'twg_response',
+        'venue_rating_summary',
+        'supply_noted_by',
+        'supply_noted_name',
+        'supply_noted_at',
+        'bac_approved_at',
         'created_by',
         'submitted_at',
     ];
 
     protected function casts(): array
     {
-        return ['submitted_at' => 'datetime'];
+        return [
+            'submitted_at' => 'datetime',
+            'venue_rating_summary' => 'array',
+            'supply_noted_at' => 'datetime',
+            'bac_approved_at' => 'datetime',
+        ];
     }
 
     public function rfq(): BelongsTo
@@ -33,6 +44,11 @@ class AbstractOfCanvas extends Model
     public function winningSupplier(): BelongsTo
     {
         return $this->belongsTo(RfqSupplier::class, 'winning_rfq_supplier_id');
+    }
+
+    public function venueRatings(): HasMany
+    {
+        return $this->hasMany(VenueRating::class);
     }
 
     public function creator(): BelongsTo

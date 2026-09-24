@@ -1,5 +1,5 @@
-import { createFileRoute, Link, useParams } from "@tanstack/react-router";
-import { ArrowLeft, Download, Eye, FileSpreadsheet, Pencil } from "lucide-react";
+import { createFileRoute, Link, useNavigate, useParams } from "@tanstack/react-router";
+import { ArrowLeft, Ban, Download, Eye, FileSpreadsheet, Loader2, Pencil, RotateCcw } from "lucide-react";
 import { exportPurchaseRequestExcel, PR_FORM_DEFAULTS } from "@/lib/pr-excel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,8 +10,9 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { AuditTimeline } from "@/components/app/audit-timeline";
 import { ValidationResultPanel } from "@/components/app/validation-result-panel";
 import { fmtPHP, prTotal } from "@/lib/mock-data";
-import { apiGetPurchaseRequest, apiValidatePurchaseRequest } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
+import { apiGetPurchaseRequest, apiRePurchaseRequest, apiValidatePurchaseRequest } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/purchase-requests/$prId")({
   head: () => ({
@@ -25,6 +26,17 @@ export const Route = createFileRoute("/purchase-requests/$prId")({
 
 function PRDetail() {
   const { prId } = useParams({ from: "/purchase-requests/$prId" });
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const rePr = useMutation({
+    mutationFn: () => apiRePurchaseRequest(prId),
+    onSuccess: async (result) => {
+      toast.success(result.message);
+      await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
+      navigate({ to: "/purchase-requests/new", search: { edit: result.data.id } });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Unable to re-file this Purchase Request."),
+  });
   const { data: pr, isLoading, error } = useQuery({
     queryKey: ["purchase-request", prId],
     queryFn: () => apiGetPurchaseRequest(prId),
@@ -32,7 +44,7 @@ function PRDetail() {
   const { data: validationResults } = useQuery({
     queryKey: ["purchase-request-validation", prId],
     queryFn: () => apiValidatePurchaseRequest(prId),
-    enabled: !!pr && pr.status !== "Approved",
+    enabled: !!pr && pr.status !== "Approved" && pr.status !== "Cancelled",
   });
 
   if (isLoading) {
@@ -101,6 +113,44 @@ function PRDetail() {
         }
       />
 
+      {pr.status === "Cancelled" && (
+        // Flowchart: "Cancel PR -> Notify End-user to Re-PR".
+        <Card className="flex flex-wrap items-start gap-3 border border-destructive/30 bg-destructive/5 p-4">
+          <Ban className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="font-semibold text-destructive">
+              This Purchase Request was cancelled{pr.cancelledFrom === "PO" ? " — the winning supplier waived delivery" : pr.cancelledFrom === "AOC" ? " — the BAC was not satisfied after the TWG addressed its remarks" : ""}.
+            </p>
+            {pr.cancelReason && <p className="mt-1 text-foreground">Reason: {pr.cancelReason}</p>}
+            {pr.rePr ? (
+              <p className="mt-1 text-muted-foreground">
+                Re-filed as{" "}
+                <Link to="/purchase-requests/$prId" params={{ prId: pr.rePr.id }} className="font-semibold text-primary underline-offset-2 hover:underline">
+                  {pr.rePr.prNo}
+                </Link>
+                .
+              </p>
+            ) : (
+              <p className="mt-1 text-muted-foreground">If the need still stands, Re-PR copies it into a new draft for you to review and submit.</p>
+            )}
+          </div>
+          {!pr.rePr && (
+            <Button className="gap-2" disabled={rePr.isPending} onClick={() => rePr.mutate()}>
+              {rePr.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />} Re-PR
+            </Button>
+          )}
+        </Card>
+      )}
+      {pr.rePrOf && (
+        <p className="text-sm text-muted-foreground">
+          Re-filed from cancelled{" "}
+          <Link to="/purchase-requests/$prId" params={{ prId: pr.rePrOf.id }} className="font-semibold text-primary underline-offset-2 hover:underline">
+            {pr.rePrOf.prNo}
+          </Link>
+          .
+        </p>
+      )}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           ["Date Submitted", pr.dateSubmitted],
@@ -131,6 +181,15 @@ function PRDetail() {
             <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
               <div><p className="label-eyebrow">Fund Source</p><p className="mt-1 font-semibold text-navy">{pr.fundSource}</p></div>
               <div><p className="label-eyebrow">Current Stage</p><p className="mt-1 font-semibold text-navy">{pr.stage}</p></div>
+              {pr.regularFund !== undefined && (
+                <div>
+                  <p className="label-eyebrow">Fund Path</p>
+                  <p className="mt-1 font-semibold text-navy">{pr.regularFund ? "Regular fund — APP-CSE, then APP-Non-CSE" : "Non-regular fund — Project, PPMP, LIB, APP-Non-CSE"}</p>
+                </div>
+              )}
+              {pr.regularFund === false && (
+                <div><p className="label-eyebrow">Project</p><p className="mt-1 font-semibold text-navy">{pr.identifiedProject || "Not identified"}</p></div>
+              )}
             </div>
           </Card>
         </TabsContent>

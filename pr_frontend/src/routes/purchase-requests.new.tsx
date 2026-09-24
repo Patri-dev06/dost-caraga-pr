@@ -647,7 +647,7 @@ function NewPR() {
       }
     }
 
-    return { office, fundSource, modeOfProcurement, purpose: purpose.trim(), items: mapped };
+    return { office, fundSource, ppmp_client_uid: selectedPpmp?.id ?? null, modeOfProcurement, purpose: purpose.trim(), items: mapped };
   }
 
   function saveDraft() {
@@ -1090,6 +1090,14 @@ function NewPR() {
                         />
                       </div>
                     </div>
+                    {selectedPpmp && (
+                      // Flowchart "Regular fund?": which pre-checks this PR goes through. Screen only.
+                      <p className="mt-1 text-[11px] not-italic text-muted-foreground print:hidden">
+                        {selectedPpmp.ppmpClass === "Regular"
+                          ? "Regular fund: items are checked against APP-CSE, then APP-Non-CSE."
+                          : `Non-regular fund · Project: ${getLib(selectedPpmp.libId)?.projectTitle.trim() || "the LIB behind this PPMP"}. Items are checked against this PPMP, its budget (LIB), then APP-Non-CSE.`}
+                      </p>
+                    )}
                   </td>
                 </tr>
               </tbody>

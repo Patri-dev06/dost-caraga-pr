@@ -1,0 +1,19 @@
+# Runs the Laravel scheduler — hourly, it cancels RFQs to suppliers that have not replied in
+# 7 calendar days (rfq:expire-unanswered) and asks Supply to choose replacements.
+# Install: sudo cp scripts/systemd/dost-caraga-pr-scheduler.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now dost-caraga-pr-scheduler.service
+[Unit]
+Description=DOST Caraga PR Scheduler (Laravel)
+After=network.target postgresql.service dost-caraga-pr-backend.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=talinoserver2
+WorkingDirectory=/home/talinoserver2/Documents/dost-caraga-pr/pr_backend
+ExecStart=/usr/bin/php artisan schedule:work
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

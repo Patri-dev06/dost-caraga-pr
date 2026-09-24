@@ -18,4 +18,9 @@ class PurchaseRequestItem extends Model
     {
         return $this->belongsTo(ProcurementItem::class, 'procurement_item_id');
     }
+
+    public function purchaseRequest(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseRequest::class);
+    }
 }

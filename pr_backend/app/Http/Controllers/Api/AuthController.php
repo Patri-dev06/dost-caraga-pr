@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Mail\SystemMessage;
 use App\Models\ApiToken;
 use App\Models\AuditLog;
 use App\Models\Office;
@@ -12,6 +13,8 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -46,6 +49,7 @@ class AuthController extends Controller
 
         $user->forceFill(['last_login_at' => now()])->save();
         $this->audit($request, $user, 'Auth', 'Logged In', $user->email);
+        $this->sendSignInAlert($request, $user);
 
         return response()->json([
             'token' => $plainToken,
@@ -53,6 +57,31 @@ class AuthController extends Controller
             'expires_in' => now()->diffInSeconds($expiresAt),
             'user' => $this->serializeUser($user->fresh(['roles', 'office'])),
         ]);
+    }
+
+    /** Flowchart: "Account Login with Email Notification to Account Owner". Best-effort, never blocks sign-in. */
+    private function sendSignInAlert(Request $request, User $user): void
+    {
+        $enabled = SystemPreference::where('key', 'email_notifications_enabled')->first()?->value['value'] ?? true;
+        if (! $enabled || empty($user->email)) {
+            return;
+        }
+
+        $when = now()->timezone('Asia/Manila')->format('F j, Y g:i A').' (Philippine time)';
+        $body = implode("\n", [
+            "Hello {$user->name},",
+            "Your account was just used to sign in to the DOST Caraga Procurement System.",
+            "When: {$when}",
+            'IP address: '.($request->ip() ?? 'unknown'),
+            'Browser/device: '.Str::limit((string) ($request->userAgent() ?? 'unknown'), 200),
+            'If this was not you, change your password right away and tell your system administrator.',
+        ]);
+
+        try {
+            Mail::to($user->email)->send(new SystemMessage('New sign-in to your DOST Caraga Procurement account', $body));
+        } catch (\Throwable $e) {
+            Log::warning('Sign-in alert email failed', ['recipient' => $user->email, 'error' => $e->getMessage()]);
+        }
     }
 
     public function register(Request $request): JsonResponse

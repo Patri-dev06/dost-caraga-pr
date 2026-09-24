@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Concerns;
 
+use App\Mail\SystemMessage;
 use App\Models\ApprovalAction;
 use App\Models\AuditLog;
 use App\Models\SystemPreference;
@@ -83,7 +84,7 @@ trait HasProcurementHelpers
         return ['name' => $user->name, 'position' => $user->position ?: (string) $user->roles->pluck('name')->first()];
     }
 
-    /** Persist an in-app notification and, if enabled, best-effort send an email. */
+    /** Persist an in-app notification and, if enabled, queue an email with a link back into the app. */
     private function notify(?User $recipient, string $type, string $title, ?string $body, ?string $link, array $data = []): void
     {
         if ($recipient === null) {
@@ -99,19 +100,30 @@ trait HasProcurementHelpers
             'data' => $data,
         ]);
 
-        if (! $this->preferenceValue('email_notifications_enabled', true) || empty($recipient->email)) {
+        $this->sendEmail($recipient->email, $title, $body, $link ? $this->frontendUrl($link) : null);
+    }
+
+    /**
+     * Queues one email, honouring the Email Notifications preference. Delivery is best-effort: an
+     * unconfigured or unreachable mailer is logged and never breaks the request that triggered it.
+     */
+    private function sendEmail(?string $address, string $subject, ?string $body, ?string $actionUrl = null, ?string $actionLabel = null): void
+    {
+        if (empty($address) || ! $this->preferenceValue('email_notifications_enabled', true)) {
             return;
         }
 
-        // Email delivery is best-effort: a missing/unconfigured mailer must never
-        // break the request. Wire up SMTP later and this starts sending for real.
         try {
-            Mail::raw(trim($title."\n\n".($body ?? '')), function ($message) use ($recipient, $title): void {
-                $message->to($recipient->email)->subject($title);
-            });
+            Mail::to($address)->send(new SystemMessage($subject, $body, $actionUrl, $actionLabel));
         } catch (\Throwable $e) {
-            Log::warning('Notification email failed', ['recipient' => $recipient->email, 'error' => $e->getMessage()]);
+            Log::warning('Notification email failed', ['recipient' => $address, 'error' => $e->getMessage()]);
         }
+    }
+
+    /** Absolute URL of a page in the web app, for links that leave the app (emails). */
+    private function frontendUrl(string $path): string
+    {
+        return rtrim((string) config('app.frontend_url'), '/').'/'.ltrim($path, '/');
     }
 
     private function ensureDefaultSystemPreferences(): void
@@ -212,6 +224,22 @@ trait HasProcurementHelpers
                 'type' => 'text',
             ],
             [
+                'key' => 'regular_fund_types',
+                'value' => ['value' => 'GAA'],
+                'category' => 'Procurement',
+                'label' => 'Regular Fund Types',
+                'description' => 'Comma-separated fund types treated as a regular fund (flowchart: "Regular fund?"). A PR charged to a Regular-class PPMP is always regular; one charged to a Project-class PPMP never is.',
+                'type' => 'text',
+            ],
+            [
+                'key' => 'venue_rating_criteria',
+                'value' => ['value' => 'Price, Location / Accessibility, Capacity, Facilities & Equipment, Food & Services'],
+                'category' => 'Procurement',
+                'label' => 'Venue Rating Criteria',
+                'description' => 'Comma-separated criteria each rater scores 1–5 for every venue quoted on a Venue RFQ. Equal weights; the highest average wins.',
+                'type' => 'text',
+            ],
+            [
                 'key' => 'email_notifications_enabled',
                 'value' => ['value' => true],
                 'category' => 'Notifications',
@@ -224,7 +252,7 @@ trait HasProcurementHelpers
                 'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
                 'category' => 'Workflow',
                 'label' => 'BAC Chairman',
-                'description' => 'Account that signs an RFQ first, before it can be sent to suppliers.',
+                'description' => 'Signs an RFQ after the Supply Officer (either the Chairman or the Vice-Chairman completes that step), and reviews Abstracts of Canvas.',
                 'type' => 'text',
             ],
             [
@@ -232,7 +260,7 @@ trait HasProcurementHelpers
                 'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
                 'category' => 'Workflow',
                 'label' => 'BAC Vice-Chairman',
-                'description' => 'Account that signs an RFQ after the BAC Chairman.',
+                'description' => 'Signs an RFQ after the Supply Officer when the Chairman does not (either one completes that step), and reviews Abstracts of Canvas.',
                 'type' => 'text',
             ],
             [
@@ -240,7 +268,7 @@ trait HasProcurementHelpers
                 'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
                 'category' => 'Workflow',
                 'label' => 'Supply Officer',
-                'description' => 'Account that countersigns an RFQ, the final step before it can be sent to suppliers.',
+                'description' => 'Counter-signs an RFQ first, before the BAC Chairman/Vice-Chairman; notes the lowest bidder on a BAC-approved Abstract of Canvas; rates venues.',
                 'type' => 'text',
             ],
             [
@@ -256,7 +284,7 @@ trait HasProcurementHelpers
                 'value' => ['value' => optional(User::where('email', 'admin@dost.gov.ph')->first())->id],
                 'category' => 'Workflow',
                 'label' => 'TWG Lead',
-                'description' => 'Account that addresses BAC remarks on an Abstract of Canvas on behalf of the Technical Working Group.',
+                'description' => 'Evaluates equipment specifications supplier by supplier, rates venues, and addresses BAC remarks on an Abstract of Canvas on behalf of the Technical Working Group.',
                 'type' => 'text',
             ],
         ];

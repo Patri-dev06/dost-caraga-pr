@@ -21,6 +21,29 @@ const styles: Record<string, string> = {
   "Pending BAC Review": "bg-primary/10 text-primary border-primary/30",
   "BAC Returned": "bg-warning/15 text-warning-foreground border-warning/40",
   "Cancelled": "bg-destructive/10 text-destructive border-destructive/30",
+  // RFQ canvass
+  "Pending Supply Officer Countersign": "bg-secondary text-navy border-soft-blue",
+  "Pending BAC Signature": "bg-secondary text-navy border-soft-blue",
+  "Ready to Send": "bg-primary/10 text-primary border-primary/30",
+  "Canvassing": "bg-primary/10 text-primary border-primary/30",
+  "TWG Evaluation": "bg-secondary text-navy border-soft-blue",
+  "Sent": "bg-secondary text-navy border-soft-blue",
+  "Replied": "bg-success/10 text-success border-success/30",
+  "TimedOut": "bg-warning/15 text-warning-foreground border-warning/40",
+  "Replaced": "bg-muted text-muted-foreground border-border",
+  "Failed TWG": "bg-destructive/10 text-destructive border-destructive/30",
+  // Abstract of Canvas
+  "For Venue Rating": "bg-secondary text-navy border-soft-blue",
+  "Pending BAC Satisfaction": "bg-warning/15 text-warning-foreground border-warning/40",
+  "For Supply Noting": "bg-primary/10 text-primary border-primary/30",
+  "Lowest Bidder Noted": "bg-success/10 text-success border-success/30",
+  // Purchase Order
+  "Pending Budget Obligation": "bg-secondary text-navy border-soft-blue",
+  "Pending Accounting": "bg-secondary text-navy border-soft-blue",
+  "Pending RD Approval": "bg-primary/10 text-primary border-primary/30",
+  "Forwarded to Supplier": "bg-primary/10 text-primary border-primary/30",
+  "Delivery Accepted": "bg-success/10 text-success border-success/30",
+  "Delivery Waived": "bg-warning/15 text-warning-foreground border-warning/40",
 };
 
 export function StatusBadge({ status, className }: { status: Status; className?: string }) {
