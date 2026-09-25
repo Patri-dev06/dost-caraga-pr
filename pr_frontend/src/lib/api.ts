@@ -590,6 +590,75 @@ export async function apiGetPrSupportingDocuments(prId: string): Promise<PrSuppo
   }));
 }
 
+/** One step of a PR's procurement flow: done, current (waiting on someone), still missing, or stopped. */
+export type PrProgressStep = {
+  key: string;
+  phase: "PR" | "RFQ" | "AOC" | "PO" | "Delivery" | "Payment" | string;
+  label: string;
+  waitingOn: string;
+  status: "done" | "current" | "pending" | "stopped";
+  at: string | null;
+  detail: string | null;
+};
+
+export type PrNextStep = { label: string; waitingOn: string; detail: string | null };
+
+export type PrProgress = { steps: PrProgressStep[]; done: number; total: number; stopped: string | null; next: PrNextStep | null };
+
+const mapNext = (n: Record<string, unknown> | null | undefined): PrNextStep | null =>
+  n ? { label: String(n.label), waitingOn: String(n.waiting_on ?? ""), detail: (n.detail as string | null) ?? null } : null;
+
+/** Every step of one PR's flow — from submission through RFQ, AOC, PO, delivery and payment. */
+export async function apiGetPrProgress(prId: string): Promise<PrProgress> {
+  const { data } = await request<{ data: Record<string, unknown> }>(`/purchase-requests/${prId}/progress`);
+  return {
+    steps: (data.steps as Record<string, unknown>[]).map((s) => ({
+      key: String(s.key), phase: String(s.phase), label: String(s.label), waitingOn: String(s.waiting_on ?? ""),
+      status: s.status as PrProgressStep["status"], at: (s.at as string | null) ?? null, detail: (s.detail as string | null) ?? null,
+    })),
+    done: Number(data.done),
+    total: Number(data.total),
+    stopped: (data.stopped as string | null) ?? null,
+    next: mapNext(data.next as Record<string, unknown> | null),
+  };
+}
+
+/** One of the signed-in user's own PRs, with where it stands. */
+export type MySubmission = {
+  id: string;
+  prNo: string;
+  purpose: string;
+  status: string;
+  createdAt: string | null;
+  submittedAt: string | null;
+  amount: number;
+  itemCount: number;
+  progress: { done: number; total: number; stopped: string | null; next: PrNextStep | null; phase: string | null };
+};
+
+/** "My Submissions": the PRs the signed-in user filed (never anyone else's), one page at a time. */
+export async function apiGetMySubmissionsPage(page: number, perPage = 10, status?: string): Promise<Page<MySubmission>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (status) params.set("status", status);
+  return fetchPage<Record<string, unknown>, MySubmission>(`/purchase-requests/my-submissions?${params.toString()}`, (r) => {
+    const p = r.progress as Record<string, unknown>;
+    return {
+      id: String(r.id),
+      prNo: String(r.pr_no ?? ""),
+      purpose: String(r.purpose ?? ""),
+      status: String(r.status ?? ""),
+      createdAt: (r.created_at as string | null) ?? null,
+      submittedAt: (r.submitted_at as string | null) ?? null,
+      amount: Number(r.amount ?? 0),
+      itemCount: Number(r.item_count ?? 0),
+      progress: {
+        done: Number(p.done), total: Number(p.total), stopped: (p.stopped as string | null) ?? null,
+        next: mapNext(p.next as Record<string, unknown> | null), phase: (p.phase as string | null) ?? null,
+      },
+    };
+  });
+}
+
 /** Narrows the Monitoring Sheet: one period at most (a day, a month or a year of the PR's DATE). */
 export type MonitoringFilters = {
   search?: string;

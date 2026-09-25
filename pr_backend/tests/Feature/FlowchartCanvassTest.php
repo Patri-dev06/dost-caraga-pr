@@ -31,8 +31,8 @@ class FlowchartCanvassTest extends TestCase
         return $this->postJson('/api/v1/auth/login', ['email' => 'admin@dost.gov.ph', 'password' => 'password123'])->json('token');
     }
 
-    /** An approved PR (admin files it, optionally on someone else's behalf). */
-    private function approvedPr(string $token, ?string $requesterEmail = null): int
+    /** An approved PR (admin files it, optionally on someone else's behalf) with $items line(s). */
+    private function approvedPr(string $token, ?string $requesterEmail = null, int $items = 1): int
     {
         $prId = $this->withToken($token)->postJson('/api/v1/purchase-requests', [
             'office_code' => 'RO',
@@ -41,7 +41,7 @@ class FlowchartCanvassTest extends TestCase
             'purpose' => 'Flowchart canvass test.',
             'requested_by' => $requesterEmail ? User::where('email', $requesterEmail)->value('id') : null,
             'submit' => true,
-            'items' => [['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_cost' => 250]],
+            'items' => array_fill(0, $items, ['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_cost' => 250]),
         ])->assertCreated()->json('data.id');
         $this->withToken($token)->postJson("/api/v1/approvals/{$prId}/recommend")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/{$prId}/approve")->assertOk();
@@ -151,7 +151,7 @@ class FlowchartCanvassTest extends TestCase
     public function test_supply_records_each_signed_quotation_as_it_comes_back(): void
     {
         $token = $this->loginAsAdmin();
-        $rfqId = $this->signedRfq($token, $this->approvedPr($token), 'Goods', 2);
+        $rfqId = $this->signedRfq($token, $this->approvedPr($token, items: 2), 'Goods', 2);
         [$firstId, $secondId] = $this->sendTo($token, $rfqId);
         $items = $this->itemIds($token, $rfqId);
 

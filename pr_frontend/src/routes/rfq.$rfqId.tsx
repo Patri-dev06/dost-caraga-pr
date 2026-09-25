@@ -194,10 +194,6 @@ function RfqDetailPage() {
     setEditDoc((d) => (d ? { ...d, [key]: value } : d));
   const setEditItemField = (id: string, patch: Partial<EditItem>) =>
     setEditItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
-  const removeEditItem = (id: string) =>
-    setEditItems((prev) => prev.filter((it) => it.id !== id).map((it, i) => ({ ...it, itemNo: i + 1 })));
-  const addEditItem = () =>
-    setEditItems((prev) => [...prev, { id: crypto.randomUUID(), itemNo: prev.length + 1, description: "", unit: "", qty: "", unitAbc: "", totalAbc: "" }]);
 
   async function handleSaveDetails() {
     if (!editDoc) return;
@@ -429,7 +425,6 @@ function RfqDetailPage() {
                     <TableHead className="label-eyebrow text-right">Qty</TableHead>
                     <TableHead className="label-eyebrow text-right">Unit ABC</TableHead>
                     <TableHead className="label-eyebrow text-right">Total ABC</TableHead>
-                    <TableHead className="w-8" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -439,33 +434,19 @@ function RfqDetailPage() {
                       <TableCell>
                         <Input value={item.description} onChange={(e) => setEditItemField(item.id, { description: e.target.value })} className="h-8 border-border" />
                       </TableCell>
-                      <TableCell>
-                        <Input value={item.unit} onChange={(e) => setEditItemField(item.id, { unit: e.target.value })} className="h-8 w-20 border-border" />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Input value={item.qty} onChange={(e) => setEditItemField(item.id, { qty: e.target.value })} className="h-8 w-16 border-border text-right tabular-nums" />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Input value={item.unitAbc} onChange={(e) => setEditItemField(item.id, { unitAbc: e.target.value })} className="h-8 w-24 border-border text-right tabular-nums" />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Input value={item.totalAbc} onChange={(e) => setEditItemField(item.id, { totalAbc: e.target.value })} className="h-8 w-24 border-border text-right tabular-nums" />
-                      </TableCell>
-                      <TableCell>
-                        <button type="button" onClick={() => removeEditItem(item.id)} className="text-muted-foreground hover:text-destructive" aria-label={`Remove item ${item.itemNo}`}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </TableCell>
+                      {/* Unit, quantity and ABC are the approved PR's; only the description can be worded. */}
+                      <TableCell className="text-sm">{item.unit}</TableCell>
+                      <TableCell className="text-right tabular-nums">{item.qty}</TableCell>
+                      <TableCell className="text-right tabular-nums">{item.unitAbc}</TableCell>
+                      <TableCell className="text-right tabular-nums">{item.totalAbc}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
-            <div className="border-t border-border p-2">
-              <Button variant="outline" size="sm" onClick={addEditItem} className="h-7 gap-1.5 border-border">
-                <Plus className="h-3.5 w-3.5" /> Add Item Row
-              </Button>
-            </div>
+            <p className="border-t border-border p-2 text-xs text-muted-foreground">
+              Items, quantities and ABC come from the approved Purchase Request and cannot be added or changed.
+            </p>
           </Card>
         </>
       ) : (

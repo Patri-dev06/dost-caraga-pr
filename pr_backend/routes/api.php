@@ -82,12 +82,14 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/purchase-requests', [ProcurementController::class, 'store'])->defaults('resource', 'purchase-requests');
         Route::get('/purchase-requests/usage', [ProcurementController::class, 'purchaseRequestUsage']);
         Route::get('/purchase-requests/monitoring', [ProcurementController::class, 'purchaseRequestMonitoring']);
+        Route::get('/purchase-requests/my-submissions', [ProcurementController::class, 'mySubmissions']);
         Route::get('/purchase-requests/{resourceId}', [ProcurementController::class, 'show'])->defaults('resource', 'purchase-requests');
         Route::put('/purchase-requests/{resourceId}', [ProcurementController::class, 'update'])->defaults('resource', 'purchase-requests');
         Route::post('/purchase-requests/{purchaseRequest}/validate', [ProcurementController::class, 'validatePurchaseRequest']);
         Route::post('/purchase-requests/{purchaseRequest}/submit', [ProcurementController::class, 'submitPurchaseRequest']);
         Route::post('/purchase-requests/{purchaseRequest}/re-pr', [ProcurementController::class, 'rePurchaseRequest']);
         Route::get('/purchase-requests/{purchaseRequest}/supporting-documents', [ProcurementController::class, 'purchaseRequestSupportingDocuments']);
+        Route::get('/purchase-requests/{purchaseRequest}/progress', [ProcurementController::class, 'purchaseRequestProgress']);
         // Supply's hand-kept Monitoring Sheet columns (ORS/BURS, delivery, IAR, issuance, payment).
         Route::put('/purchase-requests/{purchaseRequest}/monitoring', [ProcurementController::class, 'updateMonitoringEntry']);
 

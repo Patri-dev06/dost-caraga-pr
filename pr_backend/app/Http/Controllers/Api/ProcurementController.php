@@ -23,6 +23,7 @@ use App\Models\Role;
 use App\Models\SystemPreference;
 use App\Models\User;
 use App\Models\UserNotification;
+use App\Services\PrProgress;
 use App\Services\PrSupportingDocuments;
 use App\Services\PurchaseRequestChecks;
 use App\Support\MonitoringFields;
@@ -2034,6 +2035,52 @@ class ProcurementController extends Controller
         return $attached;
     }
 
+    /** Every step of one PR's procurement flow: done, current (and who it waits on), or still missing. */
+    public function purchaseRequestProgress(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->guardModule('pr');
+        abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
+
+        return response()->json(['data' => PrProgress::for($purchaseRequest)]);
+    }
+
+    /**
+     * "My Submissions": the signed-in user's own PRs — even for an admin, who otherwise sees every
+     * PR — newest first, each with where it stands and what is still missing. One page at a time.
+     */
+    public function mySubmissions(Request $request): JsonResponse
+    {
+        $this->guardModule('pr');
+
+        $page = PurchaseRequest::with(array_merge(['items'], PrProgress::RELATIONS))
+            ->where('requested_by', $request->user()->id)
+            ->when($request->query('status'), fn (Builder $q, $status) => $q->whereIn('status', explode(',', (string) $status)))
+            ->latest('id')
+            ->paginate(min((int) $request->query('per_page', 10), 50));
+
+        return response()->json($page->through(function (PurchaseRequest $pr): array {
+            $progress = PrProgress::for($pr);
+
+            return [
+                'id' => $pr->id,
+                'pr_no' => $pr->pr_no,
+                'purpose' => $pr->purpose,
+                'status' => $pr->status,
+                'created_at' => $pr->created_at?->toISOString(),
+                'submitted_at' => $pr->submitted_at?->toISOString(),
+                'amount' => $pr->items->sum(fn ($item) => (float) $item->quantity * (float) $item->unit_cost),
+                'item_count' => $pr->items->count(),
+                'progress' => [
+                    'done' => $progress['done'],
+                    'total' => $progress['total'],
+                    'stopped' => $progress['stopped'],
+                    'next' => $progress['next'],
+                    'phase' => collect($progress['steps'])->firstWhere('status', 'current')['phase'] ?? null,
+                ],
+            ];
+        }));
+    }
+
     /**
      * The PR's Supplementary Documents, as attached at submission. Readable by anyone who can see the
      * PR (its approvers included), even though the PPMP/LIB themselves are private to their owner.
@@ -2156,6 +2203,8 @@ class ProcurementController extends Controller
     {
         $this->guardModule('approvals');
         $this->abortUnlessRecommender($request->user());
+        // The order is fixed: submitted -> recommended -> approved by the Regional Director.
+        abort_unless($purchaseRequest->status === 'For Recommendation', 422, "Only a submitted Purchase Request awaiting recommendation can be recommended (this one is {$purchaseRequest->status}).");
         $this->requireSignature($request->user());
         $purchaseRequest->forceFill([
             'status' => 'For Approval',
@@ -2175,6 +2224,9 @@ class ProcurementController extends Controller
     {
         $this->guardModule('approvals');
         $this->abortUnlessDesignatedApprover($request->user());
+        abort_unless($purchaseRequest->status === 'For Approval', 422, $purchaseRequest->status === 'For Recommendation'
+            ? 'This Purchase Request has not been recommended yet. The recommending officer signs it first.'
+            : "Only a recommended Purchase Request can be approved (this one is {$purchaseRequest->status}).");
         $this->requireSignature($request->user());
         $purchaseRequest->forceFill(['status' => 'Approved', 'stage' => 'Approved'])->save();
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Approved', $request->input('remarks'));
@@ -2188,6 +2240,7 @@ class ProcurementController extends Controller
     {
         $this->guardModule('approvals');
         $this->abortUnlessDesignatedApprover($request->user());
+        abort_unless(in_array($purchaseRequest->status, ['For Recommendation', 'For Approval'], true), 422, "Only a Purchase Request under review can be rejected (this one is {$purchaseRequest->status}).");
         $data = $request->validate(['reason' => ['required', 'string']]);
         $purchaseRequest->forceFill(['status' => 'Rejected', 'stage' => 'Rejected'])->save();
         $this->recordAction($request, $purchaseRequest, 'Approver', 'Rejected', $data['reason']);

@@ -74,6 +74,7 @@ class RfqController extends Controller
 
         $purchaseRequest = PurchaseRequest::with('fundSource')->findOrFail($data['purchase_request_id']);
         abort_unless($purchaseRequest->status === 'Approved', 422, 'RFQs can only be generated from an approved Purchase Request.');
+        $this->abortIfItemsAdded($data['items'], $purchaseRequest);
 
         $rfq = DB::transaction(function () use ($data, $purchaseRequest, $request): Rfq {
             $rfq = Rfq::create([
@@ -106,6 +107,13 @@ class RfqController extends Controller
             "{$rfq->rfq_no} was generated and is awaiting your counter-signature.", "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
 
         return response()->json(['data' => $this->format($rfq->fresh())], 201);
+    }
+
+    /** An RFQ canvasses the approved PR's items — none may be added beyond what the PR lists. */
+    private function abortIfItemsAdded(array $items, ?PurchaseRequest $purchaseRequest): void
+    {
+        $prItems = $purchaseRequest?->items()->count() ?? 0;
+        abort_if(count($items) > $prItems, 422, "An RFQ lists only the Purchase Request's items ({$prItems}); items cannot be added.");
     }
 
     public function show(Rfq $rfq): JsonResponse
@@ -146,6 +154,10 @@ class RfqController extends Controller
         // A category change after suppliers were picked would leave them in the wrong directory category.
         if (isset($data['procurement_category']) && $data['procurement_category'] !== $rfq->procurement_category) {
             abort_if($rfq->suppliers()->exists(), 422, 'Remove the canvassed suppliers before changing the procurement category.');
+        }
+
+        if (isset($data['items'])) {
+            $this->abortIfItemsAdded($data['items'], $rfq->purchaseRequest);
         }
 
         DB::transaction(function () use ($data, $rfq): void {

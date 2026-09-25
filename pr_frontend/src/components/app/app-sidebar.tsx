@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarRange, ShoppingCart, BarChart3, ShieldCheck,
   FileText, ShieldCheck as ValidateIcon, Inbox, BookOpen, ClipboardList,
   Boxes, Wallet, Users, ScrollText, Settings, HelpCircle, Headset, ChevronRight,
-  PackageCheck, Store,
+  PackageCheck, Send, Store,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -34,6 +34,7 @@ const NAV: Item[] = [
   {
     type: "group", title: "Procurement", icon: ShoppingCart, children: [
       { title: "Purchase Requests", url: "/purchase-requests", icon: FileText, module: "pr" },
+      { title: "My Submissions", url: "/purchase-requests/mine", icon: Send, module: "pr" },
       { title: "RFQ", url: "/rfq", icon: ClipboardList, badge: "NEW", module: "rfq" },
       { title: "Suppliers", url: "/suppliers", icon: Store, badge: "NEW", module: "rfq" },
       { title: "Purchase Orders", url: "/po", icon: PackageCheck, badge: "NEW", module: "po" },
@@ -70,7 +71,7 @@ export function AppSidebar() {
   const isActive = (url: string) => {
     if (url === "/") return pathname === "/";
     if (url === "/purchase-requests")
-      return pathname === "/purchase-requests" || /^\/purchase-requests\/(?!new$)[^/]+$/.test(pathname);
+      return pathname === "/purchase-requests" || /^\/purchase-requests\/(?!new$|mine$)[^/]+$/.test(pathname);
 
     return pathname === url || pathname.startsWith(url + "/");
   };

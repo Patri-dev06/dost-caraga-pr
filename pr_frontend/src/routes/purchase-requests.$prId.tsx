@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { AuditTimeline } from "@/components/app/audit-timeline";
 import { ValidationResultPanel } from "@/components/app/validation-result-panel";
 import { PrSupportingDocuments } from "@/components/app/pr-supporting-documents";
+import { PrProgressCard } from "@/components/app/pr-progress-card";
 import { fmtPHP, prTotal } from "@/lib/mock-data";
 import { apiGetPurchaseRequest, apiRePurchaseRequest, apiValidatePurchaseRequest } from "@/lib/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -101,10 +102,11 @@ function PRDetail() {
                 </Link>
               </Button>
             )}
-            {pr.status === "Approved" && (
+            {pr.status !== "Draft" && pr.status !== "Returned" && (
+              // The PR form exactly as submitted, read-only.
               <Button asChild variant="outline" className="gap-2 border-border">
                 <Link to="/purchase-requests/new" search={{ view: pr.id }}>
-                  <Eye className="h-4 w-4" /> Preview
+                  <Eye className="h-4 w-4" /> View submitted PR
                 </Link>
               </Button>
             )}
@@ -165,6 +167,9 @@ function PRDetail() {
           </Card>
         ))}
       </div>
+
+      {/* Every step of the flow: done, the one it is on now (and who it waits on), and what is still missing. */}
+      <PrProgressCard prId={pr.id} />
 
       <Tabs defaultValue="overview" className="w-full">
         <TabsList className="bg-secondary/60">

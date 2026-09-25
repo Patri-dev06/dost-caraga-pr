@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Download, FileSpreadsheet, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, FileSpreadsheet, Loader2, Lock, Printer, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
@@ -123,10 +123,6 @@ interface RfqFormDoc {
   bacAction: string;
 }
 
-function newItem(itemNo: number): RfqFormItem {
-  return { id: crypto.randomUUID(), itemNo, qty: "", unit: "", description: "", unitAbc: "", totalAbc: "" };
-}
-
 function todayStr() {
   const d = new Date();
   return `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
@@ -215,12 +211,6 @@ function CreateRfqPage() {
     : bacChairmenByRole;
   const setItem = (id: string, patch: Partial<RfqFormItem>) =>
     setDoc((d) => ({ ...d, items: d.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) }));
-  const removeItem = (id: string) =>
-    setDoc((d) => ({ ...d, items: d.items.filter((it) => it.id !== id).map((it, i) => ({ ...it, itemNo: i + 1 })) }));
-
-  function addItem() {
-    setDoc((d) => ({ ...d, items: [...d.items, newItem(d.items.length + 1)] }));
-  }
 
   function buildPayload(): RfqCreatePayload {
     return {
@@ -251,7 +241,7 @@ function CreateRfqPage() {
   async function handleSave() {
     if (!prId) return;
     if (doc.items.length === 0) {
-      toast.error("Add at least one item.");
+      toast.error("This Purchase Request has no items to canvass.");
       return;
     }
 
@@ -337,8 +327,8 @@ function CreateRfqPage() {
             <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={handleExportExcel}>
               <FileSpreadsheet className="h-4 w-4" /> Export Excel
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
-              <Download className="h-4 w-4" /> Export PDF
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()} title="Print the RFQ, or save it as a PDF from the print dialog">
+              <Printer className="h-4 w-4" /> Print
             </Button>
             <Button size="sm" className="gap-1.5" onClick={handleSave} disabled={saving}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -472,39 +462,22 @@ function CreateRfqPage() {
                 {doc.items.map((item) => (
                   <tr key={item.id} className="group align-top">
                     <td className="border border-black px-1 py-1 text-center font-bold">{item.itemNo}</td>
-                    <td className="border border-black px-1 py-1 text-center">
-                      <TextField value={item.qty} onChange={(v) => setItem(item.id, { qty: v })} align="center" />
-                    </td>
-                    <td className="border border-black px-1 py-1 text-center">
-                      <TextField value={item.unit} onChange={(v) => setItem(item.id, { unit: v })} align="center" />
-                    </td>
-                    <td className="relative border border-black px-1 py-1">
-                      <button
-                        type="button"
-                        onClick={() => removeItem(item.id)}
-                        title="Remove item"
-                        className="no-print absolute -left-5 top-1 text-red-400 opacity-0 hover:text-red-600 group-hover:opacity-100"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                    {/* Quantity, unit and ABC are the approved PR's; only the description (specs) can be worded. */}
+                    <td className="border border-black px-1 py-1 text-center">{item.qty}</td>
+                    <td className="border border-black px-1 py-1 text-center">{item.unit}</td>
+                    <td className="border border-black px-1 py-1">
                       <AutoTextarea value={item.description} onChange={(v) => setItem(item.id, { description: v })} />
                     </td>
-                    <td className="border border-black px-1 py-1 text-right tabular-nums">
-                      <AmountInput value={item.unitAbc} onChange={(v) => setItem(item.id, { unitAbc: v })} />
-                    </td>
-                    <td className="border border-black px-1 py-1 text-right tabular-nums">
-                      <AmountInput value={item.totalAbc} onChange={(v) => setItem(item.id, { totalAbc: v })} />
-                    </td>
+                    <td className="border border-black px-1 py-1 text-right tabular-nums">{fmtAmount(parseAmount(item.unitAbc))}</td>
+                    <td className="border border-black px-1 py-1 text-right tabular-nums">{fmtAmount(parseAmount(item.totalAbc))}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
 
-            <div className="no-print mt-2" style={{ fontFamily: "var(--font-sans)" }}>
-              <Button variant="outline" size="sm" onClick={addItem} className="h-7 gap-1.5 border-border">
-                <Plus className="h-3.5 w-3.5" /> Add Item Row
-              </Button>
-            </div>
+            <p className="no-print mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground" style={{ fontFamily: "var(--font-sans)" }}>
+              <Lock className="h-3 w-3" /> Items, quantities and ABC come from the approved Purchase Request and cannot be added or changed here.
+            </p>
 
             {/* Notes */}
             <div className="mt-3 text-[10px]">
