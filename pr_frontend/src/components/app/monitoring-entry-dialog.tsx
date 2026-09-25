@@ -30,7 +30,8 @@ function initialValues(row: MonitoringRow): Record<string, string> {
 export function MonitoringEntryDialog({ row, onClose }: { row: MonitoringRow | null; onClose: () => void }) {
   return (
     <Dialog open={row !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+      {/* Header and footer stay put; only the fields scroll, so a long form fits any screen height. */}
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0">
         {/* Keyed by PR so the form starts fresh for every row. */}
         {row && <EntryForm key={row.prId} row={row} onClose={onClose} />}
       </DialogContent>
@@ -73,50 +74,52 @@ function EntryForm({ row, onClose }: { row: MonitoringRow; onClose: () => void }
         e.preventDefault();
         save.mutate();
       }}
-      className="space-y-5"
+      className="flex min-h-0 flex-1 flex-col"
     >
-      <DialogHeader>
+      <DialogHeader className="shrink-0 border-b border-border px-4 py-4 pr-12 text-left sm:px-6">
         <DialogTitle>Edit entry — {row.prNo ?? `PR #${row.prId}`}</DialogTitle>
         <DialogDescription>
           {context || "Fill in what the Supply team tracks by hand."} Columns from the PR, RFQ, AOC and PO are filled in by the system.
         </DialogDescription>
       </DialogHeader>
 
-      {SECTIONS.map((section) => {
-        const fields = MONITORING_FIELDS.filter((f) => f.section === section);
-        return (
-          <fieldset key={section} className="space-y-3">
-            <legend className="mb-2 text-sm font-semibold text-navy">{section}</legend>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {fields.map((f) => {
-                const id = `monitoring-${f.key}`;
-                const isRemarks = f.type === "text" && /remarks/i.test(f.key);
-                const onChange = (value: string) => setValues((v) => ({ ...v, [f.key]: value }));
-                return (
-                  <div key={f.key} className={isRemarks ? "space-y-1.5 sm:col-span-2" : "space-y-1.5"}>
-                    <Label htmlFor={id} className="text-xs text-muted-foreground">{f.label}</Label>
-                    {isRemarks ? (
-                      <Textarea id={id} rows={2} value={values[f.key]} onChange={(e) => onChange(e.target.value)} maxLength={2000} />
-                    ) : (
-                      <Input
-                        id={id}
-                        type={INPUT_TYPE[f.type]}
-                        value={values[f.key]}
-                        onChange={(e) => onChange(e.target.value)}
-                        step={f.type === "number" ? "any" : undefined}
-                        maxLength={f.type === "text" ? 2000 : undefined}
-                        className="h-9"
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </fieldset>
-        );
-      })}
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
+        {SECTIONS.map((section) => {
+          const fields = MONITORING_FIELDS.filter((f) => f.section === section);
+          return (
+            <fieldset key={section} className="space-y-3">
+              <legend className="mb-2 text-sm font-semibold text-navy">{section}</legend>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {fields.map((f) => {
+                  const id = `monitoring-${f.key}`;
+                  const isRemarks = f.type === "text" && /remarks/i.test(f.key);
+                  const onChange = (value: string) => setValues((v) => ({ ...v, [f.key]: value }));
+                  return (
+                    <div key={f.key} className={isRemarks ? "space-y-1.5 sm:col-span-2 lg:col-span-3" : "space-y-1.5"}>
+                      <Label htmlFor={id} className="text-xs text-muted-foreground">{f.label}</Label>
+                      {isRemarks ? (
+                        <Textarea id={id} rows={2} value={values[f.key]} onChange={(e) => onChange(e.target.value)} maxLength={2000} />
+                      ) : (
+                        <Input
+                          id={id}
+                          type={INPUT_TYPE[f.type]}
+                          value={values[f.key]}
+                          onChange={(e) => onChange(e.target.value)}
+                          step={f.type === "number" ? "any" : undefined}
+                          maxLength={f.type === "text" ? 2000 : undefined}
+                          className="h-9"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </fieldset>
+          );
+        })}
+      </div>
 
-      <DialogFooter className="sticky bottom-0 -mx-6 -mb-6 border-t border-border bg-background px-6 py-3">
+      <DialogFooter className="shrink-0 gap-2 border-t border-border bg-background px-4 py-3 sm:px-6">
         <Button type="button" variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button>
         <Button type="submit" disabled={save.isPending || changed.length === 0}>
           {save.isPending ? "Saving…" : changed.length > 0 ? `Save ${changed.length} change${changed.length !== 1 ? "s" : ""}` : "No changes"}

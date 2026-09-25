@@ -1,6 +1,6 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { CalendarDays, Download, FilePlus2, Search, X } from "lucide-react";
+import { Download, FilePlus2, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,8 @@ import { PageHeader } from "@/components/app/page-header";
 import { ListPagination } from "@/components/app/list-pagination";
 import { MonitoringTable } from "@/components/app/monitoring-table";
 import { MonitoringEntryDialog } from "@/components/app/monitoring-entry-dialog";
+import { PeriodFilter } from "@/components/app/period-filter";
+import { currentPeriodValue, periodText, type PeriodValue } from "@/lib/period";
 import { apiGetPurchaseRequestMonitoringPage, type MonitoringFilters, type MonitoringRow } from "@/lib/api";
 import { exportMonitoringSheetExcel } from "@/lib/monitoring-excel";
 import { useQuery } from "@tanstack/react-query";
@@ -17,27 +19,10 @@ const PER_PAGE = 20;
 
 const STATUSES = ["Draft", "For Recommendation", "For Approval", "Approved", "Returned", "Rejected", "Cancelled"];
 
-type Period = "all" | "day" | "month" | "year";
-
-const pad = (n: number) => String(n).padStart(2, "0");
-const now = new Date();
-const TODAY = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-const THIS_MONTH = TODAY.slice(0, 7);
-const THIS_YEAR = String(now.getFullYear());
-const YEARS = Array.from({ length: 6 }, (_, i) => String(now.getFullYear() - i));
-
-/** "on Sep 14, 2026" / "in September 2026" / "in 2026" — for the count line above the sheet. */
-function periodLabel(period: Period, date: string, month: string, year: string): string {
-  if (period === "day" && date) {
-    const [y, m, d] = date.split("-").map(Number);
-    return `on ${new Date(y, m - 1, d).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}`;
-  }
-  if (period === "month" && month) {
-    const [y, m] = month.split("-").map(Number);
-    return `in ${new Date(y, m - 1, 1).toLocaleDateString("en-PH", { month: "long", year: "numeric" })}`;
-  }
-  if (period === "year" && year) return `in ${year}`;
-  return "in total";
+/** "on Sep 14, 2026" / "in September 2026" / "in 2026" / "in total" — for the count line. */
+function periodPhrase(value: PeriodValue): string {
+  if (value.period === "all") return "in total";
+  return `${value.period === "day" ? "on" : "in"} ${periodText(value)}`;
 }
 
 export const Route = createFileRoute("/purchase-requests")({
@@ -59,10 +44,7 @@ function PRListPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
-  const [period, setPeriod] = useState<Period>("all");
-  const [date, setDate] = useState(TODAY);
-  const [month, setMonth] = useState(THIS_MONTH);
-  const [year, setYear] = useState(THIS_YEAR);
+  const [period, setPeriod] = useState<PeriodValue>(() => currentPeriodValue());
 
   // Search as the user types, but only ask the server once they pause.
   useEffect(() => {
@@ -76,11 +58,11 @@ function PRListPage() {
   const filters: MonitoringFilters = {
     search: search || undefined,
     status: status === "all" ? undefined : status,
-    date: period === "day" ? date : undefined,
-    month: period === "month" ? month : undefined,
-    year: period === "year" ? year : undefined,
+    date: period.period === "day" ? period.date : undefined,
+    month: period.period === "month" ? period.month : undefined,
+    year: period.period === "year" ? period.year : undefined,
   };
-  const filtered = Boolean(filters.search || filters.status || period !== "all");
+  const filtered = Boolean(filters.search || filters.status || period.period !== "all");
 
   // Every filter change starts again from the first page.
   function change<T>(set: (value: T) => void) {
@@ -94,7 +76,7 @@ function PRListPage() {
     setSearchInput("");
     setSearch("");
     setStatus("all");
-    setPeriod("all");
+    setPeriod(currentPeriodValue());
     setPage(1);
   }
 
@@ -148,9 +130,10 @@ function PRListPage() {
         }
       />
 
-      <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-          <div className="relative min-w-0 flex-1 lg:max-w-xs">
+      <div className="space-y-3 rounded-xl border border-border bg-card p-3 sm:p-4">
+        {/* Search, status and period side by side; on a phone, search takes its own line above the other two. */}
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.2fr)]">
+          <div className="relative col-span-2 min-w-0 md:col-span-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={searchInput}
@@ -160,55 +143,32 @@ function PRListPage() {
               aria-label="Search PR No. or purpose"
             />
           </div>
-          <div className="grid grid-cols-1 gap-2 min-[430px]:grid-cols-3 sm:flex sm:flex-wrap sm:items-center">
-            <Select value={status} onValueChange={change(setStatus)}>
-              <SelectTrigger className="h-9 w-full border-border sm:w-[170px]" aria-label="Status"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={period} onValueChange={change((v: string) => setPeriod(v as Period))}>
-              <SelectTrigger className="h-9 w-full border-border sm:w-[130px]" aria-label="Period">
-                <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All time</SelectItem>
-                <SelectItem value="day">Day</SelectItem>
-                <SelectItem value="month">Month</SelectItem>
-                <SelectItem value="year">Year</SelectItem>
-              </SelectContent>
-            </Select>
-            {period === "day" && (
-              <Input type="date" value={date} max={TODAY} onChange={(e) => e.target.value && change(setDate)(e.target.value)} className="h-9 w-full border-border sm:w-[160px]" aria-label="Day" />
-            )}
-            {period === "month" && (
-              <Input type="month" value={month} max={THIS_MONTH} onChange={(e) => e.target.value && change(setMonth)(e.target.value)} className="h-9 w-full border-border sm:w-[160px]" aria-label="Month" />
-            )}
-            {period === "year" && (
-              <Select value={year} onValueChange={change(setYear)}>
-                <SelectTrigger className="h-9 w-full border-border sm:w-[110px]" aria-label="Year"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {YEARS.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            )}
-            {filtered && (
-              <Button variant="ghost" size="sm" className="h-9 gap-1 text-muted-foreground" onClick={resetFilters}>
-                <X className="h-4 w-4" /> Clear
-              </Button>
-            )}
-          </div>
+          <Select value={status} onValueChange={change(setStatus)}>
+            <SelectTrigger className="h-9 w-full min-w-0 border-border" aria-label="Status"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <PeriodFilter value={period} onChange={change(setPeriod)} />
         </div>
-        {data && (
-          <p className="text-sm text-muted-foreground">
-            <span className="font-semibold text-navy">{data.total.toLocaleString()}</span>{" "}
-            Purchase Request{data.total !== 1 ? "s" : ""} {periodLabel(period, date, month, year)}
-            {filters.status && <> · {filters.status}</>}
-            {filters.search && <> · matching “{filters.search}”</>}
-          </p>
-        )}
+        <div className="flex min-h-7 flex-wrap items-center justify-between gap-2">
+          {data ? (
+            <p className="text-sm text-muted-foreground">
+              <span className="font-semibold text-navy">{data.total.toLocaleString()}</span>{" "}
+              Purchase Request{data.total !== 1 ? "s" : ""} {periodPhrase(period)}
+              {filters.status && <> · {filters.status}</>}
+              {filters.search && <> · matching “{filters.search}”</>}
+            </p>
+          ) : (
+            <span />
+          )}
+          {filtered && (
+            <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground" onClick={resetFilters}>
+              <X className="h-3.5 w-3.5" /> Clear filters
+            </Button>
+          )}
+        </div>
       </div>
 
       {error && <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">{error instanceof Error ? error.message : "Unable to load purchase requests."}</div>}

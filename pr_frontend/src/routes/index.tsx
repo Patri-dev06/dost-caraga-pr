@@ -112,10 +112,10 @@ function Dashboard() {
 
 /* ── Purchase Request Monitoring preview ──────────────────────────────── */
 
-const MONITORING_PREVIEW_SIZE = 6;
+const MONITORING_PREVIEW_SIZE = 20;
 
 /** The dashboard's own slice of the Procurement Monitoring Sheet — the same columns and row
- * format as the full /purchase-requests page, just the most recent few, with a link to the rest. */
+ * format as the full /purchase-requests page, just the 20 most recent, with a link to the rest. */
 function PrMonitoringPreviewSection() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["purchase-requests-monitoring-preview"],
@@ -129,7 +129,7 @@ function PrMonitoringPreviewSection() {
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Purchase Request Monitoring</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Most recent Purchase Requests, traced through RFQ, AOC and PO.</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">The 20 most recent Purchase Requests, traced through RFQ, AOC and PO.</p>
         </div>
         <Button asChild variant="outline" size="sm" className="gap-1.5 border-border">
           <Link to="/purchase-requests">View full sheet <ArrowRight className="h-3.5 w-3.5" /></Link>
