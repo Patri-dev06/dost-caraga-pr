@@ -2,7 +2,6 @@
 
 use App\Http\Controllers\Api\AbstractOfCanvasController;
 use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\PortalController;
 use App\Http\Controllers\Api\ProcurementController;
 use App\Http\Controllers\Api\PurchaseOrderController;
 use App\Http\Controllers\Api\RfqController;
@@ -13,14 +12,6 @@ Route::prefix('v1')->group(function (): void {
     Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
     Route::post('/auth/register', [AuthController::class, 'register'])->middleware('throttle:register');
     Route::get('/auth/offices', [AuthController::class, 'offices']);
-
-    // Supplier Portal: public, one link token = one supplier's RFQ or one Purchase Order.
-    Route::middleware('throttle:portal')->prefix('portal')->group(function (): void {
-        Route::get('/rfq/{token}', [PortalController::class, 'showRfq']);
-        Route::post('/rfq/{token}/quote', [PortalController::class, 'submitQuote']);
-        Route::get('/po/{token}', [PortalController::class, 'showPo']);
-        Route::post('/po/{token}/respond', [PortalController::class, 'respondPo']);
-    });
 
     Route::middleware('auth.token')->group(function (): void {
         Route::post('/auth/logout', [AuthController::class, 'logout']);
@@ -93,6 +84,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/purchase-requests/{purchaseRequest}/validate', [ProcurementController::class, 'validatePurchaseRequest']);
         Route::post('/purchase-requests/{purchaseRequest}/submit', [ProcurementController::class, 'submitPurchaseRequest']);
         Route::post('/purchase-requests/{purchaseRequest}/re-pr', [ProcurementController::class, 'rePurchaseRequest']);
+        // Supply's hand-kept Monitoring Sheet columns (ORS/BURS, delivery, IAR, issuance, payment).
+        Route::put('/purchase-requests/{purchaseRequest}/monitoring', [ProcurementController::class, 'updateMonitoringEntry']);
 
         Route::get('/approvals', [ProcurementController::class, 'approvals']);
         Route::post('/approvals/{purchaseRequest}/recommend', [ProcurementController::class, 'recommend']);
@@ -115,12 +108,11 @@ Route::prefix('v1')->group(function (): void {
         Route::put('/suppliers/{supplier}', [SupplierController::class, 'update']);
         Route::delete('/suppliers/{supplier}', [SupplierController::class, 'destroy']);
 
-        // Canvass: choose 3, send through the Supplier Portal, cancel non-responders, choose n replacements.
+        // Canvass: choose 3, mark as sent (Supply delivers the RFQ), record quotations, cancel non-responders, choose n replacements.
         Route::post('/rfqs/{rfq}/suppliers', [RfqController::class, 'addSupplier']);
         Route::post('/rfqs/{rfq}/suppliers/choose', [RfqController::class, 'chooseReplacements']);
         Route::delete('/rfqs/{rfq}/suppliers/{rfqSupplier}', [RfqController::class, 'removeSupplier']);
         Route::post('/rfqs/{rfq}/send', [RfqController::class, 'send']);
-        Route::post('/rfqs/{rfq}/suppliers/{rfqSupplier}/portal-link', [RfqController::class, 'resendPortalLink']);
         Route::post('/rfqs/{rfq}/suppliers/{rfqSupplier}/quote', [RfqController::class, 'recordQuote']);
         Route::get('/rfqs/{rfq}/suppliers/{rfqSupplier}/quotation', [RfqController::class, 'quotation']);
         Route::post('/rfqs/{rfq}/suppliers/{rfqSupplier}/cancel', [RfqController::class, 'cancelSupplier']);
@@ -153,7 +145,6 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/approvals/po/{purchaseOrder}/account', [PurchaseOrderController::class, 'account']);
         Route::post('/approvals/po/{purchaseOrder}/final-approve', [PurchaseOrderController::class, 'finalApprove']);
         Route::post('/approvals/po/{purchaseOrder}/reject', [PurchaseOrderController::class, 'reject']);
-        Route::post('/purchase-orders/{purchaseOrder}/forward', [PurchaseOrderController::class, 'forward']);
         Route::post('/purchase-orders/{purchaseOrder}/deliver', [PurchaseOrderController::class, 'deliver']);
 
         Route::get('/audit-logs', [ProcurementController::class, 'auditLogs']);

@@ -269,41 +269,26 @@ class RfqController extends Controller
         $pending = $rfq->suppliers()->where('status', 'Pending')->get();
         abort_unless($pending->count() === 3, 422, 'Choose exactly 3 suppliers before sending.');
 
-        $links = DB::transaction(function () use ($pending, $rfq): array {
-            $links = [];
+        // The Supply team delivers the RFQ to each supplier; this records that it went out and
+        // starts each supplier's 7-day reply window.
+        DB::transaction(function () use ($pending, $rfq): void {
             foreach ($pending as $rfqSupplier) {
-                $links[] = $this->portalLinkRow($rfqSupplier, $this->sendToSupplier($rfqSupplier));
+                $this->sendToSupplier($rfqSupplier);
             }
             $rfq->forceFill(['status' => 'Canvassing', 'stage' => 'Canvassing'])->save();
-
-            return $links;
         });
 
         $this->recordAction($request, $rfq, 'Canvasser', 'Sent to Suppliers', null);
 
         return response()->json([
-            'message' => 'RFQ sent to the 3 suppliers through the Supplier Portal.',
-            'portal_links' => $links,
+            'message' => 'RFQ marked as sent to the 3 suppliers. Record each signed quotation as it comes back.',
             'data' => $this->format($rfq->fresh()),
         ]);
     }
 
-    /** Re-issues a supplier's portal link (the old one stops working) and emails it again. */
-    public function resendPortalLink(Request $request, Rfq $rfq, RfqSupplier $rfqSupplier): JsonResponse
-    {
-        $this->guardModule('rfq');
-        abort_unless($rfqSupplier->rfq_id === $rfq->id, 404);
-        abort_unless($rfqSupplier->status === 'Sent', 422, 'Only a supplier still awaiting its reply has an open portal link.');
-
-        $url = $this->issueRfqPortalLink($rfqSupplier->setRelation('rfq', $rfq));
-        $this->audit($request, 'RFQ', 'Re-sent supplier portal link', $rfqSupplier->supplier_name);
-
-        return response()->json(['message' => 'A new portal link was issued.', 'portal_link' => $this->portalLinkRow($rfqSupplier, $url)]);
-    }
-
     /**
-     * Staff fallback for "Supplier sends back signed quotation" when the supplier hand-delivers it:
-     * the prices are typed in and the signed quotation is scanned and attached.
+     * Flowchart: "Supplier sends back signed quotation". The Supply team types in the prices and
+     * attaches the scan of the signed quotation the supplier handed back.
      */
     public function recordQuote(Request $request, Rfq $rfq, RfqSupplier $rfqSupplier): JsonResponse
     {
@@ -320,7 +305,6 @@ class RfqController extends Controller
 
         $rfqSupplier->setRelation('rfq', $rfq);
         $this->storeQuote($rfqSupplier, $data['items'], $request->file('quotation'), 'Staff');
-        $rfqSupplier->forceFill(['portal_token_hash' => null, 'portal_token_expires_at' => null])->save();
         $this->audit($request, 'RFQ', 'Recorded supplier quote', $rfqSupplier->supplier_name);
 
         return response()->json(['data' => $this->format($rfq->fresh())]);
@@ -373,23 +357,19 @@ class RfqController extends Controller
         $chosen = collect($rows)->map(fn (array $row) => $this->directorySupplier($row, $rfq));
         abort_if($chosen->pluck('id')->duplicates()->isNotEmpty(), 422, 'Choose each replacement supplier only once.');
 
-        $links = DB::transaction(function () use ($chosen, $rows, $vacated, $rfq): array {
-            $links = [];
+        DB::transaction(function () use ($chosen, $rows, $vacated, $rfq): void {
             foreach ($chosen->values() as $i => $supplier) {
                 $new = $rfq->suppliers()->create($this->snapshot($supplier, $rows[$i]['supplier_by'] ?? null) + ['status' => 'Pending']);
                 $vacated[$i]->forceFill(['replaced_by_supplier_id' => $new->id])->save();
-                $links[] = $this->portalLinkRow($new, $this->sendToSupplier($new));
+                $this->sendToSupplier($new);
             }
-
-            return $links;
         });
 
         $this->refreshCanvassState($rfq);
         $this->recordAction($request, $rfq, 'Canvasser', 'Chose replacement suppliers', $chosen->pluck('name')->implode(', '));
 
         return response()->json([
-            'message' => 'RFQ sent to the replacement supplier(s).',
-            'portal_links' => $links,
+            'message' => 'Replacement supplier(s) added and marked as sent. Deliver the RFQ to them and record each signed quotation as it comes back.',
             'data' => $this->format($rfq->fresh()),
         ], 201);
     }
@@ -536,16 +516,6 @@ class RfqController extends Controller
         ];
     }
 
-    private function portalLinkRow(RfqSupplier $rfqSupplier, string $url): array
-    {
-        return [
-            'rfq_supplier_id' => $rfqSupplier->id,
-            'supplier_name' => $rfqSupplier->supplier_name,
-            'url' => $url,
-            'emailed' => ! empty($rfqSupplier->supplier_email),
-        ];
-    }
-
     /** @return array<int, \App\Models\User> */
     private function bacSignatories(): array
     {
@@ -645,7 +615,6 @@ class RfqController extends Controller
             'has_quotation' => $s->quotation_path !== null,
             'quotation_name' => $s->quotation_original_name,
             'quote_submitted_via' => $s->quote_submitted_via,
-            'portal_link_active' => $s->portal_token_hash !== null,
             'twg_result' => $s->twg_result,
             'twg_evaluated_at' => $s->twg_evaluated_at?->toISOString(),
             'remarks' => $s->remarks,

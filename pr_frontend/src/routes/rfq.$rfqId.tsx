@@ -7,7 +7,6 @@ import {
   ClipboardCheck,
   Download,
   FileSpreadsheet,
-  Link2,
   Loader2,
   Plus,
   Save,
@@ -23,7 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
-import { PortalLinksCard, SupplierPicker } from "@/components/app/supplier-picker";
+import { SupplierPicker } from "@/components/app/supplier-picker";
 import {
   apiGetRfq,
   apiUpdateRfq,
@@ -31,7 +30,6 @@ import {
   apiAddRfqSupplier,
   apiRemoveRfqSupplier,
   apiSendRfq,
-  apiResendRfqPortalLink,
   apiRecordRfqSupplierQuote,
   apiCancelRfqSupplier,
   apiChooseReplacementSuppliers,
@@ -39,7 +37,6 @@ import {
   apiSaveTwgNotes,
   apiTwgCheckSupplier,
   apiGenerateAoc,
-  type PortalLink,
   type Rfq,
   type RfqCreatePayload,
   type RfqSupplier,
@@ -129,7 +126,6 @@ function RfqDetailPage() {
   const [editDoc, setEditDoc] = useState<EditDoc | null>(null);
   const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [savingDetails, setSavingDetails] = useState(false);
-  const [issuedLinks, setIssuedLinks] = useState<PortalLink[]>([]);
   const [quoteFor, setQuoteFor] = useState<string | null>(null);
   const [quoteDraft, setQuoteDraft] = useState<Record<string, string>>({});
   const [quoteFile, setQuoteFile] = useState<File | null>(null);
@@ -472,17 +468,15 @@ function RfqDetailPage() {
         </Card>
       )}
 
-      {/* Flowchart: Filter Supplier based on category -> Choose 3 supplier -> Send RFQ (Supplier Portal) */}
+      {/* Flowchart: Filter Supplier based on category -> Choose 3 supplier -> Send RFQ (delivered by the Supply team) */}
       {rfq.status !== "Cancelled" && (
         <Card className="space-y-4 border border-border bg-card p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-navy">Supplier Canvass</h2>
             <span className="text-xs text-muted-foreground">
-              {rfq.supplierCategory} suppliers · each gets its own Supplier Portal link and 7 calendar days to reply
+              {rfq.supplierCategory} suppliers · the Supply team delivers the RFQ; each supplier has 7 calendar days to reply
             </span>
           </div>
-
-          <PortalLinksCard links={issuedLinks} onDismiss={() => setIssuedLinks([])} />
 
           {preSend && (
             <div className="space-y-2">
@@ -492,7 +486,7 @@ function RfqDetailPage() {
                 <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm">
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium text-navy">{s.supplierName}</p>
-                    <p className="truncate text-xs text-muted-foreground">{s.supplierEmail || "No email — copy its portal link after sending"}</p>
+                    <p className="truncate text-xs text-muted-foreground">{[s.supplierContactNo, s.supplierEmail, s.supplierAddress].filter(Boolean).join(" · ") || "No contact details on file"}</p>
                   </div>
                   <Button size="sm" variant="ghost" className="h-7 text-muted-foreground hover:text-destructive" disabled={busy} onClick={() => run(() => apiRemoveRfqSupplier(rfq.id, s.id), "Supplier removed.")} aria-label={`Remove ${s.supplierName}`}>
                     <Trash2 className="h-3.5 w-3.5" />
@@ -516,7 +510,6 @@ function RfqDetailPage() {
                     setBusy(true);
                     try {
                       const result = await apiSendRfq(rfq.id);
-                      setIssuedLinks(result.links);
                       toast.success(result.message);
                       await reload();
                     } catch (error) {
@@ -526,7 +519,7 @@ function RfqDetailPage() {
                     }
                   }}
                 >
-                  <Send className="h-4 w-4" /> Send RFQ to the 3 Suppliers
+                  <Send className="h-4 w-4" /> Mark RFQ as sent to the 3 suppliers
                 </Button>
               )}
               {rfq.status !== "Ready to Send" && pendingSuppliers.length === 3 && (
@@ -547,7 +540,7 @@ function RfqDetailPage() {
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {s.status === "Sent" && s.replyDueAt && `Reply due ${fmtDateTime(s.replyDueAt)}`}
-                        {s.status === "Replied" && `Quotation in ${fmtDateTime(s.repliedAt)}${s.quoteSubmittedVia ? ` · via ${s.quoteSubmittedVia === "Portal" ? "Supplier Portal" : "staff"}` : ""}`}
+                        {s.status === "Replied" && `Signed quotation recorded ${fmtDateTime(s.repliedAt)}`}
                         {(s.status === "TimedOut" || s.status === "Failed TWG") && (s.remarks || "")}
                         {s.status === "Replaced" && "Replaced by a newly chosen supplier"}
                       </p>
@@ -569,30 +562,13 @@ function RfqDetailPage() {
                           size="sm"
                           variant="outline"
                           className="h-7 gap-1 border-border text-xs"
-                          disabled={busy}
-                          onClick={async () => {
-                            try {
-                              const link = await apiResendRfqPortalLink(rfq.id, s.id);
-                              setIssuedLinks([{ ...link, supplierName: s.supplierName }]);
-                              toast.success(link.emailed ? "A new portal link was emailed." : "A new portal link was issued — copy it below.");
-                            } catch (error) {
-                              toast.error(error instanceof Error ? error.message : "Unable to issue a new link.");
-                            }
-                          }}
-                        >
-                          <Link2 className="h-3.5 w-3.5" /> New portal link
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 gap-1 border-border text-xs"
                           onClick={() => {
                             setQuoteFor(quoteFor === s.id ? null : s.id);
                             setQuoteDraft({});
                             setQuoteFile(null);
                           }}
                         >
-                          <ClipboardCheck className="h-3.5 w-3.5" /> Record hand-delivered quote
+                          <ClipboardCheck className="h-3.5 w-3.5" /> Record signed quotation
                         </Button>
                         <Button
                           size="sm"
@@ -689,18 +665,17 @@ function RfqDetailPage() {
                     setBusy(true);
                     try {
                       const result = await apiChooseReplacementSuppliers(rfq.id, replacements.map((r) => r.payload));
-                      setIssuedLinks(result.links);
                       setReplacements([]);
                       toast.success(result.message);
                       await reload();
                     } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Unable to send to the replacement suppliers.");
+                      toast.error(error instanceof Error ? error.message : "Unable to add the replacement suppliers.");
                     } finally {
                       setBusy(false);
                     }
                   }}
                 >
-                  <Send className="h-4 w-4" /> Send RFQ to {replacements.length} replacement{replacements.length > 1 ? "s" : ""}
+                  <Send className="h-4 w-4" /> Mark RFQ as sent to {replacements.length} replacement{replacements.length > 1 ? "s" : ""}
                 </Button>
               )}
             </div>

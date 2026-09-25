@@ -2,8 +2,7 @@ import type { MonitoringRow } from "@/lib/api";
 import { MONITORING_COLUMNS } from "@/lib/monitoring-columns";
 
 /** Exports the Procurement Monitoring Sheet with every original logbook column, in order — the
- * ones the system doesn't track yet (delivery, inspection & acceptance, issuance, payment) come
- * out blank, same as they render on screen, rather than being dropped from the file. */
+ * system-filled ones and the Supply team's hand-kept ones alike, exactly as they render on screen. */
 export async function exportMonitoringSheetExcel(rows: MonitoringRow[], filename: string) {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();

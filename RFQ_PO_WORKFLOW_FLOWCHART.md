@@ -10,6 +10,10 @@ Chairman, BAC Vice-Chairman, Supply Officer, Accounting Officer, TWG Lead. Every
 needs the signer's uploaded e-signature. Each routing step creates an in-app notification and sends a
 queued email that links back into the app (`FRONTEND_URL`).
 
+**Suppliers do not use the system.** The Supply team contacts each supplier, delivers the RFQ and the
+signed PO in person or by their usual channel, and records what comes back (the signed quotation, the
+supplier's delivery answer). The system never emails a supplier.
+
 ## Blue — Module 1: Approved PR
 
 | Flowchart | Implementation |
@@ -32,11 +36,11 @@ queued email that links back into the app (`FRONTEND_URL`).
 | Forward to Supply Officer for counter digital sign | `POST /rfqs/{id}/sign/supply-officer` → `Pending BAC Signature`. |
 | Forward to BAC Chair / BAC Vice-chair for digital sign | `POST /rfqs/{id}/sign/bac`: **one** signature from either → `Ready to Send`. |
 | Filter supplier based on category (Goods, Services) | Supplier directory `GET/POST/PUT/DELETE /suppliers`, screen `/suppliers`. Goods and Equipment RFQs take **Goods** suppliers; Venue RFQs take **Services** suppliers. `POST /rfqs/{id}/suppliers` accepts a directory supplier, or a new one that is first added to the directory. |
-| Choose 3 suppliers → Send RFQ with complete details | `POST /rfqs/{id}/send` (exactly 3) → `Canvassing`. Each supplier gets a 7-day reply window and its own portal link, emailed and also returned for copying. |
-| Supplier receives RFQ (Supplier Portal) | Public page `/portal/rfq/{token}` (`GET /portal/rfq/{token}`). Only the token's hash is stored, and one token opens one supplier's RFQ. |
-| Does supplier reply? **Yes** → sends back signed quotation | `POST /portal/rfq/{token}/quote`: a price for every item plus the signed quotation (PDF/JPG/PNG, max 10 MB) → supplier `Replied`. Staff fallback for a hand-delivered quote: `POST /rfqs/{id}/suppliers/{s}/quote`, with the scan required. |
-| **No** (after 7 calendar days) → Cancel sent RFQ of non-responding supplier | `php artisan rfq:expire-unanswered`, hourly via the scheduler → supplier `TimedOut`, link revoked, supplier emailed, Supply told to choose a replacement. Staff can cancel early: `POST /rfqs/{id}/suppliers/{s}/cancel`. |
-| Choose n of supplier | `POST /rfqs/{id}/suppliers/choose`: up to n replacements (n = open slots), sent right away with fresh links. |
+| Choose 3 suppliers → Send RFQ with complete details | `POST /rfqs/{id}/send` (exactly 3) → `Canvassing`. This marks the RFQ as sent and starts each supplier's 7-day reply window; the Supply team delivers the RFQ to the suppliers themselves. |
+| Supplier receives RFQ | Outside the system: the Supply team contacts each supplier (contact number, email and address are on the supplier's directory entry). |
+| Does supplier reply? **Yes** → sends back signed quotation | The Supply team records it: `POST /rfqs/{id}/suppliers/{s}/quote`, a price for every item plus the scan of the signed quotation (PDF/JPG/PNG, max 10 MB, required) → supplier `Replied`. |
+| **No** (after 7 calendar days) → Cancel sent RFQ of non-responding supplier | `php artisan rfq:expire-unanswered`, hourly via the scheduler → supplier `TimedOut`, and Supply is told to choose a replacement. Staff can cancel early: `POST /rfqs/{id}/suppliers/{s}/cancel`. |
+| Choose n of supplier | `POST /rfqs/{id}/suppliers/choose`: up to n replacements (n = open slots), marked as sent right away with a fresh 7-day window. |
 | Procurement category check → **If goods** | `POST /rfqs/{id}/aoc` once every supplier has replied or been cancelled; the lowest total wins. |
 | **If equipment** → TWG specification evaluation → Check each equipment with supplier → Fail? | With all quotes in, the RFQ moves to `TWG Evaluation`. The TWG Lead saves notes (`PUT /rfqs/{id}/twg/notes`) and marks each item Complies / Does not (`POST /rfqs/{id}/suppliers/{s}/twg-check`); any failed item fails the supplier. |
 | Did all supplier fail? **Yes** → Choose n of supplier needed | Every supplier's status becomes `Failed TWG`; the RFQ goes back to `Canvassing` and Supply chooses n new suppliers (same endpoint as above). |
@@ -51,7 +55,7 @@ queued email that links back into the app (`FRONTEND_URL`).
 | Fail? **Yes** → Committee add remarks → Notify TWG, End-user, Supply | `pass: false` with remarks → `BAC Returned`; notifies the TWG Lead, the requester, the Supply Officer and the preparer. |
 | TWG address BAC remarks | `POST /aoc/{id}/twg-respond` (TWG Lead) → `Pending BAC Satisfaction`. |
 | BAC satisfied? **Yes** → BAC Review | `POST /aoc/{id}/bac-satisfaction` `satisfied: true` → `Pending BAC Review` (a fresh signed review). |
-| BAC satisfied? **No** → Cancel PR → Notify end-user to Re-PR | `satisfied: false` + reason → PR `Cancelled` (`cancelled_from = AOC`). Its RFQ, AOC and open PO are cancelled and their portal links revoked; the requester is asked to Re-PR. |
+| BAC satisfied? **No** → Cancel PR → Notify end-user to Re-PR | `satisfied: false` + reason → PR `Cancelled` (`cancelled_from = AOC`). Its RFQ, AOC and open PO are cancelled; the requester is asked to Re-PR. |
 | Fail? **No** | `pass: true` → `For Supply Noting`. |
 
 ## Yellow — Purchase Order
@@ -61,11 +65,21 @@ queued email that links back into the app (`FRONTEND_URL`).
 | AOC returned to supply to note lowest bidder | `POST /aoc/{id}/note-lowest-bidder` (Supply Officer, signed) → `Lowest Bidder Noted`. |
 | Create PO | `POST /rfqs/{id}/generate-po`, allowed only from `Lowest Bidder Noted`. Screen `/po/{id}`. |
 | Forwarded to Budget for Obligation → Accounting → RD final approval | `POST /purchase-orders/{id}/submit` → `approvals/po/{id}/obligate` → `/account` → `/final-approve`. |
-| Generate PO (with complete digital signature) | The PO carries every signer's name, date and e-signature image (screen and portal). |
-| Forward signed PO to Supplier Portal (notify supplier & end-user of winning bidder) | Automatic on RD approval → `Forwarded to Supplier`. The portal link is emailed to the supplier and the requester is told who won. `POST /purchase-orders/{id}/forward` re-issues the link. Public page `/portal/po/{token}`. |
-| Does supplier waive to deliver? **No** → END | The supplier confirms on the portal (`POST /portal/po/{token}/respond`), or Supply records it (`POST /purchase-orders/{id}/deliver`) → `Delivery Accepted` (fills *Date Conformed* on the monitoring sheet). |
+| Generate PO (with complete digital signature) | The PO carries every signer's name, date and e-signature image; the Supply team prints it for the supplier. |
+| Forward signed PO to supplier (notify supplier & end-user of winning bidder) | Automatic on RD approval → `Forwarded to Supplier`: the requester is told who won and the Supply team is told to bring the signed PO to the supplier. |
+| Does supplier waive to deliver? **No** → END | Supply records the supplier's answer (`POST /purchase-orders/{id}/deliver`) → `Delivery Accepted` (fills *Date Conformed* on the monitoring sheet). |
 | **Yes** → Cancel PR → Notify end-user to Re-PR | → `Delivery Waived`, then the same Cancel PR path (`cancelled_from = PO`). |
 | Notify end-user to Re-PR | `POST /purchase-requests/{id}/re-pr` copies the cancelled PR (items, fund source, charged PPMP, purpose) into a new Draft, once per PR. The PR page shows the cancellation and a **Re-PR** button. |
+
+## Procurement Monitoring Sheet
+
+`/purchase-requests` shows every PR as one row of the Supply Unit's monitoring sheet
+(`GET /purchase-requests/monitoring`). The system fills in each PR's trail from the PR, RFQ, AOC and PO. The
+Supply team (Admin/Superadmin, the Supply Officer, and RFQ/PO module holders) keeps the other columns
+(ORS/BURS, delivery, inspection & acceptance, issuance, payment) with the pencil on each row
+(`PUT /purchase-requests/{id}/monitoring`; allowed keys and types in `App\Support\MonitoringFields`).
+The sheet filters by PR No./purpose, status, and a day, month or year of the PR's date (Manila time), and
+shows how many PRs match. Export writes the filtered rows to Excel.
 
 ## Still open
 

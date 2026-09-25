@@ -8,15 +8,14 @@ use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
 use App\Models\Rfq;
 use App\Models\User;
-use App\Support\PortalToken;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
  * The flowchart's yellow lane: Create PO -> Budget (obligation) -> Accounting -> RD final approval
- * -> Generate PO with complete digital signature -> Forward signed PO to Supplier Portal (notify the
- * supplier and the end-user of the winning bidder) -> Does supplier waive to deliver?
+ * -> Generate PO with complete digital signature -> Forward signed PO to supplier (the Supply team
+ * brings it; the end-user is told who won) -> Does supplier waive to deliver? (recorded by Supply)
  */
 class PurchaseOrderController extends Controller
 {
@@ -225,12 +224,12 @@ class PurchaseOrderController extends Controller
         }
 
         if ($steps['to'] === 'Approved') {
-            // "Generate PO (with complete digital signature) -> Forward signed PO to Supplier Portal".
-            $link = $this->forwardToSupplier($po->fresh());
+            // "Generate PO (with complete digital signature) -> Forward signed PO to supplier": the
+            // Supply team brings the signed PO to the supplier; the system just records the hand-off.
+            $this->forwardToSupplier($po->fresh());
 
             return response()->json([
-                'message' => 'Purchase Order approved and forwarded to the supplier through the Supplier Portal.',
-                'portal_link' => $link,
+                'message' => 'Purchase Order approved. The Supply team can now bring the signed PO to the supplier.',
                 'data' => $this->format($po->fresh()),
             ]);
         }
@@ -261,21 +260,9 @@ class PurchaseOrderController extends Controller
         return response()->json(['message' => 'Purchase Order rejected.', 'data' => $this->format($purchaseOrder->fresh())]);
     }
 
-    /** Re-issues the supplier's PO portal link (the old one stops working) and emails it again. */
-    public function forward(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
-    {
-        $this->guardModule('po');
-        abort_unless(in_array($purchaseOrder->status, ['Approved', 'Forwarded to Supplier'], true), 422, 'Only a fully signed Purchase Order that the supplier has not answered can be forwarded.');
-
-        $link = $this->forwardToSupplier($purchaseOrder);
-        $this->audit($request, 'PO', 'Forwarded PO to supplier', $purchaseOrder->po_no);
-
-        return response()->json(['message' => 'Purchase Order forwarded to the supplier.', 'portal_link' => $link, 'data' => $this->format($purchaseOrder->fresh())]);
-    }
-
     /**
-     * Flowchart: "Does supplier waive to deliver?", recorded by Supply on the supplier's behalf (the
-     * supplier can also answer on the portal). Waived -> Cancel PR -> Notify end-user to Re-PR.
+     * Flowchart: "Does supplier waive to deliver?", recorded by the Supply team from the supplier's
+     * answer. Waived -> Cancel PR -> Notify end-user to Re-PR.
      */
     public function deliver(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
@@ -295,8 +282,8 @@ class PurchaseOrderController extends Controller
         ]);
     }
 
-    /** Shared with the Supplier Portal: the supplier's answer to "Does supplier waive to deliver?". */
-    public function recordDeliveryAnswer(Request $request, PurchaseOrder $po, bool $waived, ?string $reason, string $respondedBy): void
+    /** The supplier's answer to "Does supplier waive to deliver?", as recorded by the Supply team. */
+    private function recordDeliveryAnswer(Request $request, PurchaseOrder $po, bool $waived, ?string $reason, string $respondedBy): void
     {
         if (! $waived) {
             $po->forceFill([
@@ -305,7 +292,7 @@ class PurchaseOrderController extends Controller
                 'delivery_accepted_at' => now(),
                 'delivery_responded_by' => $respondedBy,
             ])->save();
-            $this->recordActionAs($request, $po, 'Supply', 'Delivery Accepted', "Answered by {$respondedBy}");
+            $this->recordAction($request, $po, 'Supply', 'Delivery Accepted', "Answered by {$respondedBy}");
 
             foreach ($this->poWatchers($po) as $watcher) {
                 $this->notify($watcher, 'po_delivery_accepted', 'Supplier will deliver',
@@ -323,7 +310,7 @@ class PurchaseOrderController extends Controller
             'delivery_waived_reason' => $reason,
             'delivery_responded_by' => $respondedBy,
         ])->save();
-        $this->recordActionAs($request, $po, 'Supply', 'Delivery Waived', $reason);
+        $this->recordAction($request, $po, 'Supply', 'Delivery Waived', $reason);
 
         $purchaseRequest = $po->purchaseRequest;
         if ($purchaseRequest) {
@@ -332,58 +319,33 @@ class PurchaseOrderController extends Controller
     }
 
     /**
-     * Issues the PO's portal link, emails it to the winning supplier, and tells the end-user who won.
-     *
-     * @return array{url: string, emailed: bool}
+     * Marks the fully signed PO as released to the Supply team for delivery to the winning supplier,
+     * and tells the end-user who won.
      */
-    private function forwardToSupplier(PurchaseOrder $po): array
+    private function forwardToSupplier(PurchaseOrder $po): void
     {
-        $token = PortalToken::issue();
         $po->forceFill([
             'status' => 'Forwarded to Supplier',
             'stage' => 'Forwarded to Supplier',
             'forwarded_to_supplier_at' => now(),
-            'portal_token_hash' => $token['hash'],
         ])->save();
 
-        $url = $this->frontendUrl('/portal/po/'.$token['plain']);
-        $email = $po->supplier_email ?: $po->rfq?->abstractOfCanvas?->winningSupplier?->supplier_email;
-        $this->sendEmail(
-            $email,
-            "Purchase Order {$po->po_no} — ".$this->preferenceValue('agency_name', 'DOST Caraga'),
-            implode("\n", [
-                'Good day, '.($po->supplier_name ?: 'Supplier').'.',
-                "Your quotation won. Purchase Order {$po->po_no} for ₱".number_format((float) $po->total_amount, 2).' is fully signed.',
-                'Open the link to view and download the signed Purchase Order, then confirm that you will deliver — or tell us if you waive delivery.',
-            ]),
-            $url,
-            'Open the Purchase Order',
-        );
-
         $requester = $po->purchaseRequest?->requester;
-        $this->notify($requester, 'po_forwarded', 'Winning bidder: Purchase Order sent to the supplier',
-            "{$po->po_no} ({$po->purchaseRequest?->pr_no}) was awarded to {$po->supplier_name} for ₱".number_format((float) $po->total_amount, 2).' and forwarded to the supplier.',
+        $this->notify($requester, 'po_forwarded', 'Winning bidder: Purchase Order approved',
+            "{$po->po_no} ({$po->purchaseRequest?->pr_no}) was awarded to {$po->supplier_name} for ₱".number_format((float) $po->total_amount, 2).'. The Supply team will bring the signed PO to the supplier.',
             "/purchase-requests/{$po->purchase_request_id}", ['poId' => $po->id]);
         foreach ($this->poWatchers($po) as $watcher) {
             if ($watcher->id !== $requester?->id) {
-                $this->notify($watcher, 'po_forwarded', 'Purchase Order forwarded to the supplier',
-                    "{$po->po_no} is fully signed and was sent to {$po->supplier_name} through the Supplier Portal.", "/po/{$po->id}", ['poId' => $po->id]);
+                $this->notify($watcher, 'po_forwarded', 'Signed Purchase Order ready for the supplier',
+                    "{$po->po_no} is fully signed. Bring it to {$po->supplier_name}, then record whether the supplier will deliver or waives.", "/po/{$po->id}", ['poId' => $po->id]);
             }
         }
-
-        return ['url' => $url, 'emailed' => ! empty($email)];
     }
 
     /** The person who prepared the PO and the Supply Officer. */
     private function poWatchers(PurchaseOrder $po): array
     {
         return collect([$po->creator, $this->designatedSupplyOfficer()])->filter(fn ($u) => $u instanceof User)->unique('id')->values()->all();
-    }
-
-    /** Staff answer as Supply; a supplier answering on the portal has no account, so the trail says Supplier. */
-    private function recordActionAs(Request $request, PurchaseOrder $po, string $role, string $action, ?string $remarks): void
-    {
-        $this->recordAction($request, $po, $request->user() ? $role : 'Supplier', $action, $remarks);
     }
 
     private function format(PurchaseOrder $po): array
@@ -420,7 +382,6 @@ class PurchaseOrderController extends Controller
             'approved_by_signature' => $po->approved_by_signed_at ? $po->approvedBy?->signature : null,
             'supplier_email' => $po->supplier_email,
             'forwarded_to_supplier_at' => $po->forwarded_to_supplier_at?->toISOString(),
-            'portal_link_active' => $po->portal_token_hash !== null,
             'delivery_accepted_at' => $po->delivery_accepted_at?->toISOString(),
             'delivery_responded_by' => $po->delivery_responded_by,
             'delivery_waived' => $po->delivery_waived,

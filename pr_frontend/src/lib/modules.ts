@@ -39,8 +39,6 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
 export function moduleForPath(pathname: string): ModuleKey | null {
   if (pathname === "/") return "dashboard";
   if (pathname === "/login") return null;
-  // The Supplier Portal is public (checked before "/po", which it would otherwise match).
-  if (pathname === "/portal" || pathname.startsWith("/portal/")) return null;
   if (pathname.startsWith("/planning/lib")) return "lib";
   if (pathname.startsWith("/planning/ppmp")) return "ppmp";
   if (pathname.startsWith("/purchase-requests")) return "pr";

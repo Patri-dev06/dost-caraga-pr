@@ -443,8 +443,8 @@ export async function apiGetPurchaseRequestsPage(page: number, perPage = 20, sta
 
 /**
  * One row per PR, traced through RFQ -> AOC -> PO for whichever columns already have real data.
- * Columns for stages the system doesn't track yet (delivery, inspection, issuance, payment) are
- * not part of this row at all — the caller renders those as a plain dash.
+ * The rest (ORS/BURS, delivery, inspection, issuance, payment) are kept by hand by the Supply team
+ * and arrive in `manual`, keyed like MONITORING_FIELDS.
  */
 export type MonitoringRow = {
   prId: string;
@@ -477,7 +477,12 @@ export type MonitoringRow = {
   poConformedAt: string | null;
   poRemarks: string | null;
   prStatus: string | null;
+  manual: MonitoringManualValues;
+  canEdit: boolean;
 };
+
+/** The Supply team's hand-kept cells: dates as YYYY-MM-DD, date-times as YYYY-MM-DDTHH:mm. */
+export type MonitoringManualValues = Record<string, string | number>;
 
 type BackendMonitoringRow = {
   pr_id: number;
@@ -510,6 +515,8 @@ type BackendMonitoringRow = {
   po_conformed_at?: string | null;
   po_remarks?: string | null;
   pr_status?: string | null;
+  manual?: MonitoringManualValues;
+  can_edit?: boolean;
 };
 
 function mapMonitoringRow(row: BackendMonitoringRow): MonitoringRow {
@@ -544,15 +551,36 @@ function mapMonitoringRow(row: BackendMonitoringRow): MonitoringRow {
     poConformedAt: row.po_conformed_at ?? null,
     poRemarks: row.po_remarks ?? null,
     prStatus: row.pr_status ?? null,
+    manual: row.manual ?? {},
+    canEdit: row.can_edit ?? false,
   };
 }
 
+/** Narrows the Monitoring Sheet: one period at most (a day, a month or a year of the PR's DATE). */
+export type MonitoringFilters = {
+  search?: string;
+  status?: string;
+  date?: string; // YYYY-MM-DD
+  month?: string; // YYYY-MM
+  year?: string; // YYYY
+};
+
 /** The Procurement Monitoring Sheet, one page at a time — never the whole PR table. */
-export async function apiGetPurchaseRequestMonitoringPage(page: number, perPage = 20): Promise<Page<MonitoringRow>> {
-  return fetchPage<BackendMonitoringRow, MonitoringRow>(
-    `/purchase-requests/monitoring?page=${page}&per_page=${perPage}`,
-    mapMonitoringRow,
-  );
+export async function apiGetPurchaseRequestMonitoringPage(page: number, perPage = 20, filters: MonitoringFilters = {}): Promise<Page<MonitoringRow>> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  return fetchPage<BackendMonitoringRow, MonitoringRow>(`/purchase-requests/monitoring?${params.toString()}`, mapMonitoringRow);
+}
+
+/** Saves the Supply team's hand-kept cells on one PR's row; a blank value clears that cell. */
+export async function apiUpdateMonitoringEntry(prId: string, values: Record<string, string | number | null>) {
+  const result = await request<ApiRecord<BackendMonitoringRow> & { message: string }>(`/purchase-requests/${prId}/monitoring`, {
+    method: "PUT",
+    body: { values },
+  });
+  return { message: result.message, data: mapMonitoringRow(result.data) };
 }
 
 /** The full Approval Inbox queue, one page at a time. */
@@ -1249,8 +1277,7 @@ export interface RfqSupplier {
   replacedBySupplierId: string | null;
   hasQuotation: boolean;
   quotationName: string;
-  quoteSubmittedVia: string; // Portal | Staff
-  portalLinkActive: boolean;
+  quoteSubmittedVia: string;
   twgResult: "Passed" | "Failed" | null;
   remarks: string;
   quoteItems: RfqQuoteItem[];
@@ -1334,7 +1361,6 @@ type BackendRfqSupplier = {
   has_quotation?: boolean;
   quotation_name?: string | null;
   quote_submitted_via?: string | null;
-  portal_link_active?: boolean;
   twg_result?: "Passed" | "Failed" | null;
   remarks?: string | null;
   quote_items: BackendRfqQuoteItem[];
@@ -1419,7 +1445,6 @@ function mapRfqSupplier(s: BackendRfqSupplier): RfqSupplier {
     hasQuotation: Boolean(s.has_quotation),
     quotationName: s.quotation_name ?? "",
     quoteSubmittedVia: s.quote_submitted_via ?? "",
-    portalLinkActive: Boolean(s.portal_link_active),
     twgResult: s.twg_result ?? null,
     remarks: s.remarks ?? "",
     quoteItems: s.quote_items.map(mapRfqQuoteItem),
@@ -1503,25 +1528,6 @@ export interface RfqSupplierPayload {
   supplier_by?: string;
 }
 
-/** A Supplier Portal link as returned when an RFQ/PO is sent: staff can copy it if the supplier has no email. */
-export interface PortalLink {
-  rfqSupplierId?: string;
-  supplierName?: string;
-  url: string;
-  emailed: boolean;
-}
-
-type BackendPortalLink = { rfq_supplier_id?: number; supplier_name?: string; url: string; emailed: boolean };
-
-function mapPortalLink(link: BackendPortalLink): PortalLink {
-  return {
-    rfqSupplierId: link.rfq_supplier_id !== undefined ? String(link.rfq_supplier_id) : undefined,
-    supplierName: link.supplier_name,
-    url: link.url,
-    emailed: link.emailed,
-  };
-}
-
 export async function apiGetRfqs(filters?: { purchaseRequestId?: string | number; status?: string }) {
   const params = new URLSearchParams();
   if (filters?.purchaseRequestId) params.set("purchase_request_id", String(filters.purchaseRequestId));
@@ -1576,19 +1582,13 @@ export async function apiRemoveRfqSupplier(rfqId: string | number, rfqSupplierId
   return mapRfq(result.data);
 }
 
-/** Sends the RFQ through the Supplier Portal; returns each supplier's link (emailed when it has an address). */
+/** Marks the RFQ as sent to its 3 suppliers (the Supply team delivers it) and starts their 7-day reply window. */
 export async function apiSendRfq(rfqId: string | number) {
-  const result = await request<ApiRecord<BackendRfq> & { message: string; portal_links: BackendPortalLink[] }>(`/rfqs/${rfqId}/send`, { method: "POST" });
-  return { message: result.message, links: result.portal_links.map(mapPortalLink), data: mapRfq(result.data) };
+  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${rfqId}/send`, { method: "POST" });
+  return { message: result.message, data: mapRfq(result.data) };
 }
 
-/** Issues a fresh portal link for a supplier still awaiting its reply (the old link stops working). */
-export async function apiResendRfqPortalLink(rfqId: string | number, rfqSupplierId: string | number) {
-  const result = await request<{ message: string; portal_link: BackendPortalLink }>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}/portal-link`, { method: "POST" });
-  return mapPortalLink(result.portal_link);
-}
-
-/** Staff fallback for a hand-delivered quotation: prices plus the scanned signed quotation. */
+/** Records a supplier's quotation as brought back by the Supply team: prices plus the scanned signed quotation. */
 export async function apiRecordRfqSupplierQuote(
   rfqId: string | number,
   rfqSupplierId: string | number,
@@ -1613,11 +1613,11 @@ export async function apiCancelRfqSupplier(rfqId: string | number, rfqSupplierId
 
 /** Flowchart: "Choose n of supplier" — fills the slots left by cancelled or TWG-failed suppliers. */
 export async function apiChooseReplacementSuppliers(rfqId: string | number, suppliers: RfqSupplierPayload[]) {
-  const result = await request<ApiRecord<BackendRfq> & { message: string; portal_links: BackendPortalLink[] }>(`/rfqs/${rfqId}/suppliers/choose`, {
+  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${rfqId}/suppliers/choose`, {
     method: "POST",
     body: { suppliers },
   });
-  return { message: result.message, links: result.portal_links.map(mapPortalLink), data: mapRfq(result.data) };
+  return { message: result.message, data: mapRfq(result.data) };
 }
 
 /** Downloads a supplier's signed quotation (auth-protected, so fetched here rather than linked). */
@@ -2041,7 +2041,6 @@ export interface PurchaseOrder {
   approvedBySignature: string;
   supplierEmail: string;
   forwardedToSupplierAt: string;
-  portalLinkActive: boolean;
   deliveryAcceptedAt: string;
   deliveryRespondedBy: string;
   items: PurchaseOrderItem[];
@@ -2093,7 +2092,6 @@ type BackendPurchaseOrder = {
   approved_by_signature?: string | null;
   supplier_email?: string | null;
   forwarded_to_supplier_at?: string | null;
-  portal_link_active?: boolean;
   delivery_accepted_at?: string | null;
   delivery_responded_by?: string | null;
   status: string;
@@ -2149,7 +2147,6 @@ function mapPurchaseOrder(po: BackendPurchaseOrder): PurchaseOrder {
     approvedBySignature: po.approved_by_signature ?? "",
     supplierEmail: po.supplier_email ?? "",
     forwardedToSupplierAt: po.forwarded_to_supplier_at ?? "",
-    portalLinkActive: Boolean(po.portal_link_active),
     deliveryAcceptedAt: po.delivery_accepted_at ?? "",
     deliveryRespondedBy: po.delivery_responded_by ?? "",
     items: po.items.map(mapPurchaseOrderItem),
@@ -2226,16 +2223,10 @@ export async function apiAccountPo(id: string | number, remarks?: string) {
   return { ...result, data: mapPurchaseOrder(result.data) };
 }
 
-/** RD final approval; the fully signed PO is then forwarded to the Supplier Portal (link returned). */
+/** RD final approval; the fully signed PO is then released to the Supply team to bring to the supplier. */
 export async function apiFinalApprovePo(id: string | number, remarks?: string) {
-  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string; portal_link?: BackendPortalLink }>(`/approvals/po/${id}/final-approve`, { method: "POST", body: { remarks } });
-  return { message: result.message, link: result.portal_link ? mapPortalLink(result.portal_link) : null, data: mapPurchaseOrder(result.data) };
-}
-
-/** Re-issues the PO's Supplier Portal link (the old one stops working) and emails it again. */
-export async function apiForwardPoToSupplier(id: string | number) {
-  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string; portal_link: BackendPortalLink }>(`/purchase-orders/${id}/forward`, { method: "POST" });
-  return { message: result.message, link: mapPortalLink(result.portal_link), data: mapPurchaseOrder(result.data) };
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/final-approve`, { method: "POST", body: { remarks } });
+  return { message: result.message, data: mapPurchaseOrder(result.data) };
 }
 
 export async function apiRejectPo(id: string | number, reason: string) {
@@ -2453,187 +2444,4 @@ function textFromRelation(value: string | number | BackendNamedRecord | null | u
 
 function dateOnly(value: string | null | undefined) {
   return value?.split("T")[0] ?? null;
-}
-
-// ---------- Supplier Portal (public: the link token is the only credential) ----------
-
-export interface PortalRfq {
-  agencyName: string;
-  rfqNo: string;
-  purpose: string;
-  procurementCategory: string;
-  rfqDate: string;
-  placeOfDelivery: string;
-  supplierName: string;
-  status: string;
-  canSubmit: boolean;
-  replyDueAt: string;
-  repliedAt: string;
-  quotationName: string;
-  items: Array<{ id: string; itemNo: number; description: string; uom: string; quantity: number; unitAbc: number; totalAbc: number; unitPrice: number | null; totalPrice: number | null }>;
-}
-
-type BackendPortalRfq = {
-  agency_name: string;
-  rfq_no: string;
-  purpose: string | null;
-  procurement_category: string;
-  rfq_date: string | null;
-  place_of_delivery: string | null;
-  supplier_name: string | null;
-  status: string;
-  can_submit: boolean;
-  reply_due_at: string | null;
-  replied_at: string | null;
-  quotation_name: string | null;
-  items: Array<{ id: number; item_no: number; description: string | null; uom: string | null; quantity: string | number; unit_abc: string | number | null; total_abc: string | number | null; unit_price: string | number | null; total_price: string | number | null }>;
-};
-
-function mapPortalRfq(r: BackendPortalRfq): PortalRfq {
-  return {
-    agencyName: r.agency_name,
-    rfqNo: r.rfq_no,
-    purpose: r.purpose ?? "",
-    procurementCategory: r.procurement_category,
-    rfqDate: r.rfq_date ?? "",
-    placeOfDelivery: r.place_of_delivery ?? "",
-    supplierName: r.supplier_name ?? "",
-    status: r.status,
-    canSubmit: r.can_submit,
-    replyDueAt: r.reply_due_at ?? "",
-    repliedAt: r.replied_at ?? "",
-    quotationName: r.quotation_name ?? "",
-    items: r.items.map((it) => ({
-      id: String(it.id),
-      itemNo: it.item_no,
-      description: it.description ?? "",
-      uom: it.uom ?? "",
-      quantity: Number(it.quantity),
-      unitAbc: Number(it.unit_abc ?? 0),
-      totalAbc: Number(it.total_abc ?? 0),
-      unitPrice: it.unit_price === null ? null : Number(it.unit_price),
-      totalPrice: it.total_price === null ? null : Number(it.total_price),
-    })),
-  };
-}
-
-export async function apiPortalGetRfq(token: string) {
-  const result = await request<ApiRecord<BackendPortalRfq>>(`/portal/rfq/${encodeURIComponent(token)}`, { auth: false });
-  return mapPortalRfq(result.data);
-}
-
-export async function apiPortalSubmitQuote(token: string, items: Array<{ rfq_item_id: string; unit_price: number }>, quotation: File) {
-  const form = new FormData();
-  items.forEach((item, i) => {
-    form.append(`items[${i}][rfq_item_id]`, item.rfq_item_id);
-    form.append(`items[${i}][unit_price]`, String(item.unit_price));
-  });
-  form.append("quotation", quotation);
-  const result = await request<ApiRecord<BackendPortalRfq> & { message: string }>(`/portal/rfq/${encodeURIComponent(token)}/quote`, { method: "POST", body: form, auth: false });
-  return { message: result.message, data: mapPortalRfq(result.data) };
-}
-
-export interface PortalPoSigner {
-  name: string;
-  signedAt: string;
-  signature: string;
-}
-
-export interface PortalPo {
-  agencyName: string;
-  poNo: string;
-  poDate: string;
-  prNo: string;
-  supplierName: string;
-  supplierAddress: string;
-  supplierTin: string;
-  placeOfDelivery: string;
-  deliveryDate: string;
-  modeOfProcurement: string;
-  termsAndConditions: string;
-  totalAmount: number;
-  items: Array<{ itemNo: number; description: string; uom: string; quantity: number; unitCost: number; totalCost: number }>;
-  signatures: { budgetOfficer: PortalPoSigner | null; accountingOfficer: PortalPoSigner | null; approvedBy: PortalPoSigner | null };
-  status: string;
-  canRespond: boolean;
-  deliveryWaived: boolean;
-  deliveryWaivedReason: string;
-  deliveryAcceptedAt: string;
-}
-
-type BackendPortalSigner = { name: string; signed_at: string; signature: string | null } | null;
-
-type BackendPortalPo = {
-  agency_name: string;
-  po_no: string;
-  po_date: string | null;
-  pr_no: string | null;
-  supplier_name: string | null;
-  supplier_address: string | null;
-  supplier_tin: string | null;
-  place_of_delivery: string | null;
-  delivery_date: string | null;
-  mode_of_procurement: string | null;
-  terms_and_conditions: string | null;
-  total_amount: string | number;
-  items: Array<{ item_no: number; description: string | null; uom: string | null; quantity: string | number; unit_cost: string | number; total_cost: string | number }>;
-  signatures: { budget_officer: BackendPortalSigner; accounting_officer: BackendPortalSigner; approved_by: BackendPortalSigner };
-  status: string;
-  can_respond: boolean;
-  delivery_waived: boolean;
-  delivery_waived_reason: string | null;
-  delivery_accepted_at: string | null;
-};
-
-function mapPortalSigner(s: BackendPortalSigner): PortalPoSigner | null {
-  return s ? { name: s.name, signedAt: s.signed_at, signature: s.signature ?? "" } : null;
-}
-
-function mapPortalPo(p: BackendPortalPo): PortalPo {
-  return {
-    agencyName: p.agency_name,
-    poNo: p.po_no,
-    poDate: p.po_date ?? "",
-    prNo: p.pr_no ?? "",
-    supplierName: p.supplier_name ?? "",
-    supplierAddress: p.supplier_address ?? "",
-    supplierTin: p.supplier_tin ?? "",
-    placeOfDelivery: p.place_of_delivery ?? "",
-    deliveryDate: p.delivery_date ?? "",
-    modeOfProcurement: p.mode_of_procurement ?? "",
-    termsAndConditions: p.terms_and_conditions ?? "",
-    totalAmount: Number(p.total_amount),
-    items: p.items.map((it) => ({
-      itemNo: it.item_no,
-      description: it.description ?? "",
-      uom: it.uom ?? "",
-      quantity: Number(it.quantity),
-      unitCost: Number(it.unit_cost),
-      totalCost: Number(it.total_cost),
-    })),
-    signatures: {
-      budgetOfficer: mapPortalSigner(p.signatures.budget_officer),
-      accountingOfficer: mapPortalSigner(p.signatures.accounting_officer),
-      approvedBy: mapPortalSigner(p.signatures.approved_by),
-    },
-    status: p.status,
-    canRespond: p.can_respond,
-    deliveryWaived: p.delivery_waived,
-    deliveryWaivedReason: p.delivery_waived_reason ?? "",
-    deliveryAcceptedAt: p.delivery_accepted_at ?? "",
-  };
-}
-
-export async function apiPortalGetPo(token: string) {
-  const result = await request<ApiRecord<BackendPortalPo>>(`/portal/po/${encodeURIComponent(token)}`, { auth: false });
-  return mapPortalPo(result.data);
-}
-
-export async function apiPortalRespondPo(token: string, waived: boolean, reason?: string) {
-  const result = await request<ApiRecord<BackendPortalPo> & { message: string }>(`/portal/po/${encodeURIComponent(token)}/respond`, {
-    method: "POST",
-    body: { waived, reason },
-    auth: false,
-  });
-  return { message: result.message, data: mapPortalPo(result.data) };
 }

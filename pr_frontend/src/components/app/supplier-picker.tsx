@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Loader2, Mail, Plus, Search, UserPlus } from "lucide-react";
+import { Loader2, Plus, Search, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { apiGetSuppliersPage, type PortalLink, type RfqSupplierPayload, type Supplier } from "@/lib/api";
-import { toast } from "sonner";
+import { apiGetSuppliersPage, type RfqSupplierPayload, type Supplier } from "@/lib/api";
 
 /**
  * Flowchart: "Filter Supplier based on category (Goods, Services)". Searches the active directory
@@ -55,7 +54,7 @@ export function SupplierPicker({
       {adding && (
         <div className="grid grid-cols-1 gap-2 rounded-md bg-secondary/40 p-2 sm:grid-cols-2">
           <Input placeholder="Supplier name *" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className="h-8 border-border" />
-          <Input placeholder="Email (for the Supplier Portal link)" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} className="h-8 border-border" />
+          <Input placeholder="Email (optional)" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} className="h-8 border-border" />
           <Input placeholder="Contact no." value={draft.contact} onChange={(e) => setDraft({ ...draft, contact: e.target.value })} className="h-8 border-border" />
           <Input placeholder="Address" value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} className="h-8 border-border" />
           <div className="flex justify-end sm:col-span-2">
@@ -90,8 +89,7 @@ export function SupplierPicker({
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium text-navy">{s.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {s.email || "No email — you'll copy the portal link by hand"}
-                  {s.address ? ` · ${s.address}` : ""}
+                  {[s.contactNo, s.email, s.address].filter(Boolean).join(" · ") || "No contact details on file"}
                 </p>
               </div>
               <Button type="button" size="sm" variant="outline" className="h-7 gap-1 border-border text-xs" disabled={disabled} onClick={() => onPick({ supplier_id: s.id }, s.name)}>
@@ -101,48 +99,6 @@ export function SupplierPicker({
           ))
         )}
       </div>
-    </div>
-  );
-}
-
-/** Portal links just issued, so staff can hand them to suppliers that have no email on file. */
-export function PortalLinksCard({ links, onDismiss }: { links: PortalLink[]; onDismiss: () => void }) {
-  const [copied, setCopied] = useState<string | null>(null);
-  if (links.length === 0) return null;
-
-  async function copy(url: string) {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(url);
-      toast.success("Portal link copied.");
-    } catch {
-      toast.error("Copy failed — select the link and copy it manually.");
-    }
-  }
-
-  return (
-    <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-semibold text-navy">Supplier Portal links</p>
-        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={onDismiss}>Done</Button>
-      </div>
-      <p className="text-xs text-muted-foreground">Each link opens only that supplier's request. Emailed where the supplier has an address; copy the rest and send them another way. Links are shown once.</p>
-      {links.map((link) => (
-        <div key={link.url} className="flex flex-wrap items-center gap-2 rounded-md bg-card p-2">
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium text-navy">{link.supplierName ?? "Supplier"}</span>
-            <span className="block truncate font-mono text-[11px] text-muted-foreground">{link.url}</span>
-          </span>
-          {link.emailed ? (
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-success"><Mail className="h-3.5 w-3.5" /> Emailed</span>
-          ) : (
-            <span className="text-[11px] font-semibold text-warning-foreground">No email on file</span>
-          )}
-          <Button type="button" size="sm" variant="outline" className="h-7 gap-1 border-border text-xs" onClick={() => copy(link.url)}>
-            {copied === link.url ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />} Copy
-          </Button>
-        </div>
-      ))}
     </div>
   );
 }

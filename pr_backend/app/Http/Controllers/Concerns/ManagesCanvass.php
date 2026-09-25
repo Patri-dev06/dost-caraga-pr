@@ -7,19 +7,19 @@ use App\Models\RfqItem;
 use App\Models\RfqQuoteItem;
 use App\Models\RfqSupplier;
 use App\Models\User;
-use App\Support\PortalToken;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 /**
- * The flowchart's green-lane canvass, shared by the staff RFQ screens, the public Supplier Portal,
- * and the hourly no-reply sweep:
+ * The flowchart's green-lane canvass, shared by the staff RFQ screens and the hourly no-reply sweep.
+ * Suppliers have no access to the system: the Supply team delivers each RFQ to the supplier in
+ * person (or by phone/email outside the system) and records the signed quotation when it comes back.
  *
- *   Send RFQ -> Supplier receives RFQ (Supplier Portal) -> Does supplier reply?
- *     Yes -> Supplier sends back signed quotation -> Procurement category check
+ *   Send RFQ -> Supplier receives RFQ -> Does supplier reply?
+ *     Yes -> Supply records the signed quotation -> Procurement category check
  *     No (after 7 calendar days) -> Cancel sent RFQ of non-responding supplier -> Choose n of supplier
  *
- * Needs HasProcurementHelpers on the same class (notify, sendEmail, frontendUrl, designated*).
+ * Needs HasProcurementHelpers on the same class (notify, designated*).
  */
 trait ManagesCanvass
 {
@@ -29,49 +29,16 @@ trait ManagesCanvass
     /** Private disk folder for uploaded signed quotations. */
     private string $quotationFolder = 'rfq-quotations';
 
-    /**
-     * Issues (or re-issues) a supplier's portal link and emails it when the supplier has an address.
-     * Returns the link so staff can hand it over another way; only its hash is stored.
-     */
-    private function issueRfqPortalLink(RfqSupplier $rfqSupplier): string
-    {
-        $token = PortalToken::issue();
-        $rfqSupplier->forceFill([
-            'portal_token_hash' => $token['hash'],
-            'portal_token_expires_at' => $rfqSupplier->reply_due_at,
-        ])->save();
-
-        $url = $this->frontendUrl('/portal/rfq/'.$token['plain']);
-        $rfq = $rfqSupplier->rfq;
-        $due = $rfqSupplier->reply_due_at?->timezone('Asia/Manila')->format('F j, Y g:i A');
-        $this->sendEmail(
-            $rfqSupplier->supplier_email,
-            "Request for Quotation {$rfq->rfq_no} — ".$this->preferenceValue('agency_name', 'DOST Caraga'),
-            implode("\n", array_filter([
-                'Good day, '.($rfqSupplier->supplier_name ?: 'Supplier').'.',
-                'We invite you to submit a quotation'.($rfq->purpose ? " for: {$rfq->purpose}" : '.'),
-                $due ? "Please reply by {$due} (Philippine time), 7 calendar days from today." : null,
-                'Open the link to see the items and specifications, enter your unit prices, and upload your signed quotation.',
-            ])),
-            $url,
-            'Open the Request for Quotation',
-        );
-
-        return $url;
-    }
-
-    /** Sends one canvassed supplier the RFQ: starts its 7-day reply window and issues its portal link. */
-    private function sendToSupplier(RfqSupplier $rfqSupplier): string
+    /** Marks one canvassed supplier as sent the RFQ (by the Supply team) and starts its 7-day reply window. */
+    private function sendToSupplier(RfqSupplier $rfqSupplier): void
     {
         $now = now();
         $rfqSupplier->forceFill(['status' => 'Sent', 'sent_at' => $now, 'reply_due_at' => $now->copy()->addDays($this->replyWindowDays)])->save();
-
-        return $this->issueRfqPortalLink($rfqSupplier->fresh('rfq'));
     }
 
     /**
-     * Records a supplier's quotation — through the portal, or typed in by staff from a hand-delivered
-     * one. Either way the signed quotation itself must be attached.
+     * Records a supplier's quotation, typed in by the Supply team from the signed quotation the
+     * supplier handed back. The signed quotation itself must be attached.
      *
      * @param  array<int, array{rfq_item_id: int|string, unit_price: float|int|string}>  $items
      */
@@ -104,7 +71,7 @@ trait ManagesCanvass
 
         foreach ($this->canvassWatchers($rfq) as $watcher) {
             $this->notify($watcher, 'rfq_quote_received', 'Quotation received',
-                "{$rfqSupplier->supplier_name} sent its signed quotation for {$rfq->rfq_no}".($via === 'Portal' ? ' through the Supplier Portal.' : '.'),
+                "The signed quotation from {$rfqSupplier->supplier_name} for {$rfq->rfq_no} was recorded.",
                 "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
         }
 
@@ -117,25 +84,16 @@ trait ManagesCanvass
      */
     private function cancelSupplierRfq(RfqSupplier $rfqSupplier, string $reason, bool $auto): void
     {
-        $rfqSupplier->forceFill([
-            'status' => 'TimedOut',
-            'portal_token_hash' => null,
-            'portal_token_expires_at' => null,
-            'remarks' => $reason,
-        ])->save();
+        $rfqSupplier->forceFill(['status' => 'TimedOut', 'remarks' => $reason])->save();
 
         $rfq = $rfqSupplier->rfq;
-        $this->sendEmail(
-            $rfqSupplier->supplier_email,
-            "Request for Quotation {$rfq->rfq_no} cancelled",
-            'Good day, '.($rfqSupplier->supplier_name ?: 'Supplier').".\nThe Request for Quotation {$rfq->rfq_no} sent to you has been cancelled"
-                .($auto ? ' because no quotation was received within 7 calendar days.' : '.')
-                ."\nThank you for your time.",
-        );
 
         foreach ($this->canvassWatchers($rfq) as $watcher) {
             $this->notify($watcher, 'rfq_supplier_cancelled', 'Choose a replacement supplier',
-                "{$rfqSupplier->supplier_name} did not reply to {$rfq->rfq_no}, so its RFQ was cancelled. Choose a replacement supplier to keep 3 in the canvass.",
+                ($auto
+                    ? "{$rfqSupplier->supplier_name} did not reply to {$rfq->rfq_no} within 7 calendar days, so its RFQ was cancelled."
+                    : "The RFQ {$rfq->rfq_no} sent to {$rfqSupplier->supplier_name} was cancelled.")
+                    .' Choose a replacement supplier to keep 3 in the canvass.',
                 "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
         }
 

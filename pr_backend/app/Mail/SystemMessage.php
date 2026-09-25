@@ -10,8 +10,7 @@ use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * Every email the system sends: routing notices to staff, the sign-in alert, and the Supplier Portal
- * links. Queued, so a slow or unreachable mail server never holds up the approval that triggered it.
+ * Every email the system sends: routing notices to staff and the sign-in alert. Queued, so a slow or unreachable mail server never holds up the approval that triggered it.
  */
 class SystemMessage extends Mailable implements ShouldQueue
 {

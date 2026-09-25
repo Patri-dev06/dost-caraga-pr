@@ -6,7 +6,6 @@ use App\Models\AbstractOfCanvas;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseRequest;
 use App\Models\Rfq;
-use App\Models\RfqSupplier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -34,22 +33,21 @@ trait CancelsPurchaseRequests
                 'cancelled_from' => $from,
             ])->save();
 
-            // Everything still open downstream of the PR goes with it, and no supplier link keeps working.
+            // Everything still open downstream of the PR goes with it.
             foreach ($pr->rfqs()->where('status', '!=', 'Cancelled')->get() as $rfq) {
                 /** @var Rfq $rfq */
                 $rfq->forceFill(['status' => 'Cancelled', 'stage' => 'Cancelled'])->save();
-                $rfq->suppliers()->update(['portal_token_hash' => null, 'portal_token_expires_at' => null]);
                 $rfq->suppliers()->whereIn('status', ['Pending', 'Sent'])->update(['status' => 'Cancelled']);
                 AbstractOfCanvas::where('rfq_id', $rfq->id)->where('status', '!=', 'Cancelled')->update(['status' => 'Cancelled']);
             }
 
-            // An answered PO keeps its (read-only) portal link; an open one is cancelled and its link revoked.
+            // An answered PO stays as it is; an open one is cancelled.
             PurchaseOrder::where('purchase_request_id', $pr->id)
                 ->whereNotIn('status', PurchaseOrder::CLOSED_STATUSES)
-                ->update(['status' => 'Cancelled', 'stage' => 'Cancelled', 'portal_token_hash' => null]);
+                ->update(['status' => 'Cancelled', 'stage' => 'Cancelled']);
         });
 
-        $this->recordAction($request, $pr, $from === 'AOC' ? 'BAC' : ($request->user() ? 'Supply' : 'Supplier'), 'Cancelled PR', $reason);
+        $this->recordAction($request, $pr, $from === 'AOC' ? 'BAC' : 'Supply', 'Cancelled PR', $reason);
 
         $pr->loadMissing('requester');
         $cause = $from === 'PO'
@@ -58,11 +56,5 @@ trait CancelsPurchaseRequests
         $this->notify($pr->requester, 'pr_cancelled', 'Purchase Request cancelled — please Re-PR',
             "{$pr->pr_no} was cancelled because {$cause}. Reason: {$reason}\nOpen the PR and choose Re-PR to file a new one from it if the need still stands.",
             "/purchase-requests/{$pr->id}", ['prId' => $pr->id]);
-    }
-
-    /** Revokes every portal link on one RFQ supplier row. */
-    private function revokePortalLink(RfqSupplier $rfqSupplier): void
-    {
-        $rfqSupplier->forceFill(['portal_token_hash' => null, 'portal_token_expires_at' => null])->save();
     }
 }

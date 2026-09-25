@@ -54,8 +54,8 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
-    // Public address of the web app (the Vite/React frontend). Links in emails — routing notices and
-    // the Supplier Portal — are built from this, not from APP_URL, which is the backend behind the proxy.
+    // Public address of the web app (the Vite/React frontend). Links in emails (routing notices) are
+    // built from this, not from APP_URL, which is the backend behind the proxy.
     'frontend_url' => env('FRONTEND_URL', env('APP_URL', 'http://localhost')),
 
     /*

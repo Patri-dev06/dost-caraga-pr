@@ -137,11 +137,9 @@ class PurchaseOrderApiTest extends TestCase
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/account")
             ->assertOk()->assertJsonPath('data.status', 'Pending RD Approval');
 
-        // RD approval generates the fully signed PO and forwards it to the Supplier Portal.
+        // RD approval completes the signed PO and releases it to Supply to bring to the supplier.
         $final = $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/final-approve")
             ->assertOk()->assertJsonPath('data.status', 'Forwarded to Supplier');
-        $this->assertStringContainsString('/portal/po/', $final->json('portal_link.url'));
-        $this->assertTrue($final->json('portal_link.emailed'));
         $this->assertNotNull($final->json('data.approved_by_signature'));
         $this->assertDatabaseHas('user_notifications', ['type' => 'po_forwarded', 'user_id' => \App\Models\PurchaseRequest::find($prId)->requested_by]);
 

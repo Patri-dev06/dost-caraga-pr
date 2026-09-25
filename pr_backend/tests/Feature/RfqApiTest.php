@@ -182,12 +182,10 @@ class RfqApiTest extends TestCase
         $this->completeRfqSigning($rfqId);
         $this->addSuppliers($token, $rfqId);
 
-        $sent = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")
             ->assertOk()
             ->assertJsonPath('data.status', 'Canvassing')
-            ->assertJsonCount(3, 'data.suppliers')
-            ->assertJsonCount(3, 'portal_links');
-        $this->assertStringContainsString('/portal/rfq/', $sent->json('portal_links.0.url'));
+            ->assertJsonCount(3, 'data.suppliers');
 
         $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
         $rfqItemId = $rfq['items'][0]['id'];

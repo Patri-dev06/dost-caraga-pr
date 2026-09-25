@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class PurchaseRequest extends Model
@@ -125,6 +126,12 @@ class PurchaseRequest extends Model
     public function purchaseOrders(): HasMany
     {
         return $this->hasMany(PurchaseOrder::class);
+    }
+
+    /** The Supply team's hand-kept columns on this PR's Procurement Monitoring Sheet row. */
+    public function monitoringEntry(): HasOne
+    {
+        return $this->hasOne(PrMonitoringEntry::class);
     }
 
     public function approvalActions(): MorphMany

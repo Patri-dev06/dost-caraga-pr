@@ -93,7 +93,7 @@ function SuppliersPage() {
         </label>
         <label className="space-y-1 text-xs">
           <span className="label-eyebrow">Email</span>
-          <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Where the Supplier Portal link is sent" className="border-border" />
+          <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email (optional)" className="border-border" />
         </label>
         <label className="space-y-1 text-xs">
           <span className="label-eyebrow">Contact no.</span>
@@ -121,7 +121,7 @@ function SuppliersPage() {
       <PageHeader
         eyebrow="Procurement"
         title="Suppliers"
-        subtitle="The directory each RFQ picks its 3 suppliers from, filtered by category. An email lets the supplier receive its Supplier Portal link."
+        subtitle="The directory each RFQ picks its 3 suppliers from, filtered by category. Contact details are for the Supply team reaching the supplier."
         actions={
           <Button className="gap-1.5" onClick={() => { setEditing("new"); setForm(EMPTY); }}>
             <Plus className="h-4 w-4" /> Add supplier

@@ -2,19 +2,17 @@
 
 namespace Tests\Feature;
 
-use App\Mail\SystemMessage;
 use App\Models\PurchaseRequest;
 use App\Models\RfqSupplier;
 use App\Models\Supplier;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Tests\Feature\Concerns\SignsRfq;
 use Tests\TestCase;
 
-/** Flowchart green, orange and yellow lanes: directory, Supplier Portal, 7-day sweep, TWG, venues, PO portal. */
+/** Flowchart green, orange and yellow lanes: directory, staff-recorded canvass, 7-day sweep, TWG, venues, PO hand-off. */
 class FlowchartCanvassTest extends TestCase
 {
     use RefreshDatabase;
@@ -63,28 +61,13 @@ class FlowchartCanvassTest extends TestCase
         return $rfqId;
     }
 
-    /** Sends to 3 suppliers; returns the portal URLs keyed by rfq_supplier id. */
+    /** Marks the RFQ as sent to 3 suppliers; returns their rfq_supplier ids in order. */
     private function sendTo(string $token, int $rfqId, array $names = ['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants']): array
     {
         $this->addSuppliers($token, $rfqId, $names);
 
-        return collect($this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk()->json('portal_links'))
-            ->mapWithKeys(fn ($link) => [$link['rfq_supplier_id'] => $link['url']])->all();
-    }
-
-    private function tokenFrom(string $url): string
-    {
-        return substr($url, strrpos($url, '/') + 1);
-    }
-
-    private function portalQuote(string $url, array $items, bool $withFile = true): \Illuminate\Testing\TestResponse
-    {
-        $payload = ['items' => $items];
-        if ($withFile) {
-            $payload['quotation'] = UploadedFile::fake()->create('quotation.pdf', 30, 'application/pdf');
-        }
-
-        return $this->withHeaders(['Accept' => 'application/json'])->post('/api/v1/portal/rfq/'.$this->tokenFrom($url).'/quote', $payload);
+        return collect($this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk()->json('data.suppliers'))
+            ->pluck('id')->all();
     }
 
     private function itemIds(string $token, int $rfqId): array
@@ -142,47 +125,47 @@ class FlowchartCanvassTest extends TestCase
         $this->signRfq($rfqId, 'bac-vice-chair')->assertOk()->assertJsonPath('data.bac_signed_role', 'BAC Vice-Chairman')->assertJsonPath('data.status', 'Ready to Send');
     }
 
-    // --- Supplier Portal: RFQ ---
+    // --- Canvass: Supply delivers the RFQ and records each signed quotation ---
 
-    public function test_sending_emails_each_supplier_its_own_portal_link(): void
+    public function test_sending_only_starts_the_reply_window_and_never_contacts_a_supplier(): void
     {
         $token = $this->loginAsAdmin();
         $rfqId = $this->signedRfq($token, $this->approvedPr($token));
         Mail::fake();
 
-        $links = $this->sendTo($token, $rfqId);
+        $ids = $this->sendTo($token, $rfqId);
 
-        $this->assertCount(3, array_unique($links));
-        Mail::assertQueued(SystemMessage::class, fn (SystemMessage $m) => $m->hasTo('acmetrading@example.com') && str_contains((string) $m->actionUrl, '/portal/rfq/'));
-        $this->assertSame(3, RfqSupplier::where('rfq_id', $rfqId)->whereNotNull('portal_token_hash')->count());
+        $this->assertCount(3, $ids);
+        foreach ($ids as $id) {
+            $supplier = RfqSupplier::find($id);
+            $this->assertSame('Sent', $supplier->status);
+            $this->assertNotNull($supplier->reply_due_at);
+            $this->assertNull($supplier->portal_token_hash);
+        }
+        // Suppliers have no part in the system: nothing is emailed to them.
+        Mail::assertNotQueued(\App\Mail\SystemMessage::class, fn ($m) => $m->hasTo('acmetrading@example.com'));
+        // And there is no public Supplier Portal to reach.
+        $this->getJson('/api/v1/portal/rfq/anything')->assertNotFound();
     }
 
-    public function test_a_supplier_quotes_through_the_portal_with_its_signed_quotation(): void
+    public function test_supply_records_each_signed_quotation_as_it_comes_back(): void
     {
         $token = $this->loginAsAdmin();
         $rfqId = $this->signedRfq($token, $this->approvedPr($token), 'Goods', 2);
-        $links = $this->sendTo($token, $rfqId);
-        [$firstId, $secondId] = array_keys($links);
-        $url = $links[$firstId];
+        [$firstId, $secondId] = $this->sendTo($token, $rfqId);
         $items = $this->itemIds($token, $rfqId);
 
-        $this->getJson('/api/v1/portal/rfq/'.$this->tokenFrom($url))->assertOk()
-            ->assertJsonPath('data.supplier_name', 'ACME Trading')->assertJsonPath('data.can_submit', true)->assertJsonCount(2, 'data.items');
-        $this->getJson('/api/v1/portal/rfq/not-a-real-token')->assertStatus(404);
-
         $prices = [['rfq_item_id' => $items[0], 'unit_price' => 480], ['rfq_item_id' => $items[1], 'unit_price' => 450]];
-        $this->portalQuote($url, $prices, withFile: false)->assertStatus(422);
-        $this->portalQuote($url, [$prices[0]])->assertStatus(422); // every item must be quoted
-        $this->portalQuote($url, $prices)->assertOk()->assertJsonPath('data.status', 'Replied')->assertJsonPath('data.can_submit', false);
-        $this->portalQuote($url, $prices)->assertStatus(422); // only once
+        $this->recordQuote($token, $rfqId, $firstId, [$prices[0]])->assertStatus(422); // every item must be quoted
+        $this->recordQuote($token, $rfqId, $firstId, $prices)->assertOk();
+        $this->recordQuote($token, $rfqId, $firstId, $prices)->assertStatus(422); // only once
 
         $supplier = RfqSupplier::find($firstId);
-        $this->assertSame('Portal', $supplier->quote_submitted_via);
+        $this->assertSame('Replied', $supplier->status);
+        $this->assertSame('Staff', $supplier->quote_submitted_via);
         Storage::disk('local')->assertExists($supplier->quotation_path);
         $this->assertDatabaseHas('user_notifications', ['type' => 'rfq_quote_received']);
-        // One supplier's link never touches another's row.
         $this->assertSame('Sent', RfqSupplier::find($secondId)->status);
-        // Staff can download it.
         $this->withToken($token)->get("/api/v1/rfqs/{$rfqId}/suppliers/{$firstId}/quotation")->assertOk();
     }
 
@@ -190,10 +173,9 @@ class FlowchartCanvassTest extends TestCase
     {
         $token = $this->loginAsAdmin();
         $rfqId = $this->signedRfq($token, $this->approvedPr($token));
-        $links = $this->sendTo($token, $rfqId);
-        $ids = array_keys($links);
+        $ids = $this->sendTo($token, $rfqId);
         $items = $this->itemIds($token, $rfqId);
-        $this->portalQuote($links[$ids[0]], [['rfq_item_id' => $items[0], 'unit_price' => 400]])->assertOk();
+        $this->recordQuote($token, $rfqId, $ids[0], [['rfq_item_id' => $items[0], 'unit_price' => 400]])->assertOk();
 
         $this->travel(6)->days();
         $this->artisan('rfq:expire-unanswered')->assertSuccessful();
@@ -205,11 +187,11 @@ class FlowchartCanvassTest extends TestCase
 
         foreach ([$ids[1], $ids[2]] as $id) {
             $this->assertSame('TimedOut', RfqSupplier::find($id)->status);
-            $this->getJson('/api/v1/portal/rfq/'.$this->tokenFrom($links[$id]))->assertStatus(404);
         }
         $this->assertSame('Replied', RfqSupplier::find($ids[0])->status);
-        Mail::assertQueued(SystemMessage::class, fn (SystemMessage $m) => $m->hasTo('bayanihansupplies@example.com') && str_contains($m->heading, 'cancelled'));
+        // Supply is told to choose replacements; the supplier itself is not emailed.
         $this->assertDatabaseHas('user_notifications', ['type' => 'rfq_supplier_cancelled']);
+        Mail::assertNotQueued(\App\Mail\SystemMessage::class, fn ($m) => $m->hasTo('bayanihansupplies@example.com'));
         $this->withToken($this->loginAsAdmin())->getJson("/api/v1/rfqs/{$rfqId}")->assertJsonPath('data.open_supplier_slots', 2); // 8 days on, sign in again
     }
 
@@ -217,8 +199,7 @@ class FlowchartCanvassTest extends TestCase
     {
         $token = $this->loginAsAdmin();
         $rfqId = $this->signedRfq($token, $this->approvedPr($token));
-        $links = $this->sendTo($token, $rfqId);
-        $ids = array_keys($links);
+        $ids = $this->sendTo($token, $rfqId);
 
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/choose", ['suppliers' => [['supplier_name' => 'Too Early Co.']]])->assertStatus(422); // no open slot yet
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/{$ids[0]}/cancel", ['reason' => 'Declined by phone.'])->assertOk();
@@ -229,20 +210,18 @@ class FlowchartCanvassTest extends TestCase
         $new = collect($response->json('data.suppliers'))->firstWhere('supplier_name', 'Surigao Supply');
         $this->assertSame('Sent', $new['status']);
         $this->assertSame($new['id'], RfqSupplier::find($ids[0])->replaced_by_supplier_id);
-        $this->assertCount(1, $response->json('portal_links'));
     }
 
     public function test_a_hand_delivered_quote_needs_the_signed_quotation_attached(): void
     {
         $token = $this->loginAsAdmin();
         $rfqId = $this->signedRfq($token, $this->approvedPr($token));
-        $ids = array_keys($this->sendTo($token, $rfqId));
+        $ids = $this->sendTo($token, $rfqId);
         $items = $this->itemIds($token, $rfqId);
 
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/{$ids[0]}/quote", ['items' => [['rfq_item_id' => $items[0], 'unit_price' => 400]]])->assertStatus(422);
         $this->recordQuote($token, $rfqId, $ids[0], [['rfq_item_id' => $items[0], 'unit_price' => 400]])->assertOk();
         $this->assertSame('Staff', RfqSupplier::find($ids[0])->quote_submitted_via);
-        $this->assertNull(RfqSupplier::find($ids[0])->portal_token_hash);
     }
 
     // --- Equipment: TWG check of each item with each supplier ---
@@ -280,11 +259,12 @@ class FlowchartCanvassTest extends TestCase
         // A supplier that already failed cannot be chosen again for this RFQ.
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/choose", ['suppliers' => [['supplier_name' => 'ACME Trading']]])->assertStatus(422);
 
-        $links = collect($this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/choose", [
+        $chosen = collect($this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/choose", [
             'suppliers' => [['supplier_name' => 'New One'], ['supplier_name' => 'New Two'], ['supplier_name' => 'New Three']],
-        ])->assertCreated()->json('portal_links'));
-        foreach ($links as $i => $link) {
-            $this->portalQuote($link['url'], [['rfq_item_id' => $itemId, 'unit_price' => 300 + $i]])->assertOk();
+        ])->assertCreated()->json('data.suppliers'))->where('status', 'Sent')->pluck('id')->values();
+        $this->assertCount(3, $chosen);
+        foreach ($chosen as $i => $id) {
+            $this->recordQuote($token, $rfqId, $id, [['rfq_item_id' => $itemId, 'unit_price' => 300 + $i]])->assertOk();
         }
         $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->assertJsonPath('data.status', 'TWG Evaluation');
     }
@@ -296,11 +276,10 @@ class FlowchartCanvassTest extends TestCase
         $admin = $this->loginAsAdmin();
         $prId = $this->approvedPr($admin, 'mdelacruz@dost.gov.ph');
         $rfqId = $this->signedRfq($admin, $prId, 'Venue');
-        $links = $this->sendTo($admin, $rfqId, ['Almont Inland Resort', 'Watergate Hotel', 'Balanghai Hotel']);
-        $ids = array_keys($links);
+        $ids = $this->sendTo($admin, $rfqId, ['Almont Inland Resort', 'Watergate Hotel', 'Balanghai Hotel']);
         $item = $this->itemIds($admin, $rfqId)[0];
         foreach ([30000, 25000, 28000] as $i => $price) {
-            $this->portalQuote($links[$ids[$i]], [['rfq_item_id' => $item, 'unit_price' => $price]])->assertOk();
+            $this->recordQuote($admin, $rfqId, $ids[$i], [['rfq_item_id' => $item, 'unit_price' => $price]])->assertOk();
         }
 
         $aoc = $this->withToken($admin)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()->assertJsonPath('data.status', 'For Venue Rating')->json('data');
@@ -330,9 +309,9 @@ class FlowchartCanvassTest extends TestCase
         $this->withToken($admin)->postJson("/api/v1/aoc/{$aoc['id']}/submit-for-bac-review")->assertOk();
     }
 
-    // --- PO: forward to the Supplier Portal, supplier answers ---
+    // --- PO: the signed PO goes to the supplier through Supply, which records the supplier's answer ---
 
-    /** Takes a fresh PR all the way to a PO forwarded to the supplier; returns [prId, poId, portalUrl]. */
+    /** Takes a fresh PR all the way to a fully signed PO released to Supply; returns [prId, poId]. */
     private function forwardedPo(string $token): array
     {
         $prId = $this->approvedPr($token);
@@ -342,52 +321,38 @@ class FlowchartCanvassTest extends TestCase
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/obligate")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/account")->assertOk();
-        $url = $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/final-approve")->assertOk()->json('portal_link.url');
+        $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/final-approve")->assertOk()
+            ->assertJsonPath('data.status', 'Forwarded to Supplier')
+            ->assertJsonMissingPath('portal_link');
 
-        return [$prId, $poId, $url];
+        return [$prId, $poId];
     }
 
-    public function test_the_supplier_sees_the_fully_signed_po_and_confirms_delivery_on_the_portal(): void
+    public function test_supply_records_that_the_supplier_will_deliver(): void
     {
         $token = $this->loginAsAdmin();
-        [$prId, $poId, $url] = $this->forwardedPo($token);
-        $portal = '/api/v1/portal/po/'.$this->tokenFrom($url);
+        Mail::fake();
+        [$prId, $poId] = $this->forwardedPo($token);
 
-        $po = $this->getJson($portal)->assertOk()->assertJsonPath('data.can_respond', true)->json('data');
-        foreach (['budget_officer', 'accounting_officer', 'approved_by'] as $signer) {
-            $this->assertNotNull($po['signatures'][$signer]['signature'], $signer);
-        }
-
-        $this->postJson("{$portal}/respond", ['waived' => false])->assertOk()->assertJsonPath('data.status', 'Delivery Accepted');
-        $this->postJson("{$portal}/respond", ['waived' => true, 'reason' => 'x'])->assertStatus(422); // answered already
-        $this->getJson($portal)->assertOk()->assertJsonPath('data.can_respond', false); // still viewable
+        $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/deliver", ['waived' => false])->assertOk()->assertJsonPath('data.status', 'Delivery Accepted');
+        $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/deliver", ['waived' => true, 'reason' => 'x'])->assertStatus(422); // answered already
         $this->assertSame('Approved', PurchaseRequest::find($prId)->status);
-        $this->assertDatabaseHas('approval_actions', ['actionable_id' => $poId, 'role' => 'Supplier', 'action' => 'Delivery Accepted']);
+        $this->assertDatabaseHas('approval_actions', ['actionable_id' => $poId, 'role' => 'Supply', 'action' => 'Delivery Accepted']);
+        // The end-user still hears who won; the supplier is never emailed.
+        $this->assertDatabaseHas('user_notifications', ['type' => 'po_forwarded']);
+        $this->getJson('/api/v1/portal/po/anything')->assertNotFound();
     }
 
-    public function test_a_supplier_waiving_delivery_on_the_portal_cancels_the_pr_for_a_re_pr(): void
+    public function test_a_supplier_waiving_delivery_cancels_the_pr_for_a_re_pr(): void
     {
         $token = $this->loginAsAdmin();
-        [$prId, $poId, $url] = $this->forwardedPo($token);
-        $portal = '/api/v1/portal/po/'.$this->tokenFrom($url);
+        [$prId, $poId] = $this->forwardedPo($token);
 
-        $this->postJson("{$portal}/respond", ['waived' => true])->assertStatus(422); // reason required
-        $this->postJson("{$portal}/respond", ['waived' => true, 'reason' => 'Out of stock.'])->assertOk()->assertJsonPath('data.status', 'Delivery Waived');
+        $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/deliver", ['waived' => true])->assertStatus(422); // reason required
+        $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/deliver", ['waived' => true, 'reason' => 'Out of stock.'])->assertOk()->assertJsonPath('data.status', 'Delivery Waived');
 
         $this->assertDatabaseHas('purchase_requests', ['id' => $prId, 'status' => 'Cancelled', 'cancelled_from' => 'PO']);
         $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/re-pr")->assertCreated()->assertJsonPath('data.status', 'Draft');
-    }
-
-    public function test_a_re_forwarded_po_link_replaces_the_old_one(): void
-    {
-        $token = $this->loginAsAdmin();
-        [, $poId, $url] = $this->forwardedPo($token);
-
-        $newUrl = $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/forward")->assertOk()->json('portal_link.url');
-
-        $this->assertNotSame($url, $newUrl);
-        $this->getJson('/api/v1/portal/po/'.$this->tokenFrom($url))->assertStatus(404);
-        $this->getJson('/api/v1/portal/po/'.$this->tokenFrom($newUrl))->assertOk();
     }
 
     public function test_cancelling_a_pr_closes_its_open_canvass_links(): void

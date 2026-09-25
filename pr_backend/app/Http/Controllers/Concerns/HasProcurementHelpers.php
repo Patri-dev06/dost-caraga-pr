@@ -47,7 +47,7 @@ trait HasProcurementHelpers
         ApprovalAction::create([
             'actionable_id' => $actionable->getKey(),
             'actionable_type' => $actionable::class,
-            'user_id' => $request->user()?->id, // null when a supplier acts through the portal
+            'user_id' => $request->user()?->id,
             'role' => $role,
             'action' => $action,
             'remarks' => $remarks,

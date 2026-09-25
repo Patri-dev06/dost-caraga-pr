@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Ban, CheckCircle2, FileSpreadsheet, Link2, Loader2, PackageCheck, PackageX, Save, SendHorizontal, XCircle } from "lucide-react";
+import { ArrowLeft, Ban, CheckCircle2, FileSpreadsheet, Loader2, PackageCheck, PackageX, Save, SendHorizontal, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,12 +17,9 @@ import {
   apiFinalApprovePo,
   apiRejectPo,
   apiDeliverPo,
-  apiForwardPoToSupplier,
-  type PortalLink,
   type PurchaseOrder,
   type PurchaseOrderItem,
 } from "@/lib/api";
-import { PortalLinksCard } from "@/components/app/supplier-picker";
 import { fmtAmount } from "@/lib/lib-store";
 import { exportPurchaseOrderExcel } from "@/lib/po-excel";
 import { toast } from "sonner";
@@ -61,7 +58,6 @@ function PurchaseOrderDetailPage() {
   const [terms, setTerms] = useState("");
   const [items, setItems] = useState<EditableItem[]>([]);
   const [chainBusy, setChainBusy] = useState(false);
-  const [issuedLinks, setIssuedLinks] = useState<PortalLink[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -85,12 +81,11 @@ function PurchaseOrderDetailPage() {
   const editable = po?.status === "Draft";
   const total = items.reduce((sum, it) => sum + (Number(it.quantityInput) || 0) * (Number(it.unitCostInput) || 0), 0);
 
-  async function runChainAction(action: () => Promise<{ data: PurchaseOrder; message: string; link?: PortalLink | null }>) {
+  async function runChainAction(action: () => Promise<{ data: PurchaseOrder; message: string }>) {
     setChainBusy(true);
     try {
       const result = await action();
       setPo(result.data);
-      if (result.link) setIssuedLinks([{ ...result.link, supplierName: result.data.supplierName }]);
       toast.success(result.message);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Action failed.");
@@ -321,8 +316,6 @@ function PurchaseOrderDetailPage() {
         </Card>
       )}
 
-      <PortalLinksCard links={issuedLinks} onDismiss={() => setIssuedLinks([])} />
-
       {po.status === "Cancelled" && (
         <Card className="flex items-start gap-3 border border-destructive/30 bg-destructive/5 p-4 text-sm">
           <Ban className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
@@ -330,21 +323,16 @@ function PurchaseOrderDetailPage() {
         </Card>
       )}
 
-      {/* Flowchart: Forward signed PO to Supplier Portal -> Does supplier waive to deliver? */}
+      {/* Flowchart: Forward signed PO to supplier (Supply brings it) -> Does supplier waive to deliver? */}
       {AWAITING_SUPPLIER.includes(po.status) && (
         <Card className="space-y-3 border border-border bg-card p-4">
           <div>
             <h2 className="text-sm font-semibold text-navy">With the supplier</h2>
             <p className="text-xs text-muted-foreground">
-              {po.forwardedToSupplierAt
-                ? `The fully signed PO was forwarded to ${po.supplierName} on the Supplier Portal ${new Date(po.forwardedToSupplierAt).toLocaleString("en-PH")}${po.supplierEmail ? ` and emailed to ${po.supplierEmail}` : " — no email on file, so copy its link"}. The supplier confirms delivery or waives it there; you can also record its answer here.`
-                : "The PO is fully signed. Forward it to the supplier through the Supplier Portal."}
+              {`The PO is fully signed${po.forwardedToSupplierAt ? ` (${new Date(po.forwardedToSupplierAt).toLocaleString("en-PH")})` : ""}. Bring it to ${po.supplierName || "the supplier"}, then record the supplier's answer here.`}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" className="gap-1.5 border-border" disabled={chainBusy} onClick={() => runChainAction(() => apiForwardPoToSupplier(poId))}>
-              <Link2 className="h-4 w-4" /> {po.forwardedToSupplierAt ? "New portal link" : "Forward to supplier"}
-            </Button>
             <Button variant="outline" size="sm" className="gap-1.5 border-warning/40 text-warning-foreground hover:bg-warning/10" disabled={chainBusy} onClick={() => handleDeliver(true)}>
               <PackageX className="h-4 w-4" /> Supplier waived delivery
             </Button>

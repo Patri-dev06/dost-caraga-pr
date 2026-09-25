@@ -14,6 +14,7 @@ use App\Models\LibDocumentRow;
 use App\Models\Office;
 use App\Models\PpmpDocument;
 use App\Models\PpmpItem;
+use App\Models\PrMonitoringEntry;
 use App\Models\ProcurementItem;
 use App\Models\Project;
 use App\Models\PurchaseRequest;
@@ -23,6 +24,8 @@ use App\Models\SystemPreference;
 use App\Models\User;
 use App\Models\UserNotification;
 use App\Services\PurchaseRequestChecks;
+use App\Support\MonitoringFields;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -2449,30 +2452,126 @@ class ProcurementController extends Controller
         return (string) $request->route('resource');
     }
 
+    /** Everything one Monitoring Sheet row reads, eager-loaded for a whole page at once. */
+    private const MONITORING_RELATIONS = [
+        'office', 'fundSource', 'requester', 'items', 'monitoringEntry',
+        'approvalActions.user',
+        'rfqs.suppliers', 'rfqs.abstractOfCanvas.winningSupplier', 'rfqs.abstractOfCanvas.approvalActions.user',
+        'rfqs.purchaseOrders.approvalActions.user',
+    ];
+
     /**
      * Procurement Monitoring Sheet: one row per PR, tracing it through RFQ -> AOC -> PO for
      * whichever columns already have real data behind them. A PR that hasn't reached a later
      * stage yet just leaves those columns null — never an error, always the honest state.
      * Paginated like every other list here; never the whole PR table.
+     *
+     * Filters: `search` (PR No. or purpose), `status` (comma-separated), and one period on the
+     * PR's DATE — `date` (Y-m-d), `month` (Y-m) or `year` (Y), in Manila time — so Supply can
+     * see how many PRs, and which, came in on a given day, month or year (`total`).
      */
     public function purchaseRequestMonitoring(Request $request): JsonResponse
     {
         $this->guardModule('pr');
 
-        $query = PurchaseRequest::with([
-            'office', 'fundSource', 'requester', 'items',
-            'approvalActions.user',
-            'rfqs.suppliers', 'rfqs.abstractOfCanvas.winningSupplier', 'rfqs.abstractOfCanvas.approvalActions.user',
-            'rfqs.purchaseOrders.approvalActions.user',
-        ])->visibleTo($request->user())->latest('id');
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'status' => ['nullable', 'string', 'max:200'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
+            'month' => ['nullable', 'date_format:Y-m'],
+            'year' => ['nullable', 'integer', 'min:2000', 'max:2100'],
+        ]);
+
+        $query = PurchaseRequest::with(self::MONITORING_RELATIONS)->visibleTo($request->user())->latest('id');
+
+        if (($search = trim((string) ($filters['search'] ?? ''))) !== '') {
+            $query->where(fn (Builder $q) => $q->where('pr_no', 'like', "%{$search}%")->orWhere('purpose', 'like', "%{$search}%"));
+        }
+
+        if (! empty($filters['status'])) {
+            $query->whereIn('status', array_filter(array_map('trim', explode(',', $filters['status']))));
+        }
+
+        if ($period = $this->monitoringPeriod($filters)) {
+            $query->whereBetween('created_at', $period);
+        }
 
         $page = $query->paginate(min((int) $request->query('per_page', 20), 100));
+        $canEdit = $this->canEditMonitoring($request->user());
 
-        return response()->json($page->through(fn (PurchaseRequest $pr): array => $this->formatMonitoringRow($pr)));
+        return response()->json($page->through(fn (PurchaseRequest $pr): array => $this->formatMonitoringRow($pr, $canEdit)));
+    }
+
+    /**
+     * Supply keeps the sheet's hand-kept columns (ORS/BURS, delivery, IAR, issuance, payment).
+     * Only the given keys change; a blank value clears that cell. Auto-derived columns stay read-only.
+     */
+    public function updateMonitoringEntry(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->guardModule('pr');
+        abort_unless($this->canEditMonitoring($request->user()), 403, 'Only the Supply team can edit the monitoring sheet.');
+
+        $unknown = array_diff(array_keys((array) $request->input('values', [])), array_keys(MonitoringFields::TYPES));
+        abort_if($unknown !== [], 422, 'Unknown monitoring field(s): '.implode(', ', $unknown).'.');
+
+        $input = $request->validate(MonitoringFields::rules())['values'] ?? [];
+
+        $entry = $purchaseRequest->monitoringEntry ?? new PrMonitoringEntry(['purchase_request_id' => $purchaseRequest->id]);
+        $values = array_merge($entry->values ?? [], $input);
+        $values = array_filter($values, fn ($value) => $value !== null && $value !== '');
+
+        $entry->fill(['values' => $values, 'updated_by' => $request->user()?->id])->save();
+        $this->audit($request, 'Purchase Requests', 'Updated monitoring sheet entry', $purchaseRequest->pr_no);
+
+        $purchaseRequest->load(self::MONITORING_RELATIONS);
+
+        return response()->json([
+            'message' => "Monitoring sheet entry for {$purchaseRequest->pr_no} saved.",
+            'data' => $this->formatMonitoringRow($purchaseRequest, true),
+        ]);
+    }
+
+    /** Admin/Superadmin (the Supply tier), the designated Supply Officer, and RFQ/PO module holders. */
+    private function canEditMonitoring(?User $user): bool
+    {
+        if ($user === null) {
+            return false;
+        }
+
+        return in_array($user->tier, ['superadmin', 'admin'], true)
+            || $user->canAccessModule('rfq')
+            || $user->canAccessModule('po')
+            || $this->designatedSupplyOfficer()?->id === $user->id;
+    }
+
+    /**
+     * The [start, end] of the requested day, month or year in Manila time, or null for all time.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array{0: CarbonImmutable, 1: CarbonImmutable}|null
+     */
+    private function monitoringPeriod(array $filters): ?array
+    {
+        $tz = config('app.timezone');
+
+        $start = match (true) {
+            ! empty($filters['date']) => [CarbonImmutable::createFromFormat('!Y-m-d', $filters['date'], $tz), 'day'],
+            ! empty($filters['month']) => [CarbonImmutable::createFromFormat('!Y-m', $filters['month'], $tz), 'month'],
+            ! empty($filters['year']) => [CarbonImmutable::create((int) $filters['year'], 1, 1, 0, 0, 0, $tz), 'year'],
+            default => null,
+        };
+
+        if ($start === null) {
+            return null;
+        }
+
+        [$from, $unit] = $start;
+
+        return [$from->startOf($unit), $from->endOf($unit)];
     }
 
     /** @return array<string, mixed> */
-    private function formatMonitoringRow(PurchaseRequest $pr): array
+    private function formatMonitoringRow(PurchaseRequest $pr, bool $canEdit = false): array
     {
         $rfq = $pr->rfqs->sortByDesc('id')->first();
         $aoc = $rfq?->abstractOfCanvas;
@@ -2514,7 +2613,7 @@ class ProcurementController extends Controller
             'amount_awarded' => $po?->total_amount,
             'po_out_to_budget' => $po?->submitted_at?->toDateString(),
             'po_approved_at' => $po?->approved_by_signed_at?->toISOString(),
-            // The supplier's answer on the Supplier Portal: its conforme, or why it waived delivery.
+            // The supplier's answer, recorded by the Supply team: its conforme, or why it waived delivery.
             'po_conformed_at' => $po?->delivery_accepted_at?->toISOString(),
             'po_remarks' => match (true) {
                 $po === null => null,
@@ -2523,6 +2622,9 @@ class ProcurementController extends Controller
                 default => null,
             },
             'pr_approved_at' => $prApproved?->created_at?->toDateString(),
+            // The hand-kept columns (MonitoringFields), keyed like the frontend's MONITORING_COLUMNS.
+            'manual' => (object) ($pr->monitoringEntry?->values ?? []),
+            'can_edit' => $canEdit,
         ];
     }
 

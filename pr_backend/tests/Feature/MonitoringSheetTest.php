@@ -125,4 +125,103 @@ class MonitoringSheetTest extends TestCase
 
         $this->assertFalse($ids->contains($adminPrId));
     }
+
+    private function monitoringRow(string $token, int $prId, array $query = []): ?array
+    {
+        $url = '/api/v1/purchase-requests/monitoring?'.http_build_query($query + ['per_page' => 100]);
+
+        return collect($this->withToken($token)->getJson($url)->assertOk()->json('data'))->firstWhere('pr_id', $prId);
+    }
+
+    public function test_supply_edits_the_hand_kept_columns_of_an_entry(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token);
+
+        $this->assertTrue($this->monitoringRow($token, $prId)['can_edit']);
+
+        $this->withToken($token)->putJson("/api/v1/purchase-requests/{$prId}/monitoring", ['values' => [
+            'ors_burs_no' => 'ORS-2026-09-0012',
+            'ors_burs_at' => '2026-09-20T14:30',
+            'delivery_term_days' => 15,
+            'iar_no' => 'IAR-0042',
+        ]])->assertOk()->assertJsonPath('data.manual.ors_burs_no', 'ORS-2026-09-0012');
+
+        // A later save only touches the keys it sends; a blank one clears that cell.
+        $this->withToken($token)->putJson("/api/v1/purchase-requests/{$prId}/monitoring", ['values' => [
+            'delivered_full_at' => '2026-10-05',
+            'iar_no' => '',
+        ]])->assertOk();
+
+        $manual = $this->monitoringRow($token, $prId)['manual'];
+        $this->assertSame('ORS-2026-09-0012', $manual['ors_burs_no']);
+        $this->assertSame('2026-09-20T14:30', $manual['ors_burs_at']);
+        $this->assertEquals(15, $manual['delivery_term_days']);
+        $this->assertSame('2026-10-05', $manual['delivered_full_at']);
+        $this->assertArrayNotHasKey('iar_no', $manual);
+    }
+
+    public function test_an_entry_rejects_unknown_columns_and_badly_typed_values(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token);
+
+        $this->withToken($token)->putJson("/api/v1/purchase-requests/{$prId}/monitoring", ['values' => ['pr_no' => 'HACKED']])
+            ->assertStatus(422);
+        $this->withToken($token)->putJson("/api/v1/purchase-requests/{$prId}/monitoring", ['values' => ['delivered_full_at' => '10/05/2026']])
+            ->assertStatus(422)->assertJsonValidationErrors('values.delivered_full_at');
+        $this->withToken($token)->putJson("/api/v1/purchase-requests/{$prId}/monitoring", ['values' => ['delivery_term_days' => 'fifteen']])
+            ->assertStatus(422)->assertJsonValidationErrors('values.delivery_term_days');
+
+        $this->assertSame([], (array) $this->monitoringRow($token, $prId)['manual']);
+    }
+
+    public function test_a_requester_cannot_edit_monitoring_entries(): void
+    {
+        $alice = \App\Models\User::create([
+            'name' => 'Alice', 'email' => 'monitoring-alice@dost.gov.ph', 'password' => bcrypt('password123'),
+            'office_id' => \App\Models\Office::first()->id, 'status' => 'Active', 'tier' => 'regular', 'modules' => ['pr'],
+        ]);
+        $aliceToken = $this->postJson('/api/v1/auth/login', ['email' => $alice->email, 'password' => 'password123'])->json('token');
+        // Alice's own PR, so she can see its row but still may not edit it.
+        $prId = $this->createApprovedPr($this->loginAsAdmin());
+        \App\Models\PurchaseRequest::whereKey($prId)->update(['requested_by' => $alice->id]);
+
+        $this->assertFalse($this->monitoringRow($aliceToken, $prId)['can_edit']);
+        $this->withToken($aliceToken)->putJson("/api/v1/purchase-requests/{$prId}/monitoring", ['values' => ['iar_no' => 'IAR-1']])
+            ->assertForbidden();
+    }
+
+    public function test_the_sheet_filters_by_day_month_and_year_and_counts_the_matches(): void
+    {
+        $token = $this->loginAsAdmin();
+        $sept14 = $this->createApprovedPr($token);
+        $sept14Late = $this->createApprovedPr($token);
+        $sept20 = $this->createApprovedPr($token);
+        $march = $this->createApprovedPr($token);
+
+        // Dates far from the seeded data so the totals are exact. 23:30 Manila still counts as the 14th.
+        \App\Models\PurchaseRequest::whereKey($sept14)->update(['created_at' => '2019-09-14 08:00:00']);
+        \App\Models\PurchaseRequest::whereKey($sept14Late)->update(['created_at' => '2019-09-14 23:30:00']);
+        \App\Models\PurchaseRequest::whereKey($sept20)->update(['created_at' => '2019-09-20 10:00:00']);
+        \App\Models\PurchaseRequest::whereKey($march)->update(['created_at' => '2019-03-02 10:00:00']);
+
+        $ids = fn (array $query) => $this->withToken($token)
+            ->getJson('/api/v1/purchase-requests/monitoring?'.http_build_query($query));
+
+        $day = $ids(['date' => '2019-09-14']);
+        $this->assertEquals(2, $day->json('total'));
+        $this->assertEqualsCanonicalizing([$sept14, $sept14Late], collect($day->json('data'))->pluck('pr_id')->all());
+
+        $this->assertEquals(3, $ids(['month' => '2019-09'])->json('total'));
+        $this->assertEquals(4, $ids(['year' => 2019])->json('total'));
+        $this->assertEquals(0, $ids(['date' => '2019-09-15'])->json('total'));
+
+        $prNo = \App\Models\PurchaseRequest::find($march)->pr_no;
+        $this->assertEquals([$march], collect($ids(['year' => 2019, 'search' => $prNo])->json('data'))->pluck('pr_id')->all());
+        $this->assertEquals(4, $ids(['year' => 2019, 'status' => 'Approved,Cancelled'])->json('total'));
+        $this->assertEquals(0, $ids(['year' => 2019, 'status' => 'Draft'])->json('total'));
+
+        $ids(['month' => 'September'])->assertStatus(422);
+    }
 }

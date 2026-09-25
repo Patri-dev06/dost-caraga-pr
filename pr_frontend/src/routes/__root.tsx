@@ -25,16 +25,16 @@ const themeInitializationScript = `
   })();
 `;
 
-/** Pages anyone can open without signing in: the login page and the Supplier Portal. */
+/** Pages anyone can open without signing in: only the login page. */
 function isPublicPath(path: string) {
-  return path === "/login" || path === "/portal" || path.startsWith("/portal/");
+  return path === "/login";
 }
 
 const authRedirectScript = `
   (() => {
     try {
       const path = window.location.pathname;
-      if (path === "/login" || path === "/portal" || path.startsWith("/portal/")) return;
+      if (path === "/login") return;
 
       const token = localStorage.getItem("pr_backend_token");
       const expiresAt = Number(localStorage.getItem("pr_backend_token_expires_at") || 0);
@@ -52,7 +52,7 @@ const authRedirectScript = `
       }
     } catch {
       const path = window.location.pathname;
-      if (path !== "/login" && path !== "/portal" && !path.startsWith("/portal/")) window.location.replace("/login");
+      if (path !== "/login") window.location.replace("/login");
     }
   })();
 `;
