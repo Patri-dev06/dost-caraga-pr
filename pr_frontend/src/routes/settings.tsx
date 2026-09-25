@@ -61,7 +61,7 @@ function SettingsPage() {
   });
   const { data: signatories = [] } = useQuery({
     queryKey: ["signatories"],
-    queryFn: apiGetSignatories,
+    queryFn: () => apiGetSignatories(),
     enabled: canManageSystem,
   });
   const updateSettings = useMutation({

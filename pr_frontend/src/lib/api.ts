@@ -762,12 +762,16 @@ export async function apiGetUsers() {
   return result.data.map(mapUser);
 }
 
-export type Signatory = { id: number; name: string; tier: UserTier; position: string | null };
+export type Signatory = { id: number; name: string; tier: UserTier; position: string | null; roles: string[] };
 
-/** Approved accounts (status = Active) for signatory pickers — any signed-in user may read this. */
-export async function apiGetSignatories(): Promise<Signatory[]> {
-  const result = await request<ApiList<{ id: number; name: string; tier?: UserTier; position?: string | null }>>("/signatories");
-  return result.data.map((u) => ({ id: u.id, name: u.name, tier: u.tier ?? "regular", position: u.position ?? null }));
+/**
+ * Approved accounts (status = Active) for signatory pickers — any signed-in user may read this.
+ * `role` narrows it to holders of one role (an account may hold several), e.g. "BAC Chairman".
+ */
+export async function apiGetSignatories(role?: string): Promise<Signatory[]> {
+  const query = role ? `?${new URLSearchParams({ role }).toString()}` : "";
+  const result = await request<ApiList<{ id: number; name: string; tier?: UserTier; position?: string | null; roles?: string[] }>>(`/signatories${query}`);
+  return result.data.map((u) => ({ id: u.id, name: u.name, tier: u.tier ?? "regular", position: u.position ?? null, roles: u.roles ?? [] }));
 }
 
 export type BudgetOfficer = { id: number; name: string; position: string; isCurrentUser: boolean };

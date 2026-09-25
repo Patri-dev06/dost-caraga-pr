@@ -5,6 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { DatePickerField } from "@/components/app/date-picker-field";
+import { PersonPicker } from "@/components/app/person-picker";
+import { useSignatories } from "@/lib/signatories";
+import { formatLongDate } from "@/lib/date-format";
 import { apiGetPurchaseRequest, apiCreateRfq, type RfqCreatePayload } from "@/lib/api";
 import { fmtAmount, parseAmount } from "@/lib/lib-store";
 import { exportRfqExcel } from "@/lib/rfq-excel";
@@ -143,7 +147,7 @@ function CreateRfqPage() {
     prNo: "",
     procurementCategory: "Goods",
     openingDate: "",
-    bacChairman: "MERIAM B. BOUQUIA",
+    bacChairman: "", // picked from accounts holding the BAC Chairman role (filled in when there is only one)
     bacChairmanTitle: "Chairman, Bids & Awards Committee",
     purpose: "",
     fundSource: "",
@@ -194,6 +198,8 @@ function CreateRfqPage() {
   }, [prId, navigate]);
 
   const set = <K extends keyof RfqFormDoc>(key: K, value: RfqFormDoc[K]) => setDoc((d) => ({ ...d, [key]: value }));
+  // Only accounts holding the BAC Chairman role (assigned in User Management) can be picked.
+  const { data: bacChairmen = [], isLoading: loadingChairmen } = useSignatories("BAC Chairman");
   const setItem = (id: string, patch: Partial<RfqFormItem>) =>
     setDoc((d) => ({ ...d, items: d.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) }));
   const removeItem = (id: string) =>
@@ -256,7 +262,7 @@ function CreateRfqPage() {
         placeOfDelivery: doc.placeOfDelivery,
         estimatedBudget: parseAmount(doc.estimatedBudget),
         prNo: doc.prNo,
-        openingDate: doc.openingDate,
+        openingDate: formatLongDate(doc.openingDate),
         bacChairman: doc.bacChairman,
         bacChairmanTitle: doc.bacChairmanTitle,
         purpose: doc.purpose,
@@ -391,7 +397,7 @@ function CreateRfqPage() {
                 <p>
                   Please quote us your government price/s for the item/s listed below which will be opened on{" "}
                   <span className="inline-block w-40 border-b border-black">
-                    <TextField value={doc.openingDate} onChange={(v) => set("openingDate", v)} placeholder="date" />
+                    <DatePickerField variant="inline" value={doc.openingDate} onChange={(v) => set("openingDate", v)} placeholder="pick a date" notBeforeToday />
                   </span>
                 </p>
                 <p className="mt-1">
@@ -412,7 +418,17 @@ function CreateRfqPage() {
               <div className="mt-5">
                 <div className="inline-block text-left">
                   <p className="font-bold">
-                    <TextField value={doc.bacChairman} onChange={(v) => set("bacChairman", v)} bold />
+                    <PersonPicker
+                      variant="inline"
+                      value={doc.bacChairman}
+                      options={bacChairmen}
+                      loading={loadingChairmen}
+                      onPick={(name) => set("bacChairman", name)}
+                      autoPickSole
+                      placeholder="Type the BAC Chairman's name…"
+                      emptyText="No account has the BAC Chairman role. A Superadmin can assign it in User Management."
+                      className="h-auto justify-start text-[11px] font-bold uppercase"
+                    />
                   </p>
                   <p className="italic text-[10px]">
                     <TextField value={doc.bacChairmanTitle} onChange={(v) => set("bacChairmanTitle", v)} className="text-[10px] italic" />

@@ -1,4 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { DatePickerField } from "@/components/app/date-picker-field";
+import { PersonPicker } from "@/components/app/person-picker";
+import { useSignatories } from "@/lib/signatories";
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
@@ -132,6 +135,8 @@ function RfqDetailPage() {
   const [replacements, setReplacements] = useState<Array<{ payload: RfqSupplierPayload; label: string }>>([]);
   const [twgNotes, setTwgNotes] = useState("");
   const [twgDrafts, setTwgDrafts] = useState<Record<string, Record<string, { complies: boolean | null; remarks: string }>>>({});
+  // The BAC Chairman is picked from accounts holding that role (assigned in User Management).
+  const { data: bacChairmen = [] } = useSignatories("BAC Chairman");
 
   async function reload() {
     try {
@@ -356,7 +361,7 @@ function RfqDetailPage() {
               </div>
               <div className="space-y-1.5">
                 <p className="label-eyebrow">Opening Date</p>
-                <Input value={editDoc.openingDate} onChange={(e) => setDocField("openingDate", e.target.value)} className="border-border" />
+                <DatePickerField value={editDoc.openingDate} onChange={(v) => setDocField("openingDate", v)} notBeforeToday />
               </div>
               <div className="space-y-1.5">
                 <p className="label-eyebrow">Place of Delivery</p>
@@ -364,7 +369,14 @@ function RfqDetailPage() {
               </div>
               <div className="space-y-1.5">
                 <p className="label-eyebrow">BAC Chairman</p>
-                <Input value={editDoc.bacChairman} onChange={(e) => setDocField("bacChairman", e.target.value)} className="border-border" />
+                <PersonPicker
+                  value={editDoc.bacChairman}
+                  options={bacChairmen}
+                  onPick={(name) => setDocField("bacChairman", name)}
+                  placeholder="Type the BAC Chairman's name…"
+                  emptyText="No account has the BAC Chairman role. A Superadmin can assign it in User Management."
+                  className="h-9 border-border"
+                />
               </div>
               <div className="space-y-1.5">
                 <p className="label-eyebrow">BAC Chairman Title</p>

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Eye, FileSpreadsheet, Loader2, Pencil, Plus, Printer, Save, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -9,7 +9,7 @@ import {
   apiCreatePurchaseRequest,
   apiGetPurchaseRequest,
   apiGetPurchaseRequestUsage,
-  apiGetSignatories,
+  apiGetWorkflowSignatories,
   apiSubmitPurchaseRequest,
   apiUpdatePurchaseRequest,
   type PurchaseRequestCreatePayload,
@@ -19,6 +19,8 @@ import { ValidationResultPanel } from "@/components/app/validation-result-panel"
 import type { PRItem, ValidationCheck } from "@/lib/mock-data";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCurrentUser } from "@/lib/current-user";
+import { useSignatories } from "@/lib/signatories";
+import { PersonPicker } from "@/components/app/person-picker";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { listAllPpmps, syncPpmpsFromDatabase, type PpmpForLib } from "@/lib/ppmp-store";
@@ -166,46 +168,6 @@ function TextField({
         "rounded-sm outline-none placeholder:italic placeholder:text-black/30 hover:bg-amber-50 focus:bg-amber-100 print:hover:bg-transparent",
       )}
     />
-  );
-}
-
-// Signatory name cell: a dropdown of approved accounts while editing, plain text
-// otherwise. Keeps the current value selectable even if that account is gone.
-function SignatorySelect({
-  value,
-  options,
-  editing,
-  onPick,
-}: {
-  value: string;
-  options: SignatoryOption[];
-  editing: boolean;
-  onPick: (name: string) => void;
-}) {
-  if (!editing) return <TextField value={value} onChange={() => {}} editing={false} align="center" bold />;
-  const items =
-    value && !options.some((o) => o.name === value)
-      ? [{ id: -1, name: value, tier: "regular" as const, position: null }, ...options]
-      : options;
-  return (
-    <div className="px-1 py-0.5" style={{ fontFamily: "var(--font-sans)" }}>
-      <Select value={value || undefined} onValueChange={onPick}>
-        <SelectTrigger className="h-7 border-black/20 text-center font-bold">
-          <SelectValue placeholder="Select…" />
-        </SelectTrigger>
-        <SelectContent>
-          {items.length === 0 ? (
-            <div className="px-2 py-1.5 text-sm text-muted-foreground">No approved accounts yet</div>
-          ) : (
-            items.map((o) => (
-              <SelectItem key={o.name} value={o.name}>
-                {o.name}
-              </SelectItem>
-            ))
-          )}
-        </SelectContent>
-      </Select>
-    </div>
   );
 }
 
@@ -470,13 +432,17 @@ function NewPR() {
 
   const [action, setAction] = useState<"draft" | "submit" | null>(null);
 
-  // Approved accounts for the Recommending / Approved signatory dropdowns.
-  const [signatories, setSignatories] = useState<SignatoryOption[]>([]);
-  useEffect(() => {
-    apiGetSignatories()
-      .then(setSignatories)
-      .catch(() => setSignatories([]));
-  }, []);
+  // Signatories come from the accounts in the database: type part of a name to find one.
+  // "Recommending Approval" may be any active account; "Approved by" is the Regional Director —
+  // the one account holding that role, or (until the role is assigned) the one chosen in Settings.
+  const { data: signatories = [], isLoading: loadingSignatories } = useSignatories();
+  const { data: directorHolders = [] } = useSignatories("Regional Director");
+  const { data: workflowSignatories } = useQuery({ queryKey: ["workflow-signatories"], queryFn: () => apiGetWorkflowSignatories(), staleTime: 60_000 });
+  const directorOptions = useMemo<SignatoryOption[]>(() => {
+    if (directorHolders.length > 0) return directorHolders;
+    const rd = workflowSignatories?.regionalDirector;
+    return rd ? [{ id: rd.id, name: rd.name, tier: "regular", position: rd.position, roles: ["Regional Director"] }] : [];
+  }, [directorHolders, workflowSignatories]);
 
   // "Requested by" is always the signed-in user — auto-fill their name and
   // position on a brand-new PR (never override an existing/edited one).
@@ -488,11 +454,14 @@ function NewPR() {
   }, [currentUser, existing]);
 
   // Picking a signatory fills the name and auto-fills the designation from sign-up.
-  const pickSignatory = (name: string, setName: (v: string) => void, setDesig: (v: string) => void) => {
-    setName(name);
-    const chosen = signatories.find((o) => o.name === name);
-    if (chosen?.position) setDesig(chosen.position);
-  };
+  const pickRecommender = useCallback((name: string, person?: SignatoryOption) => {
+    setRecName(name);
+    if (person?.position) setRecDesig(person.position);
+  }, []);
+  const pickApprover = useCallback((name: string, person?: SignatoryOption) => {
+    setAppName(name);
+    if (person?.position) setAppDesig(person.position);
+  }, []);
 
   // Prefill the form once when editing an existing draft/returned PR.
   const prefilled = useRef(false);
@@ -1131,10 +1100,29 @@ function NewPR() {
                       <TextField value={reqName} onChange={setReqName} editing={false} align="center" bold />
                     </td>
                     <td className="border border-black/20 print:border-transparent align-bottom">
-                      <SignatorySelect value={recName} options={signatories} editing={editing} onPick={(n) => pickSignatory(n, setRecName, setRecDesig)} />
+                      <PersonPicker
+                        variant="inline"
+                        value={recName}
+                        options={signatories}
+                        loading={loadingSignatories}
+                        editing={editing}
+                        onPick={pickRecommender}
+                        placeholder="Type a name…"
+                        className="justify-center text-center font-bold"
+                      />
                     </td>
                     <td className="border border-black/20 print:border-transparent align-bottom">
-                      <SignatorySelect value={appName} options={signatories} editing={editing} onPick={(n) => pickSignatory(n, setAppName, setAppDesig)} />
+                      <PersonPicker
+                        variant="inline"
+                        value={appName}
+                        options={directorOptions}
+                        editing={editing}
+                        onPick={pickApprover}
+                        autoPickSole
+                        placeholder="Regional Director"
+                        emptyText="No Regional Director is set. Assign the role in User Management, or choose one in Settings."
+                        className="justify-center text-center font-bold"
+                      />
                     </td>
                   </tr>
                   <tr>

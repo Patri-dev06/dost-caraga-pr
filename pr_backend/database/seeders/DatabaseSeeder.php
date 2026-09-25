@@ -36,6 +36,9 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Recommender', 'description' => 'Reviews and recommends PRs for approval.', 'permissions' => ['Recommend', 'Return', 'View PRs']],
             ['name' => 'Approver', 'description' => 'Final approving authority for procurement requests.', 'permissions' => ['Approve', 'Reject', 'Return', 'View PRs']],
             ['name' => 'Admin', 'description' => 'Manages users, roles, and reference data.', 'permissions' => ['Manage users', 'Manage references', 'View audit logs']],
+            ['name' => 'BAC Chairman', 'description' => 'Chairs the Bids and Awards Committee; signs RFQs and reviews Abstracts of Canvas.', 'permissions' => ['Sign RFQ', 'Review AOC']],
+            ['name' => 'BAC Vice-Chairman', 'description' => 'Acts for the BAC Chairman on RFQs and Abstracts of Canvas.', 'permissions' => ['Sign RFQ', 'Review AOC']],
+            ['name' => 'Regional Director', 'description' => 'Head of the regional office and final approving authority. Only one account holds this role.', 'permissions' => ['Approve PR', 'Approve LIB', 'Approve PO']],
         ])->map(fn ($data) => Role::updateOrCreate(['name' => $data['name']], $data));
 
         $superadmin = User::updateOrCreate(['email' => 'superadmin@dost.gov.ph'], [

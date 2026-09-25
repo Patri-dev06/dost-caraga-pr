@@ -120,8 +120,12 @@ class ProcurementController extends Controller
      */
     public function signatories(Request $request): JsonResponse
     {
+        // `role` narrows the list to holders of one role, e.g. the RFQ's "BAC Chairman" picker.
+        $role = trim((string) $request->query('role', ''));
+
         $users = User::query()
             ->where('status', 'Active')
+            ->when($role !== '', fn (Builder $q) => $q->whereHas('roles', fn (Builder $r) => $r->where('name', $role)))
             ->with('roles:id,name')
             ->orderBy('name')
             ->limit(500)
@@ -132,6 +136,7 @@ class ProcurementController extends Controller
                 'tier' => $user->tier,
                 // Prefer the self-reported position captured at sign-up; fall back to role.
                 'position' => $user->position ?: $user->roles->pluck('name')->first(),
+                'roles' => $user->roles->pluck('name')->values(),
             ]);
 
         return response()->json(['data' => $users]);
@@ -1195,7 +1200,11 @@ class ProcurementController extends Controller
         }
 
         $record = $this->query($resource)->findOrFail($resourceId);
-        $record->fill($this->validated($request, $resource, true))->save();
+        $validated = $this->validated($request, $resource, true);
+        if ($record instanceof User && $request->has('role_ids')) {
+            $this->abortIfSecondRegionalDirector((array) $request->input('role_ids', []), $record->id);
+        }
+        $record->fill($validated)->save();
 
         if ($record instanceof User) {
             if ($request->has('role_ids')) {
@@ -2506,12 +2515,33 @@ class ProcurementController extends Controller
 
         $roleIds = $data['role_ids'] ?? [];
         unset($data['role_ids']);
+        $this->abortIfSecondRegionalDirector($roleIds, null);
         $data['password'] = Hash::make($data['password']);
         $user = User::create($data);
         $user->roles()->sync($roleIds);
         $this->audit($request, 'User Management', 'Created User', $user->email);
 
         return response()->json(['data' => $user->load('office', 'roles')], 201);
+    }
+
+    /**
+     * Accounts may hold several roles, but only one may be the Regional Director: assigning that role
+     * while another account holds it is refused, so the role has to be moved deliberately.
+     *
+     * @param  array<int, int|string>  $roleIds
+     */
+    private function abortIfSecondRegionalDirector(array $roleIds, ?int $userId): void
+    {
+        $rdRoleId = Role::where('name', 'Regional Director')->value('id');
+        if ($rdRoleId === null || ! in_array((int) $rdRoleId, array_map('intval', $roleIds), true)) {
+            return;
+        }
+
+        $holder = User::whereHas('roles', fn (Builder $q) => $q->whereKey($rdRoleId))
+            ->when($userId, fn (Builder $q) => $q->whereKeyNot($userId))
+            ->first(['id', 'name']);
+
+        abort_if($holder !== null, 422, "Only one account can be the Regional Director, and {$holder?->name} already is. Remove the role from them first.");
     }
 
     /** The flowchart's Module 1 checks, with the regular fund types from Settings. */

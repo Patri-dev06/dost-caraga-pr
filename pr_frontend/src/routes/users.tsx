@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
-import { apiGetPurchaseRequests, apiGetRoles, apiGetUsers, apiUpdateUser, type UserRecord, type UserTier } from "@/lib/api";
+import { apiGetPurchaseRequests, apiGetRoles, apiGetUsers, apiUpdateUser, type RoleRecord, type UserRecord, type UserTier } from "@/lib/api";
 import { MODULE_LABELS, TOGGLEABLE_MODULES, type ModuleKey } from "@/lib/modules";
 import { useCurrentUser } from "@/lib/current-user";
 import { cn } from "@/lib/utils";
@@ -92,12 +92,13 @@ function UsersPage() {
                 <TableHead className="label-eyebrow">Email</TableHead>
                 <TableHead className="label-eyebrow">Office</TableHead>
                 <TableHead className="label-eyebrow">Tier</TableHead>
+                <TableHead className="label-eyebrow">Roles</TableHead>
                 <TableHead className="label-eyebrow">Modules</TableHead>
                 <TableHead className="label-eyebrow">Status</TableHead>
                 <TableHead className="w-[120px]" />
               </TableRow></TableHeader>
               <TableBody>
-                {usersLoading && <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Fetching data, kindly wait.</TableCell></TableRow>}
+                {usersLoading && <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Fetching data, kindly wait.</TableCell></TableRow>}
                 {users.map((u) => (
                   <TableRow key={u.id}>
                     <TableCell className="font-semibold text-navy">{u.name}</TableCell>
@@ -108,6 +109,7 @@ function UsersPage() {
                         {u.tier}
                       </span>
                     </TableCell>
+                    <TableCell className="max-w-[14rem] text-xs text-muted-foreground">{u.roles.join(", ") || "—"}</TableCell>
                     <TableCell>
                       <span className="text-sm text-muted-foreground">
                         {u.tier === "regular" ? `${u.accessModules.filter((m) => m !== "dashboard").length} modules` : "All modules"}
@@ -152,6 +154,7 @@ function UsersPage() {
 
       <ManageAccessDialog
         user={editing}
+        roles={roles}
         prs={prs}
         onOpenChange={(open) => !open && setEditing(null)}
         onSaved={() => {
@@ -165,11 +168,13 @@ function UsersPage() {
 
 function ManageAccessDialog({
   user,
+  roles,
   prs,
   onOpenChange,
   onSaved,
 }: {
   user: UserRecord | null;
+  roles: RoleRecord[];
   prs: { requestedBy: string; prNo: string; status: string }[];
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
@@ -177,7 +182,7 @@ function ManageAccessDialog({
   return (
     <Dialog open={Boolean(user)} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] max-w-lg overflow-y-auto">
-        {user && <ManageAccessBody user={user} prs={prs} onSaved={onSaved} />}
+        {user && <ManageAccessBody user={user} roles={roles} prs={prs} onSaved={onSaved} />}
       </DialogContent>
     </Dialog>
   );
@@ -185,10 +190,12 @@ function ManageAccessDialog({
 
 function ManageAccessBody({
   user,
+  roles,
   prs,
   onSaved,
 }: {
   user: UserRecord;
+  roles: RoleRecord[];
   prs: { requestedBy: string; prNo: string; status: string }[];
   onSaved: () => void;
 }) {
@@ -196,6 +203,9 @@ function ManageAccessBody({
   const [status, setStatus] = useState<string>(user.status);
   const [granted, setGranted] = useState<string[]>(user.modules.length ? user.modules : ["pr", "lib", "ppmp"]);
   const [newPassword, setNewPassword] = useState("");
+  // Roles (an account may hold several): signatory roles like BAC Chairman drive the pickers that list them.
+  const [roleIds, setRoleIds] = useState<number[]>(() => roles.filter((r) => user.roles.includes(r.name)).map((r) => r.id));
+  const toggleRole = (id: number) => setRoleIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
 
   const works = prs.filter((p) => p.requestedBy === user.name);
   const effective = effectiveModules(tier, granted);
@@ -206,6 +216,7 @@ function ManageAccessBody({
         tier,
         status,
         modules: tier === "regular" ? granted : null,
+        role_ids: roleIds,
         // Only send a password when the admin actually typed a new one.
         ...(newPassword.trim() ? { password: newPassword.trim() } : {}),
       }),
@@ -304,6 +315,20 @@ function ManageAccessBody({
           <p className="text-xs text-muted-foreground">Dashboard is always available.</p>
         </div>
       )}
+
+      {/* Roles */}
+      <div className="space-y-2">
+        <p className="label-eyebrow">Roles</p>
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+          {roles.map((r) => (
+            <label key={r.id} className="flex items-start gap-2 rounded-md border border-border p-2 text-sm hover:bg-secondary/40" title={r.desc}>
+              <Checkbox className="mt-0.5" checked={roleIds.includes(r.id)} onCheckedChange={() => toggleRole(r.id)} />
+              <span className="text-navy">{r.name}</span>
+            </label>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">An account can hold several roles. Only one account can be the Regional Director.</p>
+      </div>
 
       {/* Effective access preview */}
       <div className="space-y-2">
