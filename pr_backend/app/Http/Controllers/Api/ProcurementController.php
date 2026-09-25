@@ -157,7 +157,7 @@ class ProcurementController extends Controller
         ]);
     }
 
-    /** The designated routing signatories (Budget Officer, Regional Director). */
+    /** The designated routing signatories (Budget Officer, Regional Director, BAC Chair/Vice-Chair). */
     public function workflowSignatories(Request $request): JsonResponse
     {
         $me = $request->user()?->id;
@@ -172,6 +172,8 @@ class ProcurementController extends Controller
             'data' => [
                 'budgetOfficer' => $fmt($this->designatedBudgetOfficer(), 'Budget Officer'),
                 'regionalDirector' => $fmt($this->designatedRegionalDirector(), 'Regional Director'),
+                'bacChairman' => $fmt($this->designatedBacChair(), 'BAC Chairman'),
+                'bacViceChairman' => $fmt($this->designatedBacViceChair(), 'BAC Vice-Chairman'),
             ],
         ]);
     }

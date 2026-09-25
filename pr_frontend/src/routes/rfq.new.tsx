@@ -9,7 +9,8 @@ import { DatePickerField } from "@/components/app/date-picker-field";
 import { PersonPicker } from "@/components/app/person-picker";
 import { useSignatories } from "@/lib/signatories";
 import { formatLongDate } from "@/lib/date-format";
-import { apiGetPurchaseRequest, apiCreateRfq, type RfqCreatePayload } from "@/lib/api";
+import { apiGetPurchaseRequest, apiCreateRfq, apiGetWorkflowSignatories, type RfqCreatePayload, type Signatory } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
 import { fmtAmount, parseAmount } from "@/lib/lib-store";
 import { exportRfqExcel } from "@/lib/rfq-excel";
 import type { PurchaseRequest } from "@/lib/mock-data";
@@ -147,7 +148,7 @@ function CreateRfqPage() {
     prNo: "",
     procurementCategory: "Goods",
     openingDate: "",
-    bacChairman: "", // picked from accounts holding the BAC Chairman role (filled in when there is only one)
+    bacChairman: "", // filled in from the Settings-designated BAC Chairman once it loads
     bacChairmanTitle: "Chairman, Bids & Awards Committee",
     purpose: "",
     fundSource: "",
@@ -198,8 +199,20 @@ function CreateRfqPage() {
   }, [prId, navigate]);
 
   const set = <K extends keyof RfqFormDoc>(key: K, value: RfqFormDoc[K]) => setDoc((d) => ({ ...d, [key]: value }));
-  // Only accounts holding the BAC Chairman role (assigned in User Management) can be picked.
-  const { data: bacChairmen = [], isLoading: loadingChairmen } = useSignatories("BAC Chairman");
+  // Accounts holding the BAC Chairman role, plus whoever is designated BAC Chairman in Settings —
+  // so the field auto-fills from Settings even when no one has been given that role.
+  const { data: bacChairmenByRole = [], isLoading: loadingChairmen } = useSignatories("BAC Chairman");
+  const { data: workflowSignatories } = useQuery({
+    queryKey: ["workflow-signatories"],
+    queryFn: () => apiGetWorkflowSignatories(),
+    staleTime: 60_000,
+  });
+  const designatedBacChairman: Signatory | null = workflowSignatories?.bacChairman
+    ? { id: workflowSignatories.bacChairman.id, name: workflowSignatories.bacChairman.name, tier: "regular", position: workflowSignatories.bacChairman.position, roles: [] }
+    : null;
+  const bacChairmen = designatedBacChairman && !bacChairmenByRole.some((s) => s.id === designatedBacChairman.id)
+    ? [designatedBacChairman, ...bacChairmenByRole]
+    : bacChairmenByRole;
   const setItem = (id: string, patch: Partial<RfqFormItem>) =>
     setDoc((d) => ({ ...d, items: d.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) }));
   const removeItem = (id: string) =>
@@ -423,10 +436,13 @@ function CreateRfqPage() {
                       value={doc.bacChairman}
                       options={bacChairmen}
                       loading={loadingChairmen}
-                      onPick={(name) => set("bacChairman", name)}
+                      onPick={(name, person) => {
+                        set("bacChairman", name);
+                        if (person?.position) set("bacChairmanTitle", person.position);
+                      }}
                       autoPickSole
                       placeholder="Type the BAC Chairman's name…"
-                      emptyText="No account has the BAC Chairman role. A Superadmin can assign it in User Management."
+                      emptyText="No BAC Chairman is designated. A Superadmin can set one in Settings."
                       className="h-auto justify-start text-[11px] font-bold uppercase"
                     />
                   </p>

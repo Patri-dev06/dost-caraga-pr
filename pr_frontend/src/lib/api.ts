@@ -786,9 +786,11 @@ export type WorkflowSignatory = { id: number; name: string; position: string; is
 export type WorkflowSignatories = {
   budgetOfficer: WorkflowSignatory | null;
   regionalDirector: WorkflowSignatory | null;
+  bacChairman: WorkflowSignatory | null;
+  bacViceChairman: WorkflowSignatory | null;
 };
 
-/** The designated routing signatories (Budget Officer, Regional Director). */
+/** The designated routing signatories (Budget Officer, Regional Director, BAC Chair/Vice-Chair). */
 export async function apiGetWorkflowSignatories(): Promise<WorkflowSignatories> {
   const result = await request<{ data: WorkflowSignatories }>("/workflow-signatories");
   return result.data;
