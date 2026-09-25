@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, Copy, Eye, GripVertical, Loader2, Lock, Pencil, Plus, Printer, Save, Trash2, AlertTriangle, MessageSquare, ShieldCheck, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, Copy, Eye, FilePenLine, GripVertical, History, Loader2, Lock, Pencil, Plus, Printer, Save, Trash2, AlertTriangle, MessageSquare, ShieldCheck, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,7 +10,7 @@ import { apiGetSignatories, apiGetBudgetOfficer, apiGetWorkflowSignatories, type
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { currentLibBudgetTotal, getLib, listLibs, fmtAmount, parseAmount, type LibDoc } from "@/lib/lib-store";
-import { getPpmp, savePpmp, totalPpmpBudgetForLib, returnPpmpForRevision, approvePpmpAsBudgetOfficer, type PpmpItemRow, type PpmpStatus } from "@/lib/ppmp-store";
+import { getPpmp, savePpmpNow, totalPpmpBudgetForLib, returnPpmpForRevision, approvePpmpAsBudgetOfficer, revisePpmp, discardPpmpRevision, LOCKED_PPMP_STATUSES, type PpmpForLib, type PpmpItemRow, type PpmpStatus } from "@/lib/ppmp-store";
 import { useCurrentUser } from "@/lib/current-user";
 
 // The date the preparer acted, as "YYYY-MM-DD" (local), matching how saved dates
@@ -49,7 +49,11 @@ export const Route = createFileRoute("/planning/ppmp/new")({
       { name: "description", content: "Create a PPMP based on the approved Line Item Budget." },
     ],
   }),
-  component: CreatePpmpPage,
+  // Keyed by the document, so opening another version (e.g. a revision) starts the page afresh.
+  component: function CreatePpmpRoute() {
+    const { edit } = Route.useSearch();
+    return <CreatePpmpPage key={edit ?? "new"} />;
+  },
 });
 
 const SERIF = '"Times New Roman", Times, serif';
@@ -65,7 +69,6 @@ const PROCUREMENT_MODES = [
 ];
 const PRE_PROC_OPTIONS = ["No", "Yes"];
 const PPMP_EXCLUDED_LIB_LABELS = new Set(["Fuel Expenses", "Other Professional Services"]);
-const MAX_FINAL_PPMP_REVISIONS = 5;
 const BLANK_LINES_PER_CATEGORY = 2;
 
 function monthYearOptions(fiscalYear: string): string[] {
@@ -829,6 +832,11 @@ function CreatePpmpPage() {
   const [existingPpmpTotal, setExistingPpmpTotal] = useState(0);
   const [workflowStatus, setWorkflowStatus] = useState<PpmpStatus>("Draft");
   const [revisionCount, setRevisionCount] = useState(0);
+  // Revision links: the approved version this revises, the revision that replaced it, the one in progress.
+  const [revisionMeta, setRevisionMeta] = useState<Pick<PpmpForLib, "revisionOfId" | "revisionReason" | "supersededById" | "supersededByRevision" | "supersededAt" | "openRevision" | "changes">>({});
+  const [reviseDialogOpen, setReviseDialogOpen] = useState(false);
+  const [reviseReason, setReviseReason] = useState("");
+  const [revising, setRevising] = useState(false);
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [savingAction, setSavingAction] = useState<"draft" | "submit" | "approve" | null>(null);
   const [draggedCategoryId, setDraggedCategoryId] = useState<string | null>(null);
@@ -910,12 +918,22 @@ function CreatePpmpPage() {
     }
 
     setSelectedLib(lib);
-    setExistingPpmpTotal(Math.max(0, totalPpmpBudgetForLib(lib.id) - (existingPpmp?.totalBudget ?? 0)));
+    // Every other PPMP on this LIB — leaving out this one and, for a revision, the version it replaces.
+    setExistingPpmpTotal(totalPpmpBudgetForLib(lib.id, [existingPpmp?.id, existingPpmp?.revisionOfId]));
 
     if (existingPpmp) {
       setWorkflowStatus(existingPpmp.status);
       setRevisionCount(existingPpmp.revisionCount);
-      if (existingPpmp.status === "Approved") setMode("preview");
+      setRevisionMeta({
+        revisionOfId: existingPpmp.revisionOfId,
+        revisionReason: existingPpmp.revisionReason,
+        supersededById: existingPpmp.supersededById,
+        supersededByRevision: existingPpmp.supersededByRevision,
+        supersededAt: existingPpmp.supersededAt,
+        openRevision: existingPpmp.openRevision,
+        changes: existingPpmp.changes,
+      });
+      if (LOCKED_PPMP_STATUSES.includes(existingPpmp.status)) setMode("preview");
       setOwnerId(existingPpmp.ownerId);
       setReturnReasonMeta(existingPpmp.returnReason ?? "");
       setReviewComment(existingPpmp.reviewComment ?? "");
@@ -984,7 +1002,10 @@ function CreatePpmpPage() {
     );
   }, [budgetOfficer]);
 
-  const approvedLocked = workflowStatus === "Approved";
+  // With the Budget Officer, approved, or replaced: read-only. An approved PPMP changes only
+  // through "Revise PPMP"; a submitted one only once the Budget Officer returns it.
+  const locked = LOCKED_PPMP_STATUSES.includes(workflowStatus);
+  const isRevision = Boolean(revisionMeta.revisionOfId);
 
   // Review roles. The designated Budget Officer reviews any PPMP submitted to them;
   // the owner sees the officer's comments once it comes back Returned or Approved.
@@ -995,7 +1016,7 @@ function CreatePpmpPage() {
 
   // The Budget Officer reviews the read-only document (and comments in the panel),
   // so keep them out of edit mode on someone else's PPMP.
-  const editing = mode === "edit" && !approvedLocked && !isReviewMode;
+  const editing = mode === "edit" && !locked && !isReviewMode;
   useEffect(() => {
     if (isReviewMode) setMode("preview");
   }, [isReviewMode]);
@@ -1161,23 +1182,34 @@ function CreatePpmpPage() {
   const overBudget = remaining < 0;
   const usagePercent = libBudgetTotal > 0 ? Math.min(100, (totalUsed / libBudgetTotal) * 100) : 0;
 
-  function incrementPpmpNo(value: string): string {
-    const match = value.trim().match(/^(.*?)(\d+)(\D*)$/);
-    if (!match) return value.trim() ? `${value.trim()}-1` : "1";
-    return `${match[1]}${Number(match[2]) + 1}${match[3]}`;
+  /**
+   * "Revise PPMP": the owner states why, and the server starts Revision N as a new draft copy.
+   * The approved version stays in force for Purchase Requests until the revision is certified.
+   */
+  async function startRevision() {
+    if (!editId) return;
+    setRevising(true);
+    try {
+      const { message, revision } = await revisePpmp(editId, reviseReason.trim());
+      toast.success(message);
+      setReviseDialogOpen(false);
+      navigate({ to: "/planning/ppmp/new", search: { lib: revision.libId || libId, edit: revision.id } });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to start the revision.");
+    } finally {
+      setRevising(false);
+    }
   }
 
-  function startRevision() {
-    if (doc.documentType === "Final" && revisionCount >= MAX_FINAL_PPMP_REVISIONS) {
-      toast.error(`Final PPMP has reached the maximum of ${MAX_FINAL_PPMP_REVISIONS} revisions.`);
-      return;
+  async function discardRevision() {
+    if (!editId || !window.confirm("Discard this revision? The approved version stays as it is.")) return;
+    try {
+      await discardPpmpRevision(editId);
+      toast.success("Revision discarded. The approved version is unchanged.");
+      navigate({ to: "/planning/ppmp/new", search: { lib: libId, edit: revisionMeta.revisionOfId ?? undefined } });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to discard the revision.");
     }
-
-    setDoc((d) => ({ ...d, ppmpNo: incrementPpmpNo(d.ppmpNo) }));
-    setRevisionCount((count) => count + 1);
-    setWorkflowStatus("Draft");
-    setMode("edit");
-    toast.success("Revision started. PPMP No. has been incremented.");
   }
 
   // The reviewable line items (labelled) the Budget Officer can comment on.
@@ -1222,7 +1254,7 @@ function CreatePpmpPage() {
     }
   }
 
-  function persistPpmp(status: PpmpStatus) {
+  async function persistPpmp(status: PpmpStatus) {
     if (!selectedLib) return;
 
     const dataRows = doc.rows.filter(isProcurementRow);
@@ -1302,7 +1334,7 @@ function CreatePpmpPage() {
         }];
       });
 
-      savePpmp({
+      await savePpmpNow({
         id: existingPpmp?.id ?? `ppmp-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         libId: selectedLib.id,
         ppmpNo: doc.ppmpNo.trim(), // empty → server auto-assigns a unique PPMP number
@@ -1323,6 +1355,8 @@ function CreatePpmpPage() {
         formRows: doc.rows as unknown as Record<string, unknown>[],
         totalBudget: ppmpTotal,
         createdAt: existingPpmp?.createdAt ?? new Date().toISOString(),
+        ownerId: existingPpmp?.ownerId,
+        ownerName: existingPpmp?.ownerName,
       });
 
       setWorkflowStatus(status);
@@ -1331,15 +1365,18 @@ function CreatePpmpPage() {
           ? "PPMP saved as draft."
           : status === "Approved"
             ? "PPMP approved."
-            : "PPMP submitted to Budget Officer.",
+            : isRevision
+              ? `Revision ${revisionCount} submitted to the Budget Officer for re-certification.`
+              : "PPMP submitted to Budget Officer.",
       );
       if (status === "Approved") {
         setMode("preview");
       } else {
         navigate({ to: "/planning/ppmp" });
       }
-    } catch {
-      toast.error("Unable to save PPMP.");
+    } catch (error) {
+      // The server explains a refusal (e.g. a revision cutting budget that PRs already use).
+      toast.error(error instanceof Error ? error.message : "Unable to save PPMP.");
     } finally {
       setSavingAction(null);
     }
@@ -1369,13 +1406,21 @@ function CreatePpmpPage() {
           </Button>
 
           <span className="hidden rounded-md bg-secondary px-2 py-1 text-xs font-semibold text-secondary-foreground sm:inline">
-            {editId ? `${workflowStatus}${revisionCount > 0 ? ` · Rev ${revisionCount}` : ""}` : "New PPMP"}
+            {editId ? `${workflowStatus}${revisionCount > 0 ? ` · Revision ${revisionCount}` : ""}` : "New PPMP"}
           </span>
 
-          {approvedLocked ? (
-            // Once the Budget Officer certifies funds, the PPMP is final — no edits or revisions.
-            <span className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-success/40 bg-success/10 px-3 py-1.5 text-sm font-medium text-success">
-              <Lock className="h-3.5 w-3.5" /> Approved · Locked
+          {locked ? (
+            // Read-only: with the Budget Officer, certified, or replaced by a later revision.
+            <span
+              className={cn(
+                "ml-1 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium",
+                workflowStatus === "Approved" && "border-success/40 bg-success/10 text-success",
+                workflowStatus === "Submitted to Budget Officer" && "border-warning/40 bg-warning/10 text-warning-foreground",
+                workflowStatus === "Superseded" && "border-border bg-secondary text-muted-foreground",
+              )}
+            >
+              <Lock className="h-3.5 w-3.5" />
+              {workflowStatus === "Approved" ? "Approved · Locked" : workflowStatus === "Superseded" ? "Superseded · Record only" : isReviewMode ? "For your review" : "With Budget Officer · Locked"}
             </span>
           ) : (
             <div className="ml-1 flex rounded-lg border border-border bg-background p-0.5">
@@ -1430,15 +1475,35 @@ function CreatePpmpPage() {
                   Approve &amp; Certify
                 </Button>
               </>
-            ) : (
+            ) : workflowStatus === "Approved" && isOwner ? (
+              // The only way to change an approved PPMP: a revision that goes back for re-certification.
+              revisionMeta.openRevision ? (
+                <Button asChild size="sm" variant="outline" className="gap-1.5 border-border">
+                  <Link to="/planning/ppmp/new" search={{ lib: libId, edit: revisionMeta.openRevision.id }}>
+                    <History className="h-4 w-4" /> Open Revision {revisionMeta.openRevision.revisionCount}
+                  </Link>
+                </Button>
+              ) : (
+                <Button size="sm" className="gap-1.5" onClick={() => { setReviseReason(""); setReviseDialogOpen(true); }}>
+                  <FilePenLine className="h-4 w-4" /> Revise PPMP
+                </Button>
+              )
+            ) : locked ? null : (
               <>
-                <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => persistPpmp("Draft")} disabled={approvedLocked || savingAction !== null || overBudget || hasBudgetOverages}>
+                {isRevision && editId && (
+                  <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-destructive" onClick={discardRevision} disabled={savingAction !== null}>
+                    <Trash2 className="h-4 w-4" /> Discard revision
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => persistPpmp("Draft")} disabled={savingAction !== null || overBudget || hasBudgetOverages}>
                   {savingAction === "draft" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   Save Draft
                 </Button>
-                <Button size="sm" className="gap-1.5" onClick={() => persistPpmp("Submitted to Budget Officer")} disabled={approvedLocked || savingAction !== null || overBudget || hasBudgetOverages}>
+                <Button size="sm" className="gap-1.5" onClick={() => persistPpmp("Submitted to Budget Officer")} disabled={savingAction !== null || overBudget || hasBudgetOverages}>
                   {savingAction === "submit" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {workflowStatus === "Returned" ? "Resubmit to Budget Officer" : "Submit to Budget Officer"}
+                  {isRevision
+                    ? `${workflowStatus === "Returned" ? "Resubmit" : "Submit"} Revision ${revisionCount} for Certification`
+                    : workflowStatus === "Returned" ? "Resubmit to Budget Officer" : "Submit to Budget Officer"}
                 </Button>
               </>
             )}
@@ -1480,6 +1545,74 @@ function CreatePpmpPage() {
           )}
         </div>
       </div>
+
+      {/* Where this document stands among its versions: a revision, a replaced version, or one being revised */}
+      {editId && (isRevision || workflowStatus === "Superseded" || (workflowStatus === "Approved" && revisionMeta.openRevision) || (workflowStatus === "Submitted to Budget Officer" && !isReviewMode)) && (
+        <div className="no-print border-b border-border bg-secondary/30">
+          <div className="mx-auto w-full max-w-[1400px] space-y-3 px-3 py-4 sm:px-6">
+            {isRevision && (
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <History className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-navy">Revision {revisionCount} of PPMP {doc.ppmpNo}</p>
+                      {revisionMeta.revisionReason && <p className="mt-0.5 text-xs text-foreground">Reason: {revisionMeta.revisionReason}</p>}
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {workflowStatus === "Approved"
+                          ? "Certified. This revision replaced the earlier version, and Purchase Requests charged to it now draw on this revision."
+                          : "The approved version stays in effect for Purchase Requests until the Budget Officer certifies this revision. Budget that PRs already use cannot be cut."}
+                      </p>
+                    </div>
+                  </div>
+                  {revisionMeta.revisionOfId && (
+                    <Link to="/planning/ppmp/new" search={{ lib: libId, edit: revisionMeta.revisionOfId }} className="shrink-0 text-xs font-medium text-primary hover:underline">
+                      View the version it revises
+                    </Link>
+                  )}
+                </div>
+                {revisionMeta.changes && <RevisionChanges changes={revisionMeta.changes} />}
+              </div>
+            )}
+            {workflowStatus === "Superseded" && (
+              <div className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border bg-background p-3">
+                <div className="flex items-start gap-2">
+                  <History className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-semibold text-navy">
+                      Replaced by Revision {revisionMeta.supersededByRevision ?? ""}
+                      {revisionMeta.supersededAt ? ` on ${new Date(revisionMeta.supersededAt).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })}` : ""}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">This version is kept as a record and can no longer be changed or charged.</p>
+                  </div>
+                </div>
+                {revisionMeta.supersededById && (
+                  <Link to="/planning/ppmp/new" search={{ lib: libId, edit: revisionMeta.supersededById }} className="text-xs font-medium text-primary hover:underline">
+                    Open the current version
+                  </Link>
+                )}
+              </div>
+            )}
+            {workflowStatus === "Approved" && revisionMeta.openRevision && (
+              <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3">
+                <History className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
+                <p className="text-sm text-foreground">
+                  <span className="font-semibold">Revision {revisionMeta.openRevision.revisionCount} is in progress</span> ({revisionMeta.openRevision.status}).
+                  This approved version stays in effect until the Budget Officer certifies it.
+                </p>
+              </div>
+            )}
+            {workflowStatus === "Submitted to Budget Officer" && !isReviewMode && (
+              <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0 text-warning-foreground" />
+                <p className="text-sm text-foreground">
+                  Submitted to the Budget Officer for certification, so it is locked while under review. If they return it, you can edit and resubmit.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Budget Officer review / feedback panel */}
       {showBudgetOfficerComments && (
@@ -2141,6 +2274,44 @@ function CreatePpmpPage() {
         </div>
       </div>
 
+      {/* Revise an approved PPMP (owner) */}
+      <Dialog open={reviseDialogOpen} onOpenChange={(open) => !revising && setReviseDialogOpen(open)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Revise PPMP {doc.ppmpNo}</DialogTitle>
+            <DialogDescription>
+              This starts Revision {revisionCount + 1}, a copy of the approved PPMP for you to change.
+            </DialogDescription>
+          </DialogHeader>
+          <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
+            <li>State why the approved PPMP needs to change. The Budget Officer sees this reason.</li>
+            <li>Edit the revision, then submit it to the Budget Officer for re-certification.</li>
+            <li>Until it is certified, this approved version stays in effect and PRs keep charging it.</li>
+            <li>Once certified, the revision replaces this version, and PRs charged to it move to the revision. Budget that PRs already use cannot be cut.</li>
+          </ol>
+          <div className="space-y-1.5">
+            <label className="label-eyebrow" htmlFor="revise-reason">Reason for revision</label>
+            <Textarea
+              id="revise-reason"
+              rows={4}
+              value={reviseReason}
+              onChange={(e) => setReviseReason(e.target.value)}
+              placeholder="e.g. Two more kiosk units were approved for the project, so the Mini PC line needs a higher quantity and budget."
+              className="border-border bg-background"
+              maxLength={2000}
+            />
+            <p className="text-[11px] text-muted-foreground">At least 10 characters.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReviseDialogOpen(false)} disabled={revising}>Cancel</Button>
+            <Button onClick={startRevision} disabled={revising || reviseReason.trim().length < 10} className="gap-1.5">
+              {revising ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePenLine className="h-4 w-4" />}
+              Start Revision {revisionCount + 1}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Return-for-revision dialog (Budget Officer) */}
       <Dialog open={returnDialogOpen} onOpenChange={(v) => !v && setReturnDialogOpen(false)}>
         <DialogContent className="max-w-lg">
@@ -2279,6 +2450,47 @@ function Signatory({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** What a revision changes against the approved version: totals, then line by line. */
+function RevisionChanges({ changes }: { changes: NonNullable<PpmpForLib["changes"]> }) {
+  const delta = changes.totalAfter - changes.totalBefore;
+  const none = changes.added.length + changes.removed.length + changes.changed.length === 0;
+  return (
+    <div className="mt-3 border-t border-primary/20 pt-3 text-xs">
+      <p className="font-semibold text-navy">
+        Changes from the approved version: ₱{fmtAmount(changes.totalBefore)} → ₱{fmtAmount(changes.totalAfter)}{" "}
+        <span className={cn(delta > 0 ? "text-warning-foreground" : delta < 0 ? "text-success" : "text-muted-foreground")}>
+          ({delta >= 0 ? "+" : "−"}₱{fmtAmount(Math.abs(delta))})
+        </span>
+      </p>
+      {none ? (
+        <p className="mt-1 text-muted-foreground">No line has changed yet.</p>
+      ) : (
+        <ul className="mt-1.5 space-y-1">
+          {changes.changed.map((c) => (
+            <li key={`c-${c.id}`}>
+              <span className="mr-1.5 rounded bg-primary/10 px-1 font-semibold text-primary">Changed</span>
+              {c.name}: ₱{fmtAmount(c.budgetBefore)} → ₱{fmtAmount(c.budgetAfter)}
+              {c.quantityBefore !== c.quantityAfter && <span className="text-muted-foreground"> · qty {c.quantityBefore} → {c.quantityAfter}</span>}
+            </li>
+          ))}
+          {changes.added.map((c) => (
+            <li key={`a-${c.id}`}>
+              <span className="mr-1.5 rounded bg-success/15 px-1 font-semibold text-success">Added</span>
+              {c.name}: ₱{fmtAmount(c.budget)}
+            </li>
+          ))}
+          {changes.removed.map((c) => (
+            <li key={`r-${c.id}`}>
+              <span className="mr-1.5 rounded bg-destructive/10 px-1 font-semibold text-destructive">Removed</span>
+              {c.name}: ₱{fmtAmount(c.budget)}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

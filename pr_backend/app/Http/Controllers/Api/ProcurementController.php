@@ -33,6 +33,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class ProcurementController extends Controller
@@ -648,7 +649,7 @@ class ProcurementController extends Controller
     {
         $this->guardModule('ppmp');
 
-        $query = PpmpDocument::with('items')->whereNotNull('client_uid')->latest('created_at');
+        $query = PpmpDocument::with(['items', 'libDocument', 'revisionOf.items', 'supersededBy', 'openRevision'])->whereNotNull('client_uid')->latest('created_at');
         $this->scopePpmpVisibility($query);
 
         if ($request->query('lib_id')) {
@@ -731,8 +732,7 @@ class ProcurementController extends Controller
             $document = PpmpDocument::firstOrNew(['client_uid' => $uid]);
             if ($document->exists) {
                 $this->abortUnlessOwned($document->owner_id);
-                // Once the Budget Officer certifies funds, the PPMP is final and locked.
-                abort_if($document->status === 'Approved', 422, 'This PPMP has been approved by the Budget Officer and can no longer be revised.');
+                $this->abortIfPpmpLocked($document);
             }
 
             // Fire a notification only on the transition INTO "Submitted to Budget Officer".
@@ -750,9 +750,10 @@ class ProcurementController extends Controller
                 'project_id' => $document->project_id ?? $this->defaultPlanningProjectId(),
                 'lib_document_id' => $lib?->id,
                 // Auto-assign a unique PPMP number on first save; never overwrite an assigned one.
-                'ppmp_no' => $document->ppmp_no ?: ($data['ppmpNo'] ?: $this->nextPpmpNo((int) $data['fiscalYear'])),
+                'ppmp_no' => $document->ppmp_no ?: (($data['ppmpNo'] ?? null) ?: $this->nextPpmpNo((int) $data['fiscalYear'])),
                 'status' => $data['status'],
-                'revision_count' => $data['revisionCount'] ?? 0,
+                // Server-owned: 0 for an original PPMP, N for its Nth revision (set by "Revise PPMP").
+                'revision_count' => $document->exists ? $document->revision_count : 0,
                 'fiscal_year' => $data['fiscalYear'],
                 'end_user_unit' => $data['endUserUnit'] ?? null,
                 'document_type' => $data['documentType'],
@@ -817,15 +818,26 @@ class ProcurementController extends Controller
                 ]);
             }
 
+            // A revision may not take away budget that live PRs have already drawn from the
+            // approved version — checked when it goes to the Budget Officer (and again on approval).
+            if ($justSubmitted && $document->revision_of_id) {
+                $this->abortIfRevisionUndercutsPrs($document);
+            }
+
             return [$document->fresh('items'), $justSubmitted];
         });
 
         if ($justSubmitted && $document->budget_officer_id) {
+            $isRevision = $document->revision_of_id !== null;
             $this->notify(
                 $document->budgetOfficer,
                 'ppmp_submitted',
-                "PPMP {$document->ppmp_no} submitted for fund certification",
-                ($document->owner_name ?: 'A requester').' submitted a PPMP for your review.',
+                $isRevision
+                    ? "PPMP {$document->ppmp_no} Revision {$document->revision_count} submitted for re-certification"
+                    : "PPMP {$document->ppmp_no} submitted for fund certification",
+                ($document->owner_name ?: 'A requester').($isRevision
+                    ? ' revised an approved PPMP. Reason: '.$document->revision_reason
+                    : ' submitted a PPMP for your review.'),
                 $this->ppmpLink($document),
                 ['ppmpId' => $document->client_uid, 'libId' => $document->libDocument?->client_uid],
             );
@@ -835,6 +847,9 @@ class ProcurementController extends Controller
 
         return response()->json(['data' => $this->formatPlanningPpmp($document)], $clientUid ? 200 : 201);
     }
+
+    /** How many times a Final PPMP may be revised after approval. */
+    private const MAX_FINAL_PPMP_REVISIONS = 5;
 
     public function planningPpmpReturn(Request $request, string $clientUid): JsonResponse
     {
@@ -870,6 +885,8 @@ class ProcurementController extends Controller
             'Only the designated Budget Officer can review this PPMP.',
         );
 
+        abort_unless($document->status === 'Submitted to Budget Officer', 422, 'Only a PPMP submitted to the Budget Officer can be reviewed.');
+
         if ($action === 'return') {
             abort_if(trim((string) ($data['returnReason'] ?? '')) === '', 422, 'A reason is required when returning a PPMP.');
         } else {
@@ -902,11 +919,19 @@ class ProcurementController extends Controller
                     'budget_officer_comment' => $data['reviewComment'] ?? $document->budget_officer_comment,
                     'return_reason' => $data['returnReason'] ?? null,
                     'reviewed_at' => now(),
-                    'revision_count' => (int) $document->revision_count + 1,
                 ]);
             }
 
             $document->save();
+
+            // A certified revision replaces the version it revises: that version is superseded, and
+            // every PR charged to it now draws on the revision (which still covers what they use).
+            if ($action === 'approve' && $document->revision_of_id) {
+                $this->abortIfRevisionUndercutsPrs($document);
+                $previous = $document->revisionOf;
+                $previous->forceFill(['status' => 'Superseded', 'superseded_at' => now(), 'superseded_by_id' => $document->id])->save();
+                PurchaseRequest::where('ppmp_document_id', $previous->id)->update(['ppmp_document_id' => $document->id]);
+            }
 
             // Once approved, roll this PPMP's items up into the year's consolidated APP.
             if ($action === 'approve' && $document->fiscal_year) {
@@ -922,17 +947,19 @@ class ProcurementController extends Controller
                 $document->owner,
                 $isApprove ? 'ppmp_approved' : 'ppmp_returned',
                 $isApprove
-                    ? "PPMP {$document->ppmp_no} approved"
+                    ? "PPMP {$document->ppmp_no}".($document->revision_of_id ? " Revision {$document->revision_count}" : '').' approved'
                     : "PPMP {$document->ppmp_no} returned for revision",
                 $isApprove
-                    ? ($document->budget_officer_name ?: 'The Budget Officer').' certified fund availability. You can now create a Purchase Request against it.'
+                    ? ($document->budget_officer_name ?: 'The Budget Officer').' certified fund availability. '.($document->revision_of_id
+                        ? 'This revision now replaces the earlier version, and PRs charged to it draw on the revision.'
+                        : 'You can now create a Purchase Request against it.')
                     : ($document->return_reason ?: 'Please review the Budget Officer\'s comments and resubmit.'),
                 $this->ppmpLink($document),
                 ['ppmpId' => $document->client_uid, 'libId' => $document->libDocument?->client_uid],
             );
         }
 
-        $this->audit($request, 'PPMP', $action === 'approve' ? 'Approved PPMP (Budget Officer)' : 'Returned PPMP (Budget Officer)', $document->client_uid);
+        $this->audit($request, 'PPMP', $action === 'approve' ? ($document->revision_of_id ? 'Approved PPMP revision (Budget Officer)' : 'Approved PPMP (Budget Officer)') : 'Returned PPMP (Budget Officer)', $document->client_uid);
 
         return response()->json(['data' => $this->formatPlanningPpmp($document)]);
     }
@@ -1017,9 +1044,111 @@ class ProcurementController extends Controller
         $this->guardModule('ppmp');
         $document = PpmpDocument::where('client_uid', $clientUid)->firstOrFail();
         $this->abortUnlessOwned($document->owner_id);
+        // An approved (or replaced) PPMP is a certified record: it is revised, never deleted.
+        abort_if(in_array($document->status, PpmpDocument::LOCKED_STATUSES, true), 422, match ($document->status) {
+            'Approved' => 'An approved PPMP cannot be deleted. Use Revise PPMP to change it.',
+            'Submitted to Budget Officer' => 'This PPMP is with the Budget Officer and cannot be deleted.',
+            default => 'This PPMP version was replaced by a revision and is kept as a record.',
+        });
+        abort_if(PurchaseRequest::where('ppmp_document_id', $document->id)->exists(), 422, 'Purchase Requests are charged to this PPMP, so it cannot be deleted.');
         $document->delete();
 
-        return response()->json(['message' => 'PPMP document removed.']);
+        return response()->json(['message' => $document->revision_of_id ? 'PPMP revision discarded.' : 'PPMP document removed.']);
+    }
+
+    /**
+     * Starts a revision of an approved PPMP (the owner's "Revise PPMP"). The standard protocol:
+     * the owner states why; the revision is a new draft copy of the approved version, numbered
+     * Revision N, that goes back to the Budget Officer for re-certification. The approved version
+     * stays in force — PRs keep charging it — until the revision is certified and replaces it.
+     */
+    public function planningPpmpRevise(Request $request, string $clientUid): JsonResponse
+    {
+        $this->guardModule('ppmp');
+        $data = $request->validate(['reason' => ['required', 'string', 'min:10', 'max:2000']]);
+
+        $document = PpmpDocument::with(['items', 'openRevision'])->where('client_uid', $clientUid)->firstOrFail();
+        $this->abortUnlessOwned($document->owner_id);
+        abort_unless($document->status === 'Approved', 422, 'Only an approved PPMP can be revised.');
+        abort_if($document->openRevision !== null, 422, "Revision {$document->openRevision?->revision_count} of this PPMP is already in progress. Finish or discard it first.");
+        abort_if(
+            $document->document_type === 'Final' && $document->revision_count >= self::MAX_FINAL_PPMP_REVISIONS,
+            422,
+            'A Final PPMP can be revised at most '.self::MAX_FINAL_PPMP_REVISIONS.' times.',
+        );
+
+        $revision = DB::transaction(function () use ($document, $data): PpmpDocument {
+            $revision = $document->replicate([
+                'client_uid', 'status', 'submitted_at', 'reviewed_at', 'budget_officer_comment', 'return_reason',
+                'budget_certified_date', 'approved_by_id', 'approved_by_name', 'approved_at', 'approval_signature',
+                'superseded_at', 'superseded_by_id',
+            ]);
+            $revision->fill([
+                'client_uid' => 'ppmp-'.Str::uuid(),
+                'status' => 'Draft',
+                'revision_count' => (int) $document->revision_count + 1,
+                'revision_of_id' => $document->id,
+                'revision_reason' => trim($data['reason']),
+            ])->save();
+
+            // Same line ids as the approved version, so the Budget Officer sees exactly what changed.
+            foreach ($document->items as $item) {
+                $copy = $item->replicate(['reviewer_comment']);
+                $copy->ppmp_document_id = $revision->id;
+                $copy->save();
+            }
+
+            return $revision->fresh('items');
+        });
+
+        $this->audit($request, 'PPMP', "Started PPMP revision {$revision->revision_count}", $document->client_uid);
+
+        return response()->json([
+            'message' => "Revision {$revision->revision_count} started. The approved version stays in effect until the Budget Officer certifies this revision.",
+            'data' => $this->formatPlanningPpmp($revision),
+        ], 201);
+    }
+
+    /** Refuses changes to a PPMP that is with the Budget Officer, approved, or superseded. */
+    private function abortIfPpmpLocked(PpmpDocument $document): void
+    {
+        abort_if(in_array($document->status, PpmpDocument::LOCKED_STATUSES, true), 422, match ($document->status) {
+            'Submitted to Budget Officer' => 'This PPMP is with the Budget Officer for certification and cannot be edited. It can be changed again if they return it.',
+            'Approved' => 'This PPMP is approved and locked. Use Revise PPMP to propose changes; they take effect once the Budget Officer certifies the revision.',
+            default => 'This PPMP version was replaced by a later revision and can no longer be changed.',
+        });
+    }
+
+    /**
+     * A revision may not give an item less budget than live PRs charged to the approved version
+     * have already drawn from it — those PRs move to the revision once it is certified.
+     */
+    private function abortIfRevisionUndercutsPrs(PpmpDocument $revision): void
+    {
+        $revision->loadMissing('items');
+        $used = PurchaseRequestItem::query()
+            ->whereHas('purchaseRequest', fn (Builder $q) => $q
+                ->where('ppmp_document_id', $revision->revision_of_id)
+                ->whereNotIn('status', PurchaseRequest::RELEASED_STATUSES))
+            ->get()
+            ->groupBy(fn (PurchaseRequestItem $item) => $item->procurement_item_id ? 'id:'.$item->procurement_item_id : 'name:'.mb_strtolower(trim((string) $item->name)));
+
+        $shortfalls = [];
+        foreach ($used as $items) {
+            $first = $items->first();
+            $spent = (float) $items->sum(fn (PurchaseRequestItem $item) => (float) $item->quantity * (float) $item->unit_cost);
+            $name = mb_strtolower(trim((string) $first->name));
+            $budget = (float) $revision->items
+                ->filter(fn (PpmpItem $line) => ($first->procurement_item_id && $line->procurement_item_id === $first->procurement_item_id)
+                    || mb_strtolower(trim((string) $line->item_name)) === $name)
+                ->sum('estimated_budget');
+
+            if ($budget + 0.005 < $spent) {
+                $shortfalls[] = "{$first->name}: PRs already use ₱".number_format($spent, 2).', but the revision gives it ₱'.number_format($budget, 2);
+            }
+        }
+
+        abort_if($shortfalls !== [], 422, 'The revision cuts budget that Purchase Requests already use. '.implode('; ', $shortfalls).'.');
     }
 
     public function store(Request $request): JsonResponse
@@ -1465,7 +1594,7 @@ class ProcurementController extends Controller
 
     private function formatPlanningPpmp(PpmpDocument $document): array
     {
-        $document->loadMissing(['items', 'libDocument']);
+        $document->loadMissing(['items', 'libDocument', 'revisionOf.items', 'supersededBy', 'openRevision']);
 
         return [
             'id' => $document->client_uid,
@@ -1519,7 +1648,53 @@ class ProcurementController extends Controller
             'approvedByName' => $document->approved_by_name ?? '',
             'approvedAt' => $document->approved_at?->toISOString(),
             'approvalSignature' => $document->approval_signature ?? '',
+            // Revisions: which approved version this revises and why; which revision replaced it;
+            // the revision still in progress; and, for a revision, what it changes.
+            'revisionOfId' => $document->revisionOf?->client_uid,
+            'revisionReason' => $document->revision_reason ?? '',
+            'supersededById' => $document->supersededBy?->client_uid,
+            'supersededByRevision' => $document->supersededBy?->revision_count,
+            'supersededAt' => $document->superseded_at?->toISOString(),
+            'openRevision' => $document->openRevision ? [
+                'id' => $document->openRevision->client_uid,
+                'status' => $document->openRevision->status,
+                'revisionCount' => $document->openRevision->revision_count,
+            ] : null,
+            'changes' => $document->revisionOf ? $this->ppmpRevisionChanges($document->revisionOf, $document) : null,
             'createdAt' => $document->created_at?->toISOString(),
+        ];
+    }
+
+    /**
+     * What a revision changes against the approved version, line by line (lines keep their ids
+     * across a revision): added, removed, and changed budget or quantity, plus both totals.
+     *
+     * @return array<string, mixed>
+     */
+    private function ppmpRevisionChanges(PpmpDocument $before, PpmpDocument $after): array
+    {
+        $old = $before->items->keyBy(fn (PpmpItem $i) => $i->client_uid ?? 'id:'.$i->id);
+        $new = $after->items->keyBy(fn (PpmpItem $i) => $i->client_uid ?? 'id:'.$i->id);
+        $line = fn (PpmpItem $i) => ['id' => $i->client_uid, 'name' => $i->item_name, 'budget' => (float) $i->estimated_budget, 'quantity' => (float) $i->quantity];
+
+        $changed = [];
+        foreach ($new->intersectByKeys($old) as $key => $item) {
+            $was = $old[$key];
+            if (abs((float) $was->estimated_budget - (float) $item->estimated_budget) > 0.005 || abs((float) $was->quantity - (float) $item->quantity) > 0.0001) {
+                $changed[] = [
+                    'id' => $item->client_uid, 'name' => $item->item_name,
+                    'budgetBefore' => (float) $was->estimated_budget, 'budgetAfter' => (float) $item->estimated_budget,
+                    'quantityBefore' => (float) $was->quantity, 'quantityAfter' => (float) $item->quantity,
+                ];
+            }
+        }
+
+        return [
+            'totalBefore' => (float) $before->items->sum('estimated_budget'),
+            'totalAfter' => (float) $after->items->sum('estimated_budget'),
+            'added' => $new->diffKeys($old)->map($line)->values()->all(),
+            'removed' => $old->diffKeys($new)->map($line)->values()->all(),
+            'changed' => $changed,
         ];
     }
 

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class PpmpDocument extends Model
 {
@@ -43,7 +44,17 @@ class PpmpDocument extends Model
         'approved_by_name',
         'approved_at',
         'approval_signature',
+        'revision_of_id',
+        'revision_reason',
+        'superseded_at',
+        'superseded_by_id',
     ];
+
+    /** A PPMP in these states is not open to editing: it is with the Budget Officer, or certified. */
+    public const LOCKED_STATUSES = ['Submitted to Budget Officer', 'Approved', 'Superseded'];
+
+    /** A revision still being worked on — only one may be open per approved PPMP. */
+    public const OPEN_REVISION_STATUSES = ['Draft', 'Submitted to Budget Officer', 'Returned'];
 
     protected function casts(): array
     {
@@ -59,6 +70,7 @@ class PpmpDocument extends Model
             'submitted_at' => 'datetime',
             'reviewed_at' => 'datetime',
             'approved_at' => 'datetime',
+            'superseded_at' => 'datetime',
         ];
     }
 
@@ -95,5 +107,29 @@ class PpmpDocument extends Model
     public function items(): HasMany
     {
         return $this->hasMany(PpmpItem::class);
+    }
+
+    /** The approved version this document revises (null for an original PPMP). */
+    public function revisionOf(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'revision_of_id');
+    }
+
+    /** The revision that replaced this version once it was certified. */
+    public function supersededBy(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'superseded_by_id');
+    }
+
+    public function revisions(): HasMany
+    {
+        return $this->hasMany(self::class, 'revision_of_id');
+    }
+
+    /** The revision of this PPMP still in progress (Draft, with the Budget Officer, or returned), if any. */
+    public function openRevision(): HasOne
+    {
+        return $this->hasOne(self::class, 'revision_of_id')
+            ->ofMany(['id' => 'max'], fn ($query) => $query->whereIn('status', self::OPEN_REVISION_STATUSES));
     }
 }

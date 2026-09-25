@@ -5,6 +5,7 @@ import {
   apiGetPlanningPpmps,
   apiGetPlanningPpmpsPage,
   apiReturnPlanningPpmp,
+  apiRevisePlanningPpmp,
   apiUpsertPlanningPpmp,
   getCurrentUser,
   type PpmpReviewPayload,
@@ -39,7 +40,20 @@ export type PpmpStatus =
   | "Submitted to Budget Officer"
   | "Budget Officer Checked"
   | "Returned"
-  | "Approved";
+  | "Approved"
+  | "Superseded"; // an approved version replaced by a certified revision — kept as a record
+
+/** A PPMP in these states cannot be edited: it is with the Budget Officer, or certified. */
+export const LOCKED_PPMP_STATUSES: PpmpStatus[] = ["Submitted to Budget Officer", "Approved", "Superseded"];
+
+/** What a revision changes against the approved version it revises. */
+export interface PpmpRevisionChanges {
+  totalBefore: number;
+  totalAfter: number;
+  added: { id: string; name: string; budget: number; quantity: number }[];
+  removed: { id: string; name: string; budget: number; quantity: number }[];
+  changed: { id: string; name: string; budgetBefore: number; budgetAfter: number; quantityBefore: number; quantityAfter: number }[];
+}
 
 export interface PpmpForLib {
   id: string;
@@ -71,6 +85,16 @@ export interface PpmpForLib {
   approvalSignature?: string; // PNPKI / e-signature text (placeholder until PNPKI is wired)
   submittedAt?: string;
   createdAt: string;
+  /** Revision N of an approved PPMP: the version it revises, and the owner's justification. */
+  revisionOfId?: string | null;
+  revisionReason?: string;
+  /** Set once a certified revision replaced this version. */
+  supersededById?: string | null;
+  supersededByRevision?: number | null;
+  supersededAt?: string | null;
+  /** The revision of this approved PPMP still in progress, if any. */
+  openRevision?: { id: string; status: PpmpStatus; revisionCount: number } | null;
+  changes?: PpmpRevisionChanges | null;
 }
 
 const KEY = "dost_ppmps";
@@ -92,6 +116,7 @@ export function migratePpmp(doc: Record<string, unknown>): PpmpForLib {
     status === "Budget Officer Checked" ||
     status === "Returned" ||
     status === "Approved" ||
+    status === "Superseded" ||
     status === "Draft"
       ? status
       : "Draft";
@@ -179,11 +204,50 @@ export async function returnPpmpForRevision(id: string, payload: PpmpReviewPaylo
 export async function approvePpmpAsBudgetOfficer(id: string, payload: PpmpReviewPayload): Promise<PpmpForLib> {
   const doc = migratePpmp((await apiApprovePlanningPpmp<PpmpForLib>(id, payload)) as unknown as Record<string, unknown>);
   mergePpmp(doc);
+  // A certified revision replaces the version it revised.
+  const previous = doc.revisionOfId ? read().find((p) => p.id === doc.revisionOfId) : undefined;
+  if (previous) mergePpmp({ ...previous, status: "Superseded", supersededById: doc.id, supersededByRevision: doc.revisionCount, openRevision: null });
   return doc;
 }
 
-export function totalPpmpBudgetForLib(libId: string): number {
-  return listPpmpsForLib(libId).reduce((sum, p) => sum + p.totalBudget, 0);
+/**
+ * What a LIB's PPMPs draw on it. A superseded version no longer counts (its revision does), and a
+ * revision still in progress does not count yet (the approved version it revises still does).
+ * `except` leaves out given documents — the one being edited, and the version it revises.
+ */
+export function totalPpmpBudgetForLib(libId: string, except: (string | null | undefined)[] = []): number {
+  return listPpmpsForLib(libId)
+    .filter((p) => p.status !== "Superseded" && !(p.revisionOfId && p.status !== "Approved") && !except.includes(p.id))
+    .reduce((sum, p) => sum + p.totalBudget, 0);
+}
+
+/** Saves a PPMP and waits for the server, so a refused save (e.g. a locked PPMP) surfaces its reason. */
+export async function savePpmpNow(doc: PpmpForLib): Promise<PpmpForLib> {
+  const me = getCurrentUser();
+  const stamped: PpmpForLib = { ...doc, ownerId: doc.ownerId ?? me?.id, ownerName: doc.ownerName ?? me?.name };
+  const saved = migratePpmp((await apiUpsertPlanningPpmp<PpmpForLib>(stamped)) as unknown as Record<string, unknown>);
+  mergePpmp(saved);
+  return saved;
+}
+
+/** Starts Revision N of an approved PPMP (the owner's "Revise PPMP"); returns the new draft. */
+export async function revisePpmp(id: string, reason: string): Promise<{ message: string; revision: PpmpForLib }> {
+  const { message, data } = await apiRevisePlanningPpmp<PpmpForLib>(id, reason);
+  const revision = migratePpmp(data as unknown as Record<string, unknown>);
+  mergePpmp(revision);
+  // The approved version now has a revision in progress.
+  const original = read().find((p) => p.id === id);
+  if (original) mergePpmp({ ...original, openRevision: { id: revision.id, status: revision.status, revisionCount: revision.revisionCount } });
+  return { message, revision };
+}
+
+/** Discards a draft or returned revision (the approved version stays as it is). */
+export async function discardPpmpRevision(id: string): Promise<void> {
+  const revision = read().find((p) => p.id === id);
+  await apiDeletePlanningPpmp(id);
+  write(read().filter((p) => p.id !== id));
+  const original = revision?.revisionOfId ? read().find((p) => p.id === revision.revisionOfId) : undefined;
+  if (original) mergePpmp({ ...original, openRevision: null });
 }
 
 /** The PPMP list, one page at a time (never the whole table) — used by the PPMP list page's own

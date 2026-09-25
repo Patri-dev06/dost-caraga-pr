@@ -936,6 +936,11 @@ export async function apiUpsertPlanningPpmp<T = unknown>(payload: T & { id?: str
   return result.data;
 }
 
+/** Starts a revision of an approved PPMP; returns the new draft revision. */
+export async function apiRevisePlanningPpmp<T = unknown>(id: string, reason: string): Promise<{ message: string; data: T }> {
+  return request<{ message: string; data: T }>(`/planning-ppmps/${encodeURIComponent(id)}/revise`, { method: "POST", body: { reason } });
+}
+
 export async function apiDeletePlanningPpmp(id: string): Promise<void> {
   await request<{ message: string }>(`/planning-ppmps/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

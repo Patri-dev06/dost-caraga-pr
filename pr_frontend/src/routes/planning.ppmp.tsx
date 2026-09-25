@@ -69,6 +69,7 @@ function PpmpListPage() {
       status === "Budget Officer Checked" && "bg-primary/15 text-primary",
       status === "Returned" && "bg-amber-500/15 text-amber-600 dark:text-amber-300",
       status === "Approved" && "bg-success/15 text-success",
+      status === "Superseded" && "bg-secondary text-muted-foreground line-through decoration-muted-foreground/40",
     );
 
   return (
@@ -102,7 +103,7 @@ function PpmpListPage() {
                 <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-navy">
-                    PPMP {ppmp.ppmpNo} · {ppmp.ownerName ?? "Requester"}
+                    PPMP {ppmp.ppmpNo}{ppmp.revisionOfId ? ` · Revision ${ppmp.revisionCount}` : ""} · {ppmp.ownerName ?? "Requester"}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {ppmp.endUserUnit} · FY {ppmp.fiscalYear} · {ppmp.rows.length} items
@@ -235,7 +236,7 @@ function PpmpListPage() {
                     {ppmps.map((ppmp) => (
                       <div
                         key={ppmp.id}
-                        className="flex w-full items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40"
+                        className={cn("flex w-full items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40", ppmp.status === "Superseded" && "opacity-60")}
                       >
                         <Link
                           to="/planning/ppmp/new"
@@ -249,7 +250,8 @@ function PpmpListPage() {
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {ppmp.endUserUnit} · FY {ppmp.fiscalYear} · {ppmp.documentType}
-                              {ppmp.revisionCount > 0 ? ` · Rev ${ppmp.revisionCount}` : ""} · {ppmp.rows.length} items
+                              {ppmp.revisionCount > 0 ? ` · Revision ${ppmp.revisionCount}` : ""} · {ppmp.rows.length} items
+                              {ppmp.status === "Approved" && ppmp.openRevision ? ` · Revision ${ppmp.openRevision.revisionCount} in progress` : ""}
                             </p>
                           </div>
                           <span className={ppmpStatusClass(ppmp.status)}>

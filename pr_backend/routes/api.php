@@ -52,6 +52,8 @@ Route::prefix('v1')->group(function (): void {
         Route::put('/planning-ppmps/{clientUid}', [ProcurementController::class, 'planningPpmpStore']);
         Route::post('/planning-ppmps/{clientUid}/return', [ProcurementController::class, 'planningPpmpReturn']);
         Route::post('/planning-ppmps/{clientUid}/approve', [ProcurementController::class, 'planningPpmpApprove']);
+        // Revise an approved PPMP: a new draft revision that goes back for re-certification.
+        Route::post('/planning-ppmps/{clientUid}/revise', [ProcurementController::class, 'planningPpmpRevise']);
         Route::delete('/planning-ppmps/{clientUid}', [ProcurementController::class, 'planningPpmpDestroy']);
 
         foreach (['users', 'roles', 'offices', 'fund-sources', 'projects', 'procurement-items'] as $resource) {
