@@ -18,6 +18,9 @@ class PurchaseRequest extends Model
         'project_id',
         'ppmp_document_id',
         'requested_by',
+        'recommending_officer_id',
+        'recommending_designation',
+        'approving_designation',
         'mode_of_procurement',
         'purpose',
         'status',
@@ -162,6 +165,34 @@ class PurchaseRequest extends Model
     public function requester(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    /** The recommending officer this PR is routed to: only they are notified and may recommend it. */
+    public function recommendingOfficer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'recommending_officer_id');
+    }
+
+    /**
+     * PRs waiting on this user's signature: to recommend (routed to them, or — for an older PR with
+     * no named officer — any Recommender), or, for the Regional Director, to approve.
+     */
+    public function scopeAwaitingActionBy(Builder $query, ?User $user, ?int $regionalDirectorId): Builder
+    {
+        if ($user?->tier === 'superadmin') {
+            return $query->whereIn('status', ['For Recommendation', 'For Approval']);
+        }
+
+        $isRecommender = $user !== null && $user->roles->contains('name', 'Recommender');
+
+        return $query->where(function (Builder $q) use ($user, $isRecommender, $regionalDirectorId): void {
+            $q->where(fn (Builder $r) => $r->where('status', 'For Recommendation')->where(fn (Builder $who) => $who
+                ->where('recommending_officer_id', $user?->id ?? 0)
+                ->when($isRecommender, fn (Builder $legacy) => $legacy->orWhereNull('recommending_officer_id'))));
+            if ($user !== null && $regionalDirectorId === $user->id) {
+                $q->orWhere('status', 'For Approval');
+            }
+        });
     }
 
     public function items(): HasMany

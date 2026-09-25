@@ -2184,8 +2184,10 @@ class ProcurementController extends Controller
     public function approvals(Request $request): JsonResponse
     {
         $this->guardModule('approvals');
+        // Each officer sees only what waits on their signature: the PRs routed to them to recommend,
+        // and — for the Regional Director — the recommended PRs to approve.
         $query = PurchaseRequest::with(['office', 'fundSource', 'project', 'items'])
-            ->whereIn('status', ['For Recommendation', 'For Approval'])
+            ->awaitingActionBy($request->user(), $this->designatedRegionalDirector()?->id)
             ->latest('id');
 
         if ($limit = $request->integer('limit')) {
@@ -2202,7 +2204,7 @@ class ProcurementController extends Controller
     public function recommend(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->guardModule('approvals');
-        $this->abortUnlessRecommender($request->user());
+        $this->abortUnlessRecommender($request->user(), $purchaseRequest);
         // The order is fixed: submitted -> recommended -> approved by the Regional Director.
         abort_unless($purchaseRequest->status === 'For Recommendation', 422, "Only a submitted Purchase Request awaiting recommendation can be recommended (this one is {$purchaseRequest->status}).");
         $this->requireSignature($request->user());
@@ -2251,10 +2253,12 @@ class ProcurementController extends Controller
     }
 
     /** Tells everyone who can recommend a PR (anyone with the Recommender role) that it is waiting. */
+    /** A submitted PR goes to its recommending officer only; an older PR with none named, to every Recommender. */
     private function notifyPrSubmitted(PurchaseRequest $purchaseRequest): void
     {
-        $recipients = User::whereHas('roles', fn ($query) => $query->where('name', 'Recommender'))->get()
-            ->unique('id');
+        $recipients = $purchaseRequest->recommendingOfficer
+            ? collect([$purchaseRequest->recommendingOfficer])
+            : User::whereHas('roles', fn ($query) => $query->where('name', 'Recommender'))->get()->unique('id');
 
         foreach ($recipients as $recipient) {
             $this->notify($recipient, 'pr_submitted', 'Purchase Request awaiting your recommendation',
@@ -2262,11 +2266,36 @@ class ProcurementController extends Controller
         }
     }
 
-    /** Any account holding the Recommender role may recommend a PR — not just one hardcoded person. */
-    private function abortUnlessRecommender(?User $user): void
+    /**
+     * Only the recommending officer the PR is routed to may recommend it (or a superadmin). An older
+     * PR with no officer named may be recommended by any account holding the Recommender role.
+     */
+    private function abortUnlessRecommender(?User $user, PurchaseRequest $purchaseRequest): void
     {
-        $ok = $user?->tier === 'superadmin' || ($user !== null && $user->roles->contains('name', 'Recommender'));
-        abort_unless($ok, 403, 'Only an account with the Recommender role may recommend this Purchase Request.');
+        if ($user?->tier === 'superadmin') {
+            return;
+        }
+
+        if ($purchaseRequest->recommending_officer_id) {
+            abort_unless($user?->id === $purchaseRequest->recommending_officer_id, 403,
+                'This Purchase Request is routed to '.($purchaseRequest->recommendingOfficer?->name ?? 'another recommending officer').' for recommendation.');
+
+            return;
+        }
+
+        abort_unless($user !== null && $user->roles->contains('name', 'Recommender'), 403, 'Only an account with the Recommender role may recommend this Purchase Request.');
+    }
+
+    /** The recommending officer chosen on a PR must be able to recommend: hold the Recommender role. */
+    private function abortUnlessCanRecommend(mixed $userId): void
+    {
+        if (! $userId) {
+            return;
+        }
+
+        $ok = User::whereKey($userId)->where(fn (Builder $q) => $q->where('tier', 'superadmin')
+            ->orWhereHas('roles', fn (Builder $r) => $r->where('name', 'Recommender')))->exists();
+        abort_unless($ok, 422, 'The recommending officer must be an account with the Recommender role.');
     }
 
     /** Only the Settings-designated Regional Director may give final approval/rejection. */
@@ -2340,6 +2369,9 @@ class ProcurementController extends Controller
             'project_id' => ['nullable', 'exists:projects,id'],
             'ppmp_document_id' => ['nullable', Rule::exists('ppmp_documents', 'id')->where('status', 'Approved')],
             'requested_by' => ['nullable', 'exists:users,id'],
+            'recommending_officer_id' => ['nullable', Rule::exists('users', 'id')->where('status', 'Active')],
+            'recommending_designation' => ['nullable', 'string', 'max:255'],
+            'approving_designation' => ['nullable', 'string', 'max:255'],
             'mode_of_procurement' => ['required', 'string'],
             'purpose' => ['required', 'string'],
             'items' => ['required', 'array', 'min:1'],
@@ -2351,6 +2383,7 @@ class ProcurementController extends Controller
             'items.*.unit_cost' => ['required', 'numeric', 'min:0'],
             'submit' => ['sometimes', 'boolean'],
         ])->validate();
+        $this->abortUnlessCanRecommend($data['recommending_officer_id'] ?? null);
 
         $purchaseRequest = DB::transaction(function () use ($data, $request): PurchaseRequest {
             $pr = PurchaseRequest::create([
@@ -2363,6 +2396,9 @@ class ProcurementController extends Controller
                 'requested_by' => in_array($request->user()->tier, ['superadmin', 'admin'], true)
                     ? ($data['requested_by'] ?? $request->user()->id)
                     : $request->user()->id,
+                'recommending_officer_id' => $data['recommending_officer_id'] ?? null,
+                'recommending_designation' => $data['recommending_designation'] ?? null,
+                'approving_designation' => $data['approving_designation'] ?? null,
                 'mode_of_procurement' => $data['mode_of_procurement'],
                 'purpose' => $data['purpose'],
             ]);
@@ -2526,6 +2562,9 @@ class ProcurementController extends Controller
             'fund_source_id' => ['sometimes', 'exists:fund_sources,id'],
             'project_id' => ['nullable', 'exists:projects,id'],
             'ppmp_document_id' => ['nullable', Rule::exists('ppmp_documents', 'id')->where('status', 'Approved')],
+            'recommending_officer_id' => ['nullable', Rule::exists('users', 'id')->where('status', 'Active')],
+            'recommending_designation' => ['nullable', 'string', 'max:255'],
+            'approving_designation' => ['nullable', 'string', 'max:255'],
             'mode_of_procurement' => ['sometimes', 'string'],
             'purpose' => ['sometimes', 'string'],
             'items' => ['sometimes', 'array', 'min:1'],
@@ -2536,6 +2575,7 @@ class ProcurementController extends Controller
             'items.*.quantity' => ['required_with:items', 'integer', 'min:1'],
             'items.*.unit_cost' => ['required_with:items', 'numeric', 'min:0'],
         ])->validate();
+        $this->abortUnlessCanRecommend($data['recommending_officer_id'] ?? null);
 
         DB::transaction(function () use ($data, $purchaseRequest): void {
             $items = $data['items'] ?? null;
@@ -2925,7 +2965,7 @@ class ProcurementController extends Controller
             return $record;
         }
 
-        $record->loadMissing(['office', 'fundSource', 'project', 'ppmpDocument.libDocument', 'rePrOf', 'requester.roles', 'items', 'validationResults', 'approvalActions']);
+        $record->loadMissing(['office', 'fundSource', 'project', 'ppmpDocument.libDocument', 'rePrOf', 'requester.roles', 'recommendingOfficer', 'items', 'validationResults', 'approvalActions']);
         $checks = $this->prChecks();
 
         return [
@@ -2945,6 +2985,14 @@ class ProcurementController extends Controller
                 'email' => $record->requester->email,
                 'position' => $this->preparedBy($record->requester)['position'] ?? null,
             ] : null,
+            // The officer this PR is routed to for recommendation, and the printed designations.
+            'recommending_officer' => $record->recommendingOfficer ? [
+                'id' => $record->recommendingOfficer->id,
+                'name' => $record->recommendingOfficer->name,
+                'position' => $record->recommendingOfficer->position,
+            ] : null,
+            'recommending_designation' => $record->recommending_designation,
+            'approving_designation' => $record->approving_designation,
             'mode_of_procurement' => $record->mode_of_procurement,
             'project_title' => $record->project?->title,
             // Flowchart Module 1: which path the pre-checks take, and the project a non-regular PR is for.

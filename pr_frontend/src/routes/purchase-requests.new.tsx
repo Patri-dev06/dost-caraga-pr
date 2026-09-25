@@ -426,6 +426,8 @@ function NewPR() {
   const [reqName, setReqName] = useState("");
   const [reqDesig, setReqDesig] = useState("");
   const [recName, setRecName] = useState("");
+  // The account the PR is routed to: only this officer is notified and may recommend it.
+  const [recOfficerId, setRecOfficerId] = useState<number | null>(null);
   const [recDesig, setRecDesig] = useState("");
   const [appName, setAppName] = useState("");
   const [appDesig, setAppDesig] = useState("");
@@ -433,9 +435,10 @@ function NewPR() {
   const [action, setAction] = useState<"draft" | "submit" | null>(null);
 
   // Signatories come from the accounts in the database: type part of a name to find one.
-  // "Recommending Approval" may be any active account; "Approved by" is the Regional Director —
-  // the one account holding that role, or (until the role is assigned) the one chosen in Settings.
-  const { data: signatories = [], isLoading: loadingSignatories } = useSignatories();
+  // "Recommending Approval" is an account holding the Recommender role — the PR is routed to that
+  // officer only. "Approved by" is the Regional Director: the one account holding that role, or
+  // (until the role is assigned) the one chosen in Settings.
+  const { data: signatories = [], isLoading: loadingSignatories } = useSignatories("Recommender");
   const { data: directorHolders = [] } = useSignatories("Regional Director");
   const { data: workflowSignatories } = useQuery({ queryKey: ["workflow-signatories"], queryFn: () => apiGetWorkflowSignatories(), staleTime: 60_000 });
   const directorOptions = useMemo<SignatoryOption[]>(() => {
@@ -456,7 +459,9 @@ function NewPR() {
   // Picking a signatory fills the name and auto-fills the designation from sign-up.
   const pickRecommender = useCallback((name: string, person?: SignatoryOption) => {
     setRecName(name);
+    setRecOfficerId(person?.id ?? null);
     if (person?.position) setRecDesig(person.position);
+    clearMissing("recommender");
   }, []);
   const pickApprover = useCallback((name: string, person?: SignatoryOption) => {
     setAppName(name);
@@ -478,6 +483,12 @@ function NewPR() {
       setReqName(existing.requestedBy);
       setReqDesig(existing.requestedByPosition ?? "");
     }
+    if (existing.recommendingOfficer) {
+      setRecName(existing.recommendingOfficer.name);
+      setRecOfficerId(existing.recommendingOfficer.id);
+      setRecDesig(existing.recommendingDesignation || existing.recommendingOfficer.position || "");
+    }
+    if (existing.approvingDesignation) setAppDesig(existing.approvingDesignation);
     setItems(
       existing.items.length
         ? existing.items.map((it) => ({
@@ -549,7 +560,7 @@ function NewPR() {
     setItems((prev) => (prev.length > 1 ? prev.filter((it) => it.id !== id) : prev));
   }
 
-  function buildPayload(): PurchaseRequestCreatePayload | null {
+  function buildPayload(submitting = false): PurchaseRequestCreatePayload | null {
     const mapped = items
       .map((it) => {
         const lines = it.description.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -570,6 +581,12 @@ function NewPR() {
     if (!purpose.trim()) {
       toast.error("Purpose is required.");
       flagMissing(["purpose"]);
+      return null;
+    }
+    // Submitting routes the PR to its recommending officer, so one must be chosen first.
+    if (submitting && !recOfficerId) {
+      toast.error("Choose the recommending officer — the PR is sent to them for recommending approval.");
+      flagMissing(["recommender"]);
       return null;
     }
     // The backend requires the charged PPMP (its fund source id) — catch it here
@@ -616,7 +633,17 @@ function NewPR() {
       }
     }
 
-    return { office, fundSource, ppmp_client_uid: selectedPpmp?.id ?? null, modeOfProcurement, purpose: purpose.trim(), items: mapped };
+    return {
+      office,
+      fundSource,
+      ppmp_client_uid: selectedPpmp?.id ?? null,
+      recommending_officer_id: recOfficerId,
+      recommending_designation: recDesig.trim(),
+      approving_designation: appDesig.trim(),
+      modeOfProcurement,
+      purpose: purpose.trim(),
+      items: mapped,
+    };
   }
 
   function saveDraft() {
@@ -626,7 +653,7 @@ function NewPR() {
     mutation.mutate({ payload, submit: false });
   }
   function submitRequest() {
-    const payload = buildPayload();
+    const payload = buildPayload(true);
     if (!payload) return;
     setAction("submit");
     mutation.mutate({ payload, submit: true });
@@ -1099,7 +1126,12 @@ function NewPR() {
                     <td className="border border-black/20 print:border-transparent align-bottom">
                       <TextField value={reqName} onChange={setReqName} editing={false} align="center" bold />
                     </td>
-                    <td className="border border-black/20 print:border-transparent align-bottom">
+                    <td
+                      ref={(el) => {
+                        fieldRefs.current["recommender"] = el;
+                      }}
+                      className={cn("border border-black/20 print:border-transparent align-bottom", missingFields.has("recommender") && "bg-red-50 ring-2 ring-inset ring-red-400")}
+                    >
                       <PersonPicker
                         variant="inline"
                         value={recName}
@@ -1107,7 +1139,8 @@ function NewPR() {
                         loading={loadingSignatories}
                         editing={editing}
                         onPick={pickRecommender}
-                        placeholder="Type a name…"
+                        placeholder="Type the recommending officer…"
+                        emptyText="No matching account with the Recommender role."
                         className="justify-center text-center font-bold"
                       />
                     </td>

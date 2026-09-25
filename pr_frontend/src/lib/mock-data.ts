@@ -36,6 +36,10 @@ export interface PurchaseRequest {
   dateSubmitted: string;
   requestedBy: string;
   requestedByPosition?: string; // the requester's position, for the form's Designation line
+  /** The recommending officer the PR is routed to — only they are notified and may recommend it. */
+  recommendingOfficer?: { id: number; name: string; position: string | null } | null;
+  recommendingDesignation?: string;
+  approvingDesignation?: string;
   modeOfProcurement: string;
   projectTitle: string;
   purpose: string;

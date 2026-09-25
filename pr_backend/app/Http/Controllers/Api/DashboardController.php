@@ -37,9 +37,9 @@ class DashboardController extends Controller
                 'amount' => (float) PurchaseRequestItem::whereIn('purchase_request_id', $visiblePrs()->select('id'))
                     ->sum(DB::raw('quantity * unit_cost')),
             ],
-            // The Approval Inbox's own queue: PRs waiting to be recommended or approved.
+            // The Approval Inbox's own queue: the PRs waiting on this user's signature.
             'approvals_pending' => $user->canAccessModule('approvals')
-                ? PurchaseRequest::whereIn('status', ['For Recommendation', 'For Approval'])->count()
+                ? PurchaseRequest::awaitingActionBy($user, $this->designatedRegionalDirector()?->id)->count()
                 : null,
             'rfqs' => $user->canAccessModule('rfq') ? [
                 'count' => Rfq::count(),

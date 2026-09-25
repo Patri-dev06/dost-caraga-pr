@@ -169,6 +169,10 @@ export type PurchaseRequestCreatePayload = {
   purpose: string;
   /** "Charged to": the planning PPMP's client uid. Its class decides the flowchart's "Regular fund?". */
   ppmp_client_uid?: string | null;
+  /** The account the PR is routed to for recommendation (must hold the Recommender role). */
+  recommending_officer_id?: number | null;
+  recommending_designation?: string;
+  approving_designation?: string;
   submit?: boolean;
   items: Array<{
     name: string;
@@ -1177,6 +1181,9 @@ type BackendPurchaseRequest = {
   submitted_at?: string | null;
   requested_by: number | BackendNamedRecord | null;
   requester?: BackendNamedRecord | null;
+  recommending_officer?: { id: number; name: string; position?: string | null } | null;
+  recommending_designation?: string | null;
+  approving_designation?: string | null;
   mode_of_procurement: string;
   project_title?: string | null;
   project?: (BackendNamedRecord & { title?: string | null }) | null;
@@ -1373,6 +1380,11 @@ function mapPurchaseRequest(pr: BackendPurchaseRequest): PurchaseRequest {
     dateSubmitted: dateOnly(pr.date_submitted ?? pr.submitted_at) ?? "Not submitted",
     requestedBy: textFromRelation(pr.requester ?? pr.requested_by, "Unassigned"),
     requestedByPosition: typeof (pr.requester ?? pr.requested_by) === "object" ? ((pr.requester ?? pr.requested_by) as BackendNamedRecord | null)?.position ?? "" : "",
+    recommendingOfficer: pr.recommending_officer
+      ? { id: pr.recommending_officer.id, name: pr.recommending_officer.name, position: pr.recommending_officer.position ?? null }
+      : null,
+    recommendingDesignation: pr.recommending_designation ?? "",
+    approvingDesignation: pr.approving_designation ?? "",
     modeOfProcurement: pr.mode_of_procurement,
     projectTitle: pr.project_title ?? textFromRelation(pr.project, "No project assigned"),
     purpose: pr.purpose,

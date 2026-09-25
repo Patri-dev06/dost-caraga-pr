@@ -15,7 +15,7 @@ final class PrProgress
 {
     /** What PrProgress::steps() reads, eager-loaded for one PR or a whole page. */
     public const RELATIONS = [
-        'approvalActions.user', 'monitoringEntry', 'supportingDocuments:id,purchase_request_id,type',
+        'approvalActions.user', 'recommendingOfficer', 'monitoringEntry', 'supportingDocuments:id,purchase_request_id,type',
         'rfqs.suppliers', 'rfqs.abstractOfCanvas', 'rfqs.purchaseOrders',
     ];
 
@@ -44,7 +44,7 @@ final class PrProgress
                 $iso($pr->submitted_at), $pr->status === 'Returned'
                     ? 'Returned — fix what the checks flagged, then submit it again.'
                     : ($pr->supportingDocuments->isNotEmpty() ? 'With '.$pr->supportingDocuments->pluck('type')->implode(' and ').' attached' : 'Complete the form and submit it.')],
-            ['recommended', 'PR', 'Recommended', 'Recommending officer', $recommended !== null, $iso($recommended?->created_at), $recommended?->user?->name],
+            ['recommended', 'PR', 'Recommended', $pr->recommendingOfficer?->name ?? 'Recommending officer', $recommended !== null, $iso($recommended?->created_at), $recommended?->user?->name],
             ['approved', 'PR', 'Approved by the Regional Director', 'Regional Director', $approved !== null || $pr->status === 'Approved', $iso($approved?->created_at), $approved?->user?->name],
             ['rfq_generated', 'RFQ', 'RFQ generated', 'Supply Unit', $rfq !== null, $iso($rfq?->created_at), $rfq?->rfq_no],
             ['rfq_signed', 'RFQ', 'RFQ signed (Supply Officer, BAC)', 'Supply Officer / BAC Chairman', $rfq?->bac_signed_at !== null, $iso($rfq?->bac_signed_at), $rfq?->bac_signed_name],
