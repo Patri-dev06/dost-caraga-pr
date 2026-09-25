@@ -184,6 +184,12 @@ class PurchaseRequest extends Model
         return $this->hasMany(PurchaseOrder::class);
     }
 
+    /** Supplementary Documents (PPMP, LIB, ...) attached when the PR was submitted. */
+    public function supportingDocuments(): HasMany
+    {
+        return $this->hasMany(PurchaseRequestSupportingDocument::class)->orderBy('id');
+    }
+
     /** The Supply team's hand-kept columns on this PR's Procurement Monitoring Sheet row. */
     public function monitoringEntry(): HasOne
     {

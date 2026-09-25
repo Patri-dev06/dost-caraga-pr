@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { AuditTimeline } from "@/components/app/audit-timeline";
 import { ValidationResultPanel } from "@/components/app/validation-result-panel";
+import { PrSupportingDocuments } from "@/components/app/pr-supporting-documents";
 import { fmtPHP, prTotal } from "@/lib/mock-data";
 import { apiGetPurchaseRequest, apiRePurchaseRequest, apiValidatePurchaseRequest } from "@/lib/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -171,7 +172,7 @@ function PRDetail() {
           <TabsTrigger value="items">Items</TabsTrigger>
           <TabsTrigger value="validation">Validation</TabsTrigger>
           <TabsTrigger value="trail">Approval Trail</TabsTrigger>
-          <TabsTrigger value="attachments">Attachments</TabsTrigger>
+          <TabsTrigger value="attachments">Supporting Documents</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-4">
@@ -236,10 +237,7 @@ function PRDetail() {
         </TabsContent>
 
         <TabsContent value="attachments" className="mt-4">
-          <Card className="border border-dashed border-border bg-secondary/20 p-10 text-center">
-            <p className="text-sm font-semibold text-navy">No attachments uploaded</p>
-            <p className="mt-1 text-xs text-muted-foreground">Supporting documents (quotations, specifications) will appear here.</p>
-          </Card>
+          <PrSupportingDocuments prId={pr.id} submitted={pr.status !== "Draft"} />
         </TabsContent>
       </Tabs>
     </div>

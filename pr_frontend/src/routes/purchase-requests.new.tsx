@@ -543,7 +543,7 @@ function NewPR() {
       if (editId) await queryClient.invalidateQueries({ queryKey: ["purchase-request", editId] });
       toast.success(
         result.status === "For Recommendation"
-          ? "Purchase Request submitted."
+          ? "Purchase Request submitted, with its PPMP and LIB attached as supporting documents."
           : isEditing
             ? "Purchase Request updated."
             : "Purchase Request saved as draft.",

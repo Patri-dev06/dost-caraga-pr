@@ -477,6 +477,7 @@ export type MonitoringRow = {
   poConformedAt: string | null;
   poRemarks: string | null;
   prStatus: string | null;
+  sdAttached: string | null; // Supplementary Documents attached at submission, e.g. "PPMP, LIB"
   manual: MonitoringManualValues;
   canEdit: boolean;
 };
@@ -515,6 +516,7 @@ type BackendMonitoringRow = {
   po_conformed_at?: string | null;
   po_remarks?: string | null;
   pr_status?: string | null;
+  sd_attached?: string | null;
   manual?: MonitoringManualValues;
   can_edit?: boolean;
 };
@@ -551,9 +553,41 @@ function mapMonitoringRow(row: BackendMonitoringRow): MonitoringRow {
     poConformedAt: row.po_conformed_at ?? null,
     poRemarks: row.po_remarks ?? null,
     prStatus: row.pr_status ?? null,
+    sdAttached: row.sd_attached ?? null,
     manual: row.manual ?? {},
     canEdit: row.can_edit ?? false,
   };
+}
+
+/**
+ * A Supplementary Document (SD) attached to a PR when it was submitted: a frozen copy of its PPMP or
+ * LIB as it stood then. `snapshot` holds that copy (PPMP items, or LIB rows).
+ */
+export type PrSupportingDocument = {
+  id: string;
+  type: "PPMP" | "LIB" | string;
+  typeLabel: string;
+  reference: string | null;
+  title: string | null;
+  total: number;
+  attachedAt: string | null;
+  attachedBy: string | null;
+  snapshot: Record<string, unknown>;
+};
+
+export async function apiGetPrSupportingDocuments(prId: string): Promise<PrSupportingDocument[]> {
+  const result = await request<{ data: Record<string, unknown>[] }>(`/purchase-requests/${prId}/supporting-documents`);
+  return result.data.map((d) => ({
+    id: String(d.id),
+    type: String(d.type),
+    typeLabel: String(d.type_label ?? d.type),
+    reference: (d.reference as string | null) ?? null,
+    title: (d.title as string | null) ?? null,
+    total: Number(d.total ?? 0),
+    attachedAt: (d.attached_at as string | null) ?? null,
+    attachedBy: (d.attached_by as string | null) ?? null,
+    snapshot: (d.snapshot as Record<string, unknown>) ?? {},
+  }));
 }
 
 /** Narrows the Monitoring Sheet: one period at most (a day, a month or a year of the PR's DATE). */

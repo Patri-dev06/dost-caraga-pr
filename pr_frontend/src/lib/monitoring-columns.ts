@@ -76,7 +76,12 @@ export const MONITORING_COLUMNS: MonitoringColumn[] = [
   col("Description / Particulars", (r) => r.description ?? ""),
   col("Purpose", (r) => r.purpose ?? ""),
   col("Amount", (r) => fmtAmount(r.amount)),
-  manual("Purchase Request", "SD Attached", "sd_attached"),
+  // PPMP and LIB are attached by the system at submission; Supply can note any other SD by hand.
+  {
+    label: "SD Attached",
+    field: { key: "sd_attached", label: "Other SD attached (besides the PPMP and LIB)", type: "text", section: "Purchase Request" },
+    get: (r) => [r.sdAttached, r.manual.sd_attached == null ? "" : String(r.manual.sd_attached)].filter(Boolean).join("; "),
+  },
   col("PR Signatories", (r) => r.prSignatories ?? ""),
   col("Remarks (if any)", (r) => r.prRemarks ?? ""),
   col("RFQ #", (r) => r.rfqNo ?? ""),

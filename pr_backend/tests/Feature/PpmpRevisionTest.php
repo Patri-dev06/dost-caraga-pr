@@ -166,4 +166,21 @@ class PpmpRevisionTest extends TestCase
             ->assertOk()->assertJsonPath('data.status', 'Returned')->assertJsonPath('data.revisionCount', 0);
         $this->save($uid, 'Submitted to Budget Officer', [$this->row('line-1', 'Mini PC for Kiosk', 30000)])->assertOk();
     }
+
+    public function test_the_owner_still_sees_a_ppmp_under_review_with_its_status(): void
+    {
+        $employee = \App\Models\User::create([
+            'name' => 'Maria Review', 'email' => 'ppmp-owner@dost.gov.ph', 'password' => bcrypt('password123'),
+            'office_id' => \App\Models\Office::first()->id, 'status' => 'Active', 'tier' => 'regular', 'modules' => ['pr', 'lib', 'ppmp'],
+            'signature' => 'data:image/png;base64,iVBORw0KGgo=',
+        ]);
+        $this->token = $this->postJson('/api/v1/auth/login', ['email' => $employee->email, 'password' => 'password123'])->json('token');
+
+        $uid = 'ppmp-'.uniqid();
+        $this->save($uid, 'Submitted to Budget Officer', [$this->row('line-1', 'Mini PC for Kiosk', 30000)], create: true)->assertCreated();
+
+        $listed = collect($this->withToken($this->token)->getJson('/api/v1/planning-ppmps?per_page=100')->assertOk()->json('data'))->firstWhere('id', $uid);
+        $this->assertNotNull($listed, 'The owner lost sight of their PPMP while it is under review.');
+        $this->assertSame('Submitted to Budget Officer', $listed['status']);
+    }
 }

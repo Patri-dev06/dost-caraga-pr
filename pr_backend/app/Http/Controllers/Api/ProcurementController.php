@@ -23,6 +23,7 @@ use App\Models\Role;
 use App\Models\SystemPreference;
 use App\Models\User;
 use App\Models\UserNotification;
+use App\Services\PrSupportingDocuments;
 use App\Services\PurchaseRequestChecks;
 use App\Support\MonitoringFields;
 use Carbon\CarbonImmutable;
@@ -1993,16 +1994,57 @@ class ProcurementController extends Controller
             return response()->json(['message' => 'Purchase Request cannot proceed until validation failures are resolved.', 'validation' => $validation], 422);
         }
 
+        $attached = $this->completeSubmission($request, $purchaseRequest);
+
+        return response()->json([
+            'message' => 'Purchase Request submitted for recommendation'.($attached->isNotEmpty() ? ', with its '.$attached->pluck('type')->implode(' and ').' attached.' : '.'),
+            'data' => $this->format($purchaseRequest->fresh()),
+        ]);
+    }
+
+    /**
+     * Sends a PR that passed its checks on for recommendation — from "Submit" on a saved draft or
+     * straight from the create form — attaching its Supplementary Documents (SD): the PPMP it is
+     * charged to and the LIB behind it. Returns what was attached.
+     */
+    private function completeSubmission(Request $request, PurchaseRequest $purchaseRequest): \Illuminate\Support\Collection
+    {
         $purchaseRequest->forceFill([
             'status' => 'For Recommendation',
             'stage' => $this->preferenceValue('recommending_approval_stage', 'Division Chief Recommendation'),
             'submitted_at' => now(),
         ])->save();
 
+        $attached = PrSupportingDocuments::attach($purchaseRequest, $request->user());
+
         $this->recordAction($request, $purchaseRequest, 'Requester', 'Submitted PR', 'Initial submission.');
         $this->notifyPrSubmitted($purchaseRequest);
 
-        return response()->json(['message' => 'Purchase Request submitted for recommendation.', 'data' => $this->format($purchaseRequest->fresh())]);
+        return $attached;
+    }
+
+    /**
+     * The PR's Supplementary Documents, as attached at submission. Readable by anyone who can see the
+     * PR (its approvers included), even though the PPMP/LIB themselves are private to their owner.
+     */
+    public function purchaseRequestSupportingDocuments(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->guardModule('pr');
+        abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
+
+        return response()->json([
+            'data' => $purchaseRequest->supportingDocuments()->with('attacher:id,name')->get()->map(fn ($sd): array => [
+                'id' => $sd->id,
+                'type' => $sd->type,
+                'type_label' => PrSupportingDocuments::TYPES[$sd->type] ?? $sd->type,
+                'reference' => $sd->reference,
+                'title' => $sd->title,
+                'total' => (float) $sd->total,
+                'attached_at' => $sd->attached_at?->toISOString(),
+                'attached_by' => $sd->attacher?->name,
+                'snapshot' => $sd->snapshot,
+            ]),
+        ]);
     }
 
     /**
@@ -2279,13 +2321,7 @@ class ProcurementController extends Controller
                 ], 422);
             }
 
-            $purchaseRequest->forceFill([
-                'status' => 'For Recommendation',
-                'stage' => $this->preferenceValue('recommending_approval_stage', 'Division Chief Recommendation'),
-                'submitted_at' => now(),
-            ])->save();
-            $this->recordAction($request, $purchaseRequest, 'Requester', 'Submitted PR', 'Initial submission.');
-            $this->notifyPrSubmitted($purchaseRequest);
+            $this->completeSubmission($request, $purchaseRequest);
         }
 
         return response()->json(['data' => $this->format($purchaseRequest->fresh())], 201);
@@ -2629,7 +2665,7 @@ class ProcurementController extends Controller
 
     /** Everything one Monitoring Sheet row reads, eager-loaded for a whole page at once. */
     private const MONITORING_RELATIONS = [
-        'office', 'fundSource', 'requester', 'items', 'monitoringEntry',
+        'office', 'fundSource', 'requester', 'items', 'monitoringEntry', 'supportingDocuments:id,purchase_request_id,type',
         'approvalActions.user',
         'rfqs.suppliers', 'rfqs.abstractOfCanvas.winningSupplier', 'rfqs.abstractOfCanvas.approvalActions.user',
         'rfqs.purchaseOrders.approvalActions.user',
@@ -2790,6 +2826,8 @@ class ProcurementController extends Controller
                 default => null,
             },
             'pr_approved_at' => $prApproved?->created_at?->toDateString(),
+            // "SD Attached": the Supplementary Documents attached when the PR was submitted.
+            'sd_attached' => PrSupportingDocuments::summary($pr->supportingDocuments),
             // The hand-kept columns (MonitoringFields), keyed like the frontend's MONITORING_COLUMNS.
             'manual' => (object) ($pr->monitoringEntry?->values ?? []),
             'can_edit' => $canEdit,
