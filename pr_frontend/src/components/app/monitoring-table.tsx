@@ -5,9 +5,8 @@ import { MONITORING_COLUMNS } from "@/lib/monitoring-columns";
 import { cn } from "@/lib/utils";
 
 /**
- * The Procurement Monitoring Sheet's table — shared by the full Purchase Requests page and the
- * dashboard's preview of it, so both always render the same columns in the same order. With
- * `onEdit`, rows the viewer may edit get a leading pencil that opens the Supply team's editor.
+ * The Procurement Monitoring Sheet's table, on the Purchase Requests page. With `onEdit`, rows the
+ * viewer may edit get a leading pencil that opens the Supply team's editor.
  */
 export function MonitoringTable({
   rows,

@@ -2466,7 +2466,8 @@ class ProcurementController extends Controller
      * stage yet just leaves those columns null — never an error, always the honest state.
      * Paginated like every other list here; never the whole PR table.
      *
-     * Filters: `search` (PR No. or purpose), `status` (comma-separated), and one period on the
+     * Filters: `search` (PR No. or purpose), `status` (comma-separated), `stage` (a key of
+     * PurchaseRequest::STAGES, as the dashboard counts them), and one period on the
      * PR's DATE — `date` (Y-m-d), `month` (Y-m) or `year` (Y), in Manila time — so Supply can
      * see how many PRs, and which, came in on a given day, month or year (`total`).
      */
@@ -2477,6 +2478,7 @@ class ProcurementController extends Controller
         $filters = $request->validate([
             'search' => ['nullable', 'string', 'max:100'],
             'status' => ['nullable', 'string', 'max:200'],
+            'stage' => ['nullable', Rule::in(array_keys(PurchaseRequest::STAGES))],
             'date' => ['nullable', 'date_format:Y-m-d'],
             'month' => ['nullable', 'date_format:Y-m'],
             'year' => ['nullable', 'integer', 'min:2000', 'max:2100'],
@@ -2490,6 +2492,10 @@ class ProcurementController extends Controller
 
         if (! empty($filters['status'])) {
             $query->whereIn('status', array_filter(array_map('trim', explode(',', $filters['status']))));
+        }
+
+        if (! empty($filters['stage'])) {
+            $query->inStage($filters['stage']);
         }
 
         if ($period = $this->monitoringPeriod($filters)) {
@@ -2529,19 +2535,6 @@ class ProcurementController extends Controller
             'message' => "Monitoring sheet entry for {$purchaseRequest->pr_no} saved.",
             'data' => $this->formatMonitoringRow($purchaseRequest, true),
         ]);
-    }
-
-    /** Admin/Superadmin (the Supply tier), the designated Supply Officer, and RFQ/PO module holders. */
-    private function canEditMonitoring(?User $user): bool
-    {
-        if ($user === null) {
-            return false;
-        }
-
-        return in_array($user->tier, ['superadmin', 'admin'], true)
-            || $user->canAccessModule('rfq')
-            || $user->canAccessModule('po')
-            || $this->designatedSupplyOfficer()?->id === $user->id;
     }
 
     /**

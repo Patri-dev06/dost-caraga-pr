@@ -57,6 +57,22 @@ trait HasProcurementHelpers
         $this->audit($request, $role === 'Requester' ? 'Purchase Requests' : 'Approval Inbox', $action, $documentNo);
     }
 
+    /**
+     * The Supply team, for the Procurement Monitoring Sheet and its follow-ups: Admin/Superadmin (the
+     * Supply tier), the designated Supply Officer, and RFQ/PO module holders.
+     */
+    private function canEditMonitoring(?User $user): bool
+    {
+        if ($user === null) {
+            return false;
+        }
+
+        return in_array($user->tier, ['superadmin', 'admin'], true)
+            || $user->canAccessModule('rfq')
+            || $user->canAccessModule('po')
+            || $this->designatedSupplyOfficer()?->id === $user->id;
+    }
+
     /** Block a signing/approval action when the acting user has no e-signature on file. */
     private function requireSignature(?User $user): void
     {

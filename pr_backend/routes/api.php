@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AbstractOfCanvasController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\ProcurementController;
 use App\Http\Controllers\Api\PurchaseOrderController;
 use App\Http\Controllers\Api\RfqController;
@@ -86,6 +87,9 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/purchase-requests/{purchaseRequest}/re-pr', [ProcurementController::class, 'rePurchaseRequest']);
         // Supply's hand-kept Monitoring Sheet columns (ORS/BURS, delivery, IAR, issuance, payment).
         Route::put('/purchase-requests/{purchaseRequest}/monitoring', [ProcurementController::class, 'updateMonitoringEntry']);
+
+        // The dashboard's counts, PR stages, Supply follow-ups and latest PRs/RFQs, in one call.
+        Route::get('/dashboard/summary', [DashboardController::class, 'summary']);
 
         Route::get('/approvals', [ProcurementController::class, 'approvals']);
         Route::post('/approvals/{purchaseRequest}/recommend', [ProcurementController::class, 'recommend']);

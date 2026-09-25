@@ -6,17 +6,15 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { apiGetPurchaseRequests, apiGetPurchaseRequestMonitoringPage, hasValidToken } from "@/lib/api";
+import { apiGetDashboardSummary, hasValidToken, type DashboardSummary } from "@/lib/api";
 import { useCanAccess } from "@/lib/current-user";
 import { moduleForPath } from "@/lib/modules";
 import { PrTrackerSection } from "@/components/app/pr-tracker-card";
-import { MonitoringTable } from "@/components/app/monitoring-table";
-import { type PurchaseRequest } from "@/lib/mock-data";
+import { PrStagesCard } from "@/components/app/pr-stages-card";
+import { SupplyFollowUpsCard } from "@/components/app/supply-follow-ups-card";
 import { fmtAmount, libTotals, listLibs, type LibDoc } from "@/lib/lib-store";
 import { listAllPpmps, type PpmpForLib } from "@/lib/ppmp-store";
-import { listAllRfqs, type RfqDoc } from "@/lib/rfq-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -32,28 +30,26 @@ const peso = (n: number) => `₱${fmtAmount(n)}`;
 
 function Dashboard() {
   const canAccess = useCanAccess();
-  const [local, setLocal] = useState<{ libs: LibDoc[]; ppmps: PpmpForLib[]; rfqs: RfqDoc[] }>({ libs: [], ppmps: [], rfqs: [] });
+  const [local, setLocal] = useState<{ libs: LibDoc[]; ppmps: PpmpForLib[] }>({ libs: [], ppmps: [] });
 
-  // localStorage-backed modules are client-only — read after mount.
+  // LIBs and PPMPs come from their synced local cache (client-only) — read after mount.
   useEffect(() => {
-    setLocal({ libs: listLibs(), ppmps: listAllPpmps(), rfqs: listAllRfqs() });
+    setLocal({ libs: listLibs(), ppmps: listAllPpmps() });
   }, []);
 
-  const { data: prs = [] } = useQuery({
-    queryKey: ["purchase-requests"],
-    queryFn: apiGetPurchaseRequests,
+  // Everything else is counted on the server in one call, never by downloading whole lists.
+  const { data: summary } = useQuery({
+    queryKey: ["dashboard-summary"],
+    queryFn: () => apiGetDashboardSummary(),
     enabled: hasValidToken(),
     staleTime: 30_000,
   });
 
-  const { libs, ppmps, rfqs } = local;
-
-  const prPending = prs.filter((p) => /pending|validation|for approval|review/i.test(p.status)).length;
+  const { libs, ppmps } = local;
+  const approvalsPending = summary?.approvalsPending ?? undefined;
 
   const libBudget = useMemo(() => libs.reduce((s, l) => s + libTotals(l.rows).approved, 0), [libs]);
   const ppmpBudget = useMemo(() => ppmps.reduce((s, p) => s + (p.totalBudget || 0), 0), [ppmps]);
-  const rfqBudget = useMemo(() => rfqs.reduce((s, r) => s + (r.estimatedBudget || 0), 0), [rfqs]);
-  const prBudget = useMemo(() => prs.reduce((s, p) => s + (p.amount || 0), 0), [prs]);
 
   // Every module the dashboard could show — filtered below to only what this user is actually
   // allowed into. Was previously shown unfiltered to everyone, including modules a regular user
@@ -61,11 +57,11 @@ function Dashboard() {
   const allModules: ModuleCardProps[] = [
     { name: "Line Item Budget", desc: "DOST Form 4 budgets & reprogramming", icon: FileText, to: "/planning/lib", count: libs.length, value: peso(libBudget) },
     { name: "PPMP", desc: "Project procurement management plans", icon: BookOpen, to: "/planning/ppmp", count: ppmps.length, value: peso(ppmpBudget) },
-    { name: "Purchase Requests", desc: "Requests across offices & fund sources", icon: ShoppingCart, to: "/purchase-requests", count: prs.length, value: peso(prBudget) },
-    { name: "RFQ", desc: "Requests for quotation & canvassing", icon: ScrollText, to: "/rfq", count: rfqs.length, value: peso(rfqBudget) },
-    { name: "Purchase Orders", desc: "Budget, accounting & RD approval chain", icon: Truck, to: "/po", value: "track POs" },
-    { name: "Validation", desc: "Pre-approval budget & document checks", icon: ShieldCheck, to: "/validation", count: prPending, value: "items to review" },
-    { name: "Approval Inbox", desc: "Recommend, approve, or return", icon: Inbox, to: "/approval-inbox", count: prPending, value: "awaiting action" },
+    { name: "Purchase Requests", desc: "Requests across offices & fund sources", icon: ShoppingCart, to: "/purchase-requests", count: summary?.purchaseRequests.count, value: summary ? peso(summary.purchaseRequests.amount) : undefined },
+    { name: "RFQ", desc: "Requests for quotation & canvassing", icon: ScrollText, to: "/rfq", count: summary?.rfqs?.count, value: summary?.rfqs ? `${summary.rfqs.canvassing} canvassing` : undefined },
+    { name: "Purchase Orders", desc: "Budget, accounting & RD approval chain", icon: Truck, to: "/po", count: summary?.purchaseOrders?.count, value: summary?.purchaseOrders ? `${summary.purchaseOrders.pending} pending approval` : "track POs" },
+    { name: "Validation", desc: "Pre-approval budget & document checks", icon: ShieldCheck, to: "/validation", count: approvalsPending, value: "items to review" },
+    { name: "Approval Inbox", desc: "Recommend, approve, or return", icon: Inbox, to: "/approval-inbox", count: approvalsPending, value: "awaiting action" },
     { name: "References", desc: "APP-CSE, APP-Non-CSE & budget", icon: Library, to: "/references/app-cse", value: "master data" },
     { name: "Reports", desc: "Analytics & exports", icon: BarChart3, to: "/reports", value: "view reports" },
   ];
@@ -98,53 +94,18 @@ function Dashboard() {
         </div>
       </section>
 
-      {/* Purchase Request Monitoring — the same sheet /purchase-requests uses, most recent first */}
-      <PrMonitoringPreviewSection />
+      {/* Where every PR is in the flow — each step opens the Purchase Requests sheet filtered to it */}
+      {summary && <PrStagesCard stages={summary.stages} />}
 
-      {/* Needs your action + recent activity, side by side on wide screens */}
+      {/* Needs your action on the left; Supply's supplier follow-ups and recent activity on the right */}
       <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
         <PrTrackerSection />
-        <RecentActivityCard libs={libs} ppmps={ppmps} rfqs={rfqs} prs={prs} />
+        <div className="space-y-5">
+          {summary?.followUps && <SupplyFollowUpsCard followUps={summary.followUps} />}
+          <RecentActivityCard libs={libs} ppmps={ppmps} summary={summary} />
+        </div>
       </div>
     </div>
-  );
-}
-
-/* ── Purchase Request Monitoring preview ──────────────────────────────── */
-
-const MONITORING_PREVIEW_SIZE = 20;
-
-/** The dashboard's own slice of the Procurement Monitoring Sheet — the same columns and row
- * format as the full /purchase-requests page, just the 20 most recent, with a link to the rest. */
-function PrMonitoringPreviewSection() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["purchase-requests-monitoring-preview"],
-    queryFn: () => apiGetPurchaseRequestMonitoringPage(1, MONITORING_PREVIEW_SIZE),
-    enabled: hasValidToken(),
-  });
-  const rows = data?.items ?? [];
-
-  return (
-    <section>
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Purchase Request Monitoring</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">The 20 most recent Purchase Requests, traced through RFQ, AOC and PO.</p>
-        </div>
-        <Button asChild variant="outline" size="sm" className="gap-1.5 border-border">
-          <Link to="/purchase-requests">View full sheet <ArrowRight className="h-3.5 w-3.5" /></Link>
-        </Button>
-      </div>
-      {isLoading ? (
-        <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">Fetching data, kindly wait.</div>
-      ) : error ? (
-        <div className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
-          {error instanceof Error ? error.message : "Unable to load the monitoring sheet."}
-        </div>
-      ) : (
-        <MonitoringTable rows={rows} emptyMessage="No Purchase Requests yet — create one to see it tracked here." />
-      )}
-    </section>
   );
 }
 
@@ -201,12 +162,14 @@ const kindStyles: Record<RecentItem["kind"], { icon: typeof FileText; tone: stri
   RFQ: { icon: ScrollText, tone: "bg-warning/15 text-warning-foreground" },
 };
 
-function RecentActivityCard({ libs, ppmps, rfqs, prs }: { libs: LibDoc[]; ppmps: PpmpForLib[]; rfqs: RfqDoc[]; prs: PurchaseRequest[] }) {
+function RecentActivityCard({ libs, ppmps, summary }: { libs: LibDoc[]; ppmps: PpmpForLib[]; summary: DashboardSummary | undefined }) {
+  const rfqs = summary?.recentRfqs ?? [];
+  const prs = summary?.recentPurchaseRequests ?? [];
   const items: RecentItem[] = [
     ...libs.map((l) => ({ key: `lib-${l.id}`, kind: "LIB" as const, title: l.projectTitle || "Untitled LIB", subtitle: `CY ${l.fiscalYear} · ${l.status}`, time: Date.parse(l.updatedAt || l.createdAt) || 0, to: "/planning/lib/new", search: { edit: l.id } })),
     ...ppmps.map((p) => ({ key: `ppmp-${p.id}`, kind: "PPMP" as const, title: p.ppmpNo || "PPMP", subtitle: `${p.endUserUnit} · FY ${p.fiscalYear}`, time: Date.parse(p.createdAt) || 0, to: "/planning/ppmp" })),
-    ...rfqs.map((r) => ({ key: `rfq-${r.id}`, kind: "RFQ" as const, title: r.quotationNo || "RFQ", subtitle: `${r.prNo}${r.supplierName ? ` · ${r.supplierName}` : ""}`, time: Date.parse(r.createdAt) || 0, to: "/rfq/$rfqId", params: { rfqId: r.id } })),
-    ...prs.map((p) => ({ key: `pr-${p.id}`, kind: "PR" as const, title: p.prNo, subtitle: `${p.office} · ${p.status}`, time: Date.parse(p.dateSubmitted) || 0, to: "/purchase-requests/$prId", params: { prId: p.id } })),
+    ...rfqs.map((r) => ({ key: `rfq-${r.id}`, kind: "RFQ" as const, title: r.rfqNo || "RFQ", subtitle: `${r.prNo ?? ""} · ${r.status}`, time: Date.parse(r.createdAt ?? "") || 0, to: "/rfq/$rfqId", params: { rfqId: r.id } })),
+    ...prs.map((p) => ({ key: `pr-${p.id}`, kind: "PR" as const, title: p.prNo, subtitle: `${p.office ?? "—"} · ${p.status}`, time: Date.parse(p.createdAt ?? "") || 0, to: "/purchase-requests/$prId", params: { prId: p.id } })),
   ]
     .sort((a, b) => b.time - a.time)
     .slice(0, 7);

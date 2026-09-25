@@ -60,7 +60,6 @@ function EntryForm({ row, onClose }: { row: MonitoringRow; onClose: () => void }
     onSuccess: async ({ message }) => {
       toast.success(message);
       await queryClient.invalidateQueries({ queryKey: ["purchase-requests-monitoring"] });
-      await queryClient.invalidateQueries({ queryKey: ["purchase-requests-monitoring-preview"] });
       onClose();
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to save the entry."),

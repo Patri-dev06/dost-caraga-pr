@@ -1,4 +1,4 @@
-import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Download, FilePlus2, Search, X } from "lucide-react";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import { PeriodFilter } from "@/components/app/period-filter";
 import { currentPeriodValue, periodText, type PeriodValue } from "@/lib/period";
 import { apiGetPurchaseRequestMonitoringPage, type MonitoringFilters, type MonitoringRow } from "@/lib/api";
 import { exportMonitoringSheetExcel } from "@/lib/monitoring-excel";
+import { PR_STAGE_LABELS } from "@/lib/pr-stages";
 import { useQuery } from "@tanstack/react-query";
 
 const PER_PAGE = 20;
@@ -32,11 +33,17 @@ export const Route = createFileRoute("/purchase-requests")({
       { name: "description", content: "Every Purchase Request traced through RFQ, AOC and PO, in the Supply Unit's monitoring sheet format." },
     ],
   }),
+  // `?stage=` narrows the sheet to one step of the flow — how the dashboard's stage counts link here.
+  validateSearch: (search: Record<string, unknown>): { stage?: string } => ({
+    stage: typeof search.stage === "string" && search.stage in PR_STAGE_LABELS ? search.stage : undefined,
+  }),
   component: PRListPage,
 });
 
 function PRListPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { stage } = Route.useSearch();
+  const navigate = useNavigate({ from: "/purchase-requests" });
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState<MonitoringRow | null>(null);
@@ -58,11 +65,17 @@ function PRListPage() {
   const filters: MonitoringFilters = {
     search: search || undefined,
     status: status === "all" ? undefined : status,
+    stage,
     date: period.period === "day" ? period.date : undefined,
     month: period.period === "month" ? period.month : undefined,
     year: period.period === "year" ? period.year : undefined,
   };
-  const filtered = Boolean(filters.search || filters.status || period.period !== "all");
+  const filtered = Boolean(filters.search || filters.status || stage || period.period !== "all");
+
+  function clearStage() {
+    void navigate({ search: {} });
+    setPage(1);
+  }
 
   // Every filter change starts again from the first page.
   function change<T>(set: (value: T) => void) {
@@ -77,6 +90,7 @@ function PRListPage() {
     setSearch("");
     setStatus("all");
     setPeriod(currentPeriodValue());
+    if (stage) void navigate({ search: {} });
     setPage(1);
   }
 
@@ -158,6 +172,14 @@ function PRListPage() {
               <span className="font-semibold text-navy">{data.total.toLocaleString()}</span>{" "}
               Purchase Request{data.total !== 1 ? "s" : ""} {periodPhrase(period)}
               {filters.status && <> · {filters.status}</>}
+              {stage && (
+                <span className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  {PR_STAGE_LABELS[stage]}
+                  <button type="button" onClick={clearStage} className="rounded-full hover:bg-primary/20" aria-label="Remove stage filter">
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
               {filters.search && <> · matching “{filters.search}”</>}
             </p>
           ) : (

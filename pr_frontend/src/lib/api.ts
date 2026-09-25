@@ -560,6 +560,7 @@ function mapMonitoringRow(row: BackendMonitoringRow): MonitoringRow {
 export type MonitoringFilters = {
   search?: string;
   status?: string;
+  stage?: string; // a key of the dashboard's PR stages (DashboardStage.key)
   date?: string; // YYYY-MM-DD
   month?: string; // YYYY-MM
   year?: string; // YYYY
@@ -581,6 +582,61 @@ export async function apiUpdateMonitoringEntry(prId: string, values: Record<stri
     body: { values },
   });
   return { message: result.message, data: mapMonitoringRow(result.data) };
+}
+
+/** One stage of the procurement flow and how many of the user's PRs sit in it. */
+export type DashboardStage = { key: string; label: string; count: number };
+
+export type FollowUpList<T> = { total: number; items: T[] };
+
+/** What the Supply team has to chase by hand, now that suppliers are contacted outside the system. */
+export type DashboardFollowUps = {
+  rfqRepliesDue: FollowUpList<{ rfqId: string; rfqNo: string | null; supplierName: string | null; contactNo: string | null; dueAt: string | null }>;
+  posWithSupplier: FollowUpList<{ poId: string; poNo: string | null; supplierName: string | null; contactNo: string | null; forwardedAt: string | null }>;
+  deliveriesDue: FollowUpList<{ prId: string; prNo: string | null; poNo: string | null; supplierName: string | null; dueDate: string | null }>;
+};
+
+export type DashboardSummary = {
+  purchaseRequests: { count: number; amount: number };
+  approvalsPending: number | null;
+  rfqs: { count: number; canvassing: number } | null;
+  purchaseOrders: { count: number; pending: number } | null;
+  stages: DashboardStage[];
+  followUps: DashboardFollowUps | null; // null unless the viewer is on the Supply team
+  recentPurchaseRequests: { id: string; prNo: string; office: string | null; status: string; createdAt: string | null }[];
+  recentRfqs: { id: string; rfqNo: string; prNo: string | null; status: string; createdAt: string | null }[];
+};
+
+type Raw = Record<string, unknown>;
+const str = (v: unknown) => (v == null ? null : String(v));
+
+/** The dashboard's counts, PR stages, Supply follow-ups and latest PRs/RFQs, in one call. */
+export async function apiGetDashboardSummary(): Promise<DashboardSummary> {
+  const { data } = await request<{ data: Raw }>("/dashboard/summary");
+  const f = data.follow_ups as Record<string, { total: number; items: Raw[] }> | null;
+  const list = <T,>(l: { total: number; items: Raw[] }, map: (r: Raw) => T): FollowUpList<T> => ({ total: l.total, items: l.items.map(map) });
+  const pr = data.purchase_requests as { count: number; amount: number | string };
+
+  return {
+    purchaseRequests: { count: pr.count, amount: Number(pr.amount) },
+    approvalsPending: (data.approvals_pending as number | null) ?? null,
+    rfqs: (data.rfqs as DashboardSummary["rfqs"]) ?? null,
+    purchaseOrders: (data.purchase_orders as DashboardSummary["purchaseOrders"]) ?? null,
+    stages: data.stages as DashboardStage[],
+    followUps: f
+      ? {
+          rfqRepliesDue: list(f.rfq_replies_due, (r) => ({ rfqId: String(r.rfq_id), rfqNo: str(r.rfq_no), supplierName: str(r.supplier_name), contactNo: str(r.contact_no), dueAt: str(r.due_at) })),
+          posWithSupplier: list(f.pos_with_supplier, (r) => ({ poId: String(r.po_id), poNo: str(r.po_no), supplierName: str(r.supplier_name), contactNo: str(r.contact_no), forwardedAt: str(r.forwarded_at) })),
+          deliveriesDue: list(f.deliveries_due, (r) => ({ prId: String(r.pr_id), prNo: str(r.pr_no), poNo: str(r.po_no), supplierName: str(r.supplier_name), dueDate: str(r.due_date) })),
+        }
+      : null,
+    recentPurchaseRequests: (data.recent_purchase_requests as Raw[]).map((r) => ({
+      id: String(r.id), prNo: String(r.pr_no ?? ""), office: str(r.office), status: String(r.status ?? ""), createdAt: str(r.created_at),
+    })),
+    recentRfqs: (data.recent_rfqs as Raw[]).map((r) => ({
+      id: String(r.id), rfqNo: String(r.rfq_no ?? ""), prNo: str(r.pr_no), status: String(r.status ?? ""), createdAt: str(r.created_at),
+    })),
+  };
 }
 
 /** The full Approval Inbox queue, one page at a time. */
