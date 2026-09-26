@@ -108,7 +108,8 @@ class ProcurementController extends Controller
             $query->where('office_id', $request->query('office_id'));
         }
 
-        $data = $query->latest('id')->paginate((int) $request->query('per_page', 15));
+        // Capped like every other list: never more than 100 records per request.
+        $data = $query->latest('id')->paginate(min((int) $request->query('per_page', 15), 100));
 
         return response()->json($data);
     }
@@ -2309,8 +2310,22 @@ class ProcurementController extends Controller
     {
         $this->guardModule('audit');
         $timezone = config('app.timezone', 'Asia/Manila');
-        $logs = AuditLog::latest('created_at')
-            ->paginate((int) $request->query('per_page', 15))
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'module' => ['nullable', 'string', 'max:100'],
+            'days' => ['nullable', 'integer', 'min:1', 'max:3650'],
+        ]);
+
+        // Search (actor, action, target), one module, and the last N days — all applied in SQL.
+        $logs = AuditLog::query()
+            ->when(trim((string) ($filters['search'] ?? '')) !== '', function (Builder $q) use ($filters): void {
+                $term = '%'.trim((string) $filters['search']).'%';
+                $q->where(fn (Builder $w) => $w->where('actor_name', 'like', $term)->orWhere('action', 'like', $term)->orWhere('target', 'like', $term));
+            })
+            ->when(! empty($filters['module']), fn (Builder $q) => $q->where('module', $filters['module']))
+            ->when(! empty($filters['days']), fn (Builder $q) => $q->where('created_at', '>=', now()->subDays((int) $filters['days'])))
+            ->latest('created_at')
+            ->paginate(min((int) $request->query('per_page', 15), 100))
             ->through(function (AuditLog $log) use ($timezone): array {
                 return [
                     'id' => $log->id,
@@ -2326,7 +2341,10 @@ class ProcurementController extends Controller
                 ];
             });
 
-        return response()->json($logs);
+        // The modules that have entries, for the page's module filter.
+        return response()->json(array_merge($logs->toArray(), [
+            'modules' => AuditLog::query()->distinct()->orderBy('module')->pluck('module'),
+        ]));
     }
 
     public function systemSettings(): JsonResponse
@@ -2815,6 +2833,7 @@ class ProcurementController extends Controller
             'search' => ['nullable', 'string', 'max:100'],
             'status' => ['nullable', 'string', 'max:200'],
             'stage' => ['nullable', Rule::in(array_keys(PurchaseRequest::STAGES))],
+            'requested_by' => ['nullable', 'integer'],
             'date' => ['nullable', 'date_format:Y-m-d'],
             'month' => ['nullable', 'date_format:Y-m'],
             'year' => ['nullable', 'integer', 'min:2000', 'max:2100'],
@@ -2832,6 +2851,11 @@ class ProcurementController extends Controller
 
         if (! empty($filters['stage'])) {
             $query->inStage($filters['stage']);
+        }
+
+        // One requester's PRs (e.g. User Management's "PRs by this user"), within what the viewer may see.
+        if (! empty($filters['requested_by'])) {
+            $query->where('requested_by', $filters['requested_by']);
         }
 
         if ($period = $this->monitoringPeriod($filters)) {
@@ -2965,7 +2989,7 @@ class ProcurementController extends Controller
             return $record;
         }
 
-        $record->loadMissing(['office', 'fundSource', 'project', 'ppmpDocument.libDocument', 'rePrOf', 'requester.roles', 'recommendingOfficer', 'items', 'validationResults', 'approvalActions']);
+        $record->loadMissing(['office', 'fundSource', 'project', 'ppmpDocument.libDocument', 'rePrOf', 'requester.roles', 'recommendingOfficer', 'items', 'validationResults', 'approvalActions.user']);
         $checks = $this->prChecks();
 
         return [
@@ -3009,7 +3033,15 @@ class ProcurementController extends Controller
             'purpose' => $record->purpose,
             'items' => $record->items,
             'validation' => $record->validationResults,
-            'approval_trail' => $record->approvalActions,
+            // The PR's real history, oldest first, with who acted.
+            'approval_trail' => $record->approvalActions->sortBy('id')->values()->map(fn ($a): array => [
+                'id' => $a->id,
+                'role' => $a->role,
+                'action' => $a->action,
+                'remarks' => $a->remarks,
+                'actor' => $a->user?->name,
+                'created_at' => $a->created_at?->toISOString(),
+            ]),
         ];
     }
 

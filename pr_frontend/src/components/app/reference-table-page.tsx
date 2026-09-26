@@ -1,6 +1,5 @@
 import { ReactNode } from "react";
-import { Download, Plus, Filter } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Filter } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,12 +16,7 @@ export function ReferenceTablePage({
         eyebrow={eyebrow}
         title={title}
         subtitle={subtitle}
-        actions={
-          actions ?? <>
-            <Button variant="outline" className="gap-2 border-border"><Download className="h-4 w-4" /> Import</Button>
-            <Button className="gap-2"><Plus className="h-4 w-4" /> Add Entry</Button>
-          </>
-        }
+        actions={actions}
       />
       <Card className="flex flex-col gap-3 border border-border bg-card p-3 sm:flex-row sm:items-center sm:p-4">
         <div className="flex min-w-0 flex-1 items-center gap-2">

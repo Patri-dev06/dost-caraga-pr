@@ -668,6 +668,7 @@ export type MonitoringFilters = {
   search?: string;
   status?: string;
   stage?: string; // a key of the dashboard's PR stages (DashboardStage.key)
+  requested_by?: string; // one requester's PRs (account id)
   date?: string; // YYYY-MM-DD
   month?: string; // YYYY-MM
   year?: string; // YYYY
@@ -924,9 +925,23 @@ export async function apiGetRoles() {
   return result.data.map(mapRole);
 }
 
-export async function apiGetAuditLogs() {
-  const result = await request<ApiList<BackendAudit>>("/audit-logs");
-  return result.data.map(mapAudit);
+export type AuditLogFilters = { search?: string; module?: string; days?: number };
+
+/** The audit trail, one page at a time, filtered on the server; also lists the modules that have entries. */
+export async function apiGetAuditLogsPage(page: number, perPage = 25, filters: AuditLogFilters = {}): Promise<Page<AuditLogRecord> & { modules: string[] }> {
+  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (filters.search) params.set("search", filters.search);
+  if (filters.module) params.set("module", filters.module);
+  if (filters.days) params.set("days", String(filters.days));
+  const result = await request<BackendPaginated<BackendAudit> & { modules?: string[] }>(`/audit-logs?${params.toString()}`);
+  return {
+    items: result.data.map(mapAudit),
+    page: result.current_page,
+    perPage: result.per_page,
+    total: result.total,
+    lastPage: result.last_page,
+    modules: result.modules ?? [],
+  };
 }
 
 export async function apiGetSystemSettings() {
@@ -1235,7 +1250,8 @@ type BackendApproval = {
   role: string | null;
   action: string;
   remarks: string | null;
-  created_at: string;
+  actor?: string | null;
+  created_at: string | null;
 };
 
 type BackendUser = {
@@ -1384,6 +1400,10 @@ function mapPurchaseRequest(pr: BackendPurchaseRequest): PurchaseRequest {
       ? { id: pr.recommending_officer.id, name: pr.recommending_officer.name, position: pr.recommending_officer.position ?? null }
       : null,
     recommendingDesignation: pr.recommending_designation ?? "",
+    approvalTrail: (pr.approval_trail ?? []).map((a) => ({
+      id: String(a.id), action: a.action, role: a.role, actor: a.actor ?? null, remarks: a.remarks, at: a.created_at,
+    })),
+    savedValidation: pr.validation?.map(mapValidation),
     approvingDesignation: pr.approving_designation ?? "",
     modeOfProcurement: pr.mode_of_procurement,
     projectTitle: pr.project_title ?? textFromRelation(pr.project, "No project assigned"),
@@ -1723,8 +1743,9 @@ export async function apiGetRfqs(filters?: { purchaseRequestId?: string | number
 }
 
 /** The RFQ list, one page at a time. */
-export async function apiGetRfqsPage(page: number, perPage = 20, filters?: { purchaseRequestId?: string | number; status?: string }): Promise<Page<Rfq>> {
+export async function apiGetRfqsPage(page: number, perPage = 20, filters?: { purchaseRequestId?: string | number; status?: string; search?: string }): Promise<Page<Rfq>> {
   const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+  if (filters?.search) params.set("search", filters.search);
   if (filters?.purchaseRequestId) params.set("purchase_request_id", String(filters.purchaseRequestId));
   if (filters?.status) params.set("status", filters.status);
   return fetchPage<BackendRfq, Rfq>(`/rfqs?${params.toString()}`, mapRfq);
@@ -2500,7 +2521,8 @@ function mapAudit(log: BackendAudit): AuditLogRecord {
 function mapSystemPreference(setting: BackendSystemPreference): SystemPreferenceRecord {
   return {
     key: setting.key,
-    value: typeof setting.value === "object" && setting.value !== null && "value" in setting.value ? setting.value.value ?? null : setting.value,
+    // Stored as { value: … } on the server; unwrap it (a bare value passes through).
+    value: setting.value !== null && typeof setting.value === "object" ? (setting.value.value ?? null) : setting.value,
     category: setting.category,
     label: setting.label,
     description: setting.description,

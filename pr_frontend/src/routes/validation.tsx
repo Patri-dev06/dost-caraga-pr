@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
 import { ValidationResultPanel } from "@/components/app/validation-result-panel";
-import { apiGetPurchaseRequests, apiValidatePurchaseRequest } from "@/lib/api";
+import { apiGetPurchaseRequest, apiGetPurchaseRequestMonitoringPage, apiValidatePurchaseRequest } from "@/lib/api";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -21,13 +22,29 @@ export const Route = createFileRoute("/validation")({
 });
 
 function ValidationPage() {
-  const { data: purchaseRequests = [] } = useQuery({
-    queryKey: ["purchase-requests"],
-    queryFn: apiGetPurchaseRequests,
+  // Search the PRs on the server (any of them, not just the newest page), then load the one picked.
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const { data: matches, isLoading: searching } = useQuery({
+    queryKey: ["validation-pr-search", search],
+    queryFn: () => apiGetPurchaseRequestMonitoringPage(1, 30, { search: search || undefined }),
+    placeholderData: (previous) => previous,
   });
+  const options = matches?.items ?? [];
+
   const [prId, setPrId] = useState("");
-  const selectedId = prId || purchaseRequests[0]?.id || "";
-  const pr = purchaseRequests.find((p) => p.id === selectedId);
+  const selectedId = prId || options[0]?.prId || "";
+  const { data: pr } = useQuery({
+    queryKey: ["purchase-request", selectedId],
+    queryFn: () => apiGetPurchaseRequest(selectedId),
+    enabled: selectedId !== "",
+  });
+
   const validation = useMutation({
     mutationFn: () => apiValidatePurchaseRequest(selectedId),
     onSuccess: () => toast.success("Validation completed against system references."),
@@ -43,14 +60,18 @@ function ValidationPage() {
       />
 
       <Card className="border border-border bg-card p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex-1">
-            <p className="label-eyebrow mb-1.5">Select Purchase Request</p>
-            <Select value={selectedId} onValueChange={setPrId}>
-              <SelectTrigger className="h-10 max-w-md border-border"><SelectValue /></SelectTrigger>
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+          <div>
+            <p className="label-eyebrow mb-1.5">Search</p>
+            <Input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="PR No. or purpose…" className="h-10 border-border" />
+          </div>
+          <div>
+            <p className="label-eyebrow mb-1.5">Purchase Request{matches ? ` (${matches.total.toLocaleString()} found)` : ""}</p>
+            <Select value={selectedId} onValueChange={(v) => { setPrId(v); validation.reset(); }}>
+              <SelectTrigger className="h-10 border-border"><SelectValue placeholder={searching ? "Searching…" : "No matches"} /></SelectTrigger>
               <SelectContent>
-                {purchaseRequests.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.prNo} · {p.office}</SelectItem>
+                {options.map((p) => (
+                  <SelectItem key={p.prId} value={p.prId}>{p.prNo} · {p.prStatus}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -60,9 +81,10 @@ function ValidationPage() {
       </Card>
 
       {pr ? (
-        <ValidationResultPanel items={pr.items} results={validation.data} />
+        // A fresh re-run, else the checks saved with the PR (switching PRs clears the re-run).
+        <ValidationResultPanel items={pr.items} results={validation.data ?? pr.savedValidation} />
       ) : (
-        <Card className="border border-border bg-card p-5 text-sm text-muted-foreground">No purchase requests found.</Card>
+        <Card className="border border-border bg-card p-5 text-sm text-muted-foreground">{searching ? "Searching…" : "No purchase requests found."}</Card>
       )}
     </div>
   );

@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
-import { apiGetPurchaseRequests, apiGetRoles, apiGetUsers, apiUpdateUser, type RoleRecord, type UserRecord, type UserTier } from "@/lib/api";
+import { apiGetPurchaseRequestMonitoringPage, apiGetRoles, apiGetUsers, apiUpdateUser, type RoleRecord, type UserRecord, type UserTier } from "@/lib/api";
 import { MODULE_LABELS, TOGGLEABLE_MODULES, type ModuleKey } from "@/lib/modules";
 import { useCurrentUser } from "@/lib/current-user";
 import { cn } from "@/lib/utils";
@@ -55,7 +55,6 @@ function UsersPage() {
   const qc = useQueryClient();
   const { data: users = [], isLoading: usersLoading } = useQuery({ queryKey: ["users"], queryFn: apiGetUsers });
   const { data: roles = [], isLoading: rolesLoading } = useQuery({ queryKey: ["roles"], queryFn: apiGetRoles });
-  const { data: prs = [] } = useQuery({ queryKey: ["purchase-requests"], queryFn: apiGetPurchaseRequests });
 
   const [editing, setEditing] = useState<UserRecord | null>(null);
 
@@ -155,7 +154,6 @@ function UsersPage() {
       <ManageAccessDialog
         user={editing}
         roles={roles}
-        prs={prs}
         onOpenChange={(open) => !open && setEditing(null)}
         onSaved={() => {
           qc.invalidateQueries({ queryKey: ["users"] });
@@ -169,20 +167,18 @@ function UsersPage() {
 function ManageAccessDialog({
   user,
   roles,
-  prs,
   onOpenChange,
   onSaved,
 }: {
   user: UserRecord | null;
   roles: RoleRecord[];
-  prs: { requestedBy: string; prNo: string; status: string }[];
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
 }) {
   return (
     <Dialog open={Boolean(user)} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] max-w-lg overflow-y-auto">
-        {user && <ManageAccessBody user={user} roles={roles} prs={prs} onSaved={onSaved} />}
+        {user && <ManageAccessBody user={user} roles={roles} onSaved={onSaved} />}
       </DialogContent>
     </Dialog>
   );
@@ -191,12 +187,10 @@ function ManageAccessDialog({
 function ManageAccessBody({
   user,
   roles,
-  prs,
   onSaved,
 }: {
   user: UserRecord;
   roles: RoleRecord[];
-  prs: { requestedBy: string; prNo: string; status: string }[];
   onSaved: () => void;
 }) {
   const [tier, setTier] = useState<UserTier>(user.tier);
@@ -207,7 +201,13 @@ function ManageAccessBody({
   const [roleIds, setRoleIds] = useState<number[]>(() => roles.filter((r) => user.roles.includes(r.name)).map((r) => r.id));
   const toggleRole = (id: number) => setRoleIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
 
-  const works = prs.filter((p) => p.requestedBy === user.name);
+  // This account's own PRs, fetched for it (by account, not by name — and not just the newest page).
+  const { data: worksPage } = useQuery({
+    queryKey: ["user-prs", user.id],
+    queryFn: () => apiGetPurchaseRequestMonitoringPage(1, 20, { requested_by: String(user.id) }),
+  });
+  const works = worksPage?.items ?? [];
+  const worksTotal = worksPage?.total ?? 0;
   const effective = effectiveModules(tier, granted);
 
   const mutation = useMutation({
@@ -344,17 +344,18 @@ function ManageAccessBody({
 
       {/* Their works */}
       <div className="space-y-2">
-        <p className="label-eyebrow flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" /> Purchase Requests by this user ({works.length})</p>
+        <p className="label-eyebrow flex items-center gap-1.5"><Briefcase className="h-3.5 w-3.5" /> Purchase Requests by this user ({worksTotal})</p>
         {works.length === 0 ? (
           <p className="text-xs text-muted-foreground">No purchase requests on record for this user.</p>
         ) : (
           <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-border p-2">
-            {works.slice(0, 20).map((w) => (
-              <li key={w.prNo} className="flex items-center justify-between text-xs">
+            {works.map((w) => (
+              <li key={w.prId} className="flex items-center justify-between text-xs">
                 <span className="font-medium text-navy">{w.prNo}</span>
-                <span className="text-muted-foreground">{w.status}</span>
+                <span className="text-muted-foreground">{w.prStatus}</span>
               </li>
             ))}
+            {worksTotal > works.length && <li className="pt-1 text-xs text-muted-foreground">+{worksTotal - works.length} more</li>}
           </ul>
         )}
       </div>

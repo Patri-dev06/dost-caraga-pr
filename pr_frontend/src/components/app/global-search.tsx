@@ -23,10 +23,9 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import { apiGetPurchaseRequests, hasValidToken } from "@/lib/api";
+import { apiGetPurchaseRequestMonitoringPage, apiGetRfqsPage, hasValidToken } from "@/lib/api";
 import { listLibs } from "@/lib/lib-store";
 import { listAllPpmps } from "@/lib/ppmp-store";
-import { listAllRfqs } from "@/lib/rfq-store";
 import { useCanAccess } from "@/lib/current-user";
 import type { ModuleKey } from "@/lib/modules";
 
@@ -60,8 +59,7 @@ export function GlobalSearch() {
   const [local, setLocal] = useState<{
     libs: ReturnType<typeof listLibs>;
     ppmps: ReturnType<typeof listAllPpmps>;
-    rfqs: ReturnType<typeof listAllRfqs>;
-  }>({ libs: [], ppmps: [], rfqs: [] });
+  }>({ libs: [], ppmps: [] });
 
   // ⌘K / Ctrl+K to open from anywhere.
   useEffect(() => {
@@ -78,13 +76,26 @@ export function GlobalSearch() {
   // Read the localStorage-backed modules fresh each time the palette opens.
   useEffect(() => {
     if (!open) return;
-    setLocal({ libs: listLibs(), ppmps: listAllPpmps(), rfqs: listAllRfqs() });
+    setLocal({ libs: listLibs(), ppmps: listAllPpmps() });
   }, [open]);
 
-  const { data: prs = [] } = useQuery({
-    queryKey: ["purchase-requests"],
-    queryFn: apiGetPurchaseRequests,
-    enabled: open && hasValidToken(),
+  // PRs and RFQs are searched on the server as you type (all of them, not just a first page).
+  const [term, setTerm] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setTerm(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+  const searching = open && term.length >= 2 && hasValidToken();
+  const { data: prPage } = useQuery({
+    queryKey: ["global-search-prs", term],
+    queryFn: () => apiGetPurchaseRequestMonitoringPage(1, 8, { search: term }),
+    enabled: searching && canAccess("pr"),
+    staleTime: 30_000,
+  });
+  const { data: rfqPage } = useQuery({
+    queryKey: ["global-search-rfqs", term],
+    queryFn: () => apiGetRfqsPage(1, 8, { search: term }),
+    enabled: searching && canAccess("rfq"),
     staleTime: 30_000,
   });
 
@@ -94,12 +105,12 @@ export function GlobalSearch() {
     fn();
   };
 
-  const prHits: Hit[] = prs.map((p) => ({
-    id: `pr-${p.id}`,
-    value: `pr ${p.prNo} ${p.office} ${p.projectTitle} ${p.purpose} ${p.fundSource} ${p.status}`,
-    title: p.prNo,
-    subtitle: `${p.office} · ${p.status}`,
-    onSelect: () => go(() => navigate({ to: "/purchase-requests/$prId", params: { prId: p.id } })),
+  const prHits: Hit[] = (prPage?.items ?? []).map((p) => ({
+    id: `pr-${p.prId}`,
+    value: `pr ${p.prNo} ${p.endUserUnit ?? ""} ${p.purpose ?? ""} ${p.charging ?? ""} ${p.prStatus ?? ""}`,
+    title: p.prNo ?? `PR #${p.prId}`,
+    subtitle: [p.endUserUnit, p.prStatus].filter(Boolean).join(" · "),
+    onSelect: () => go(() => navigate({ to: "/purchase-requests/$prId", params: { prId: p.prId } })),
   }));
 
   const libHits: Hit[] = local.libs.map((l) => ({
@@ -118,11 +129,11 @@ export function GlobalSearch() {
     onSelect: () => go(() => navigate({ to: "/planning/ppmp" })),
   }));
 
-  const rfqHits: Hit[] = local.rfqs.map((r) => ({
+  const rfqHits: Hit[] = (rfqPage?.items ?? []).map((r) => ({
     id: `rfq-${r.id}`,
-    value: `rfq ${r.quotationNo} ${r.prNo} ${r.supplierName} ${r.purpose} ${r.fundSource}`,
-    title: r.quotationNo || "RFQ",
-    subtitle: `${r.prNo}${r.supplierName ? ` · ${r.supplierName}` : ""}`,
+    value: `rfq ${r.rfqNo} ${r.prNo} ${r.status}`,
+    title: r.rfqNo || "RFQ",
+    subtitle: `PR ${r.prNo} · ${r.status}`,
     onSelect: () => go(() => navigate({ to: "/rfq/$rfqId", params: { rfqId: r.id } })),
   }));
 

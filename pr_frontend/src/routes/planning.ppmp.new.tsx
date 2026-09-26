@@ -1049,7 +1049,14 @@ function CreatePpmpPage() {
       if (!bounds) return d;
 
       if (direction === "up") {
-        const previousCategoryIndex = rows.findLastIndex((row, index) => index < bounds.start && row.isCategory);
+        // The nearest category above this block (a backwards scan — findLastIndex needs ES2023).
+        let previousCategoryIndex = -1;
+        for (let i = bounds.start - 1; i >= 0; i--) {
+          if (rows[i].isCategory) {
+            previousCategoryIndex = i;
+            break;
+          }
+        }
         if (previousCategoryIndex < 0) return d;
         const block = rows.splice(bounds.start, bounds.end - bounds.start);
         rows.splice(previousCategoryIndex, 0, ...block);

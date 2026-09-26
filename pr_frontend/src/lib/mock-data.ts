@@ -56,6 +56,20 @@ export interface PurchaseRequest {
   cancelledFrom?: "AOC" | "PO" | null;
   rePrOf?: { id: string; prNo: string } | null;
   rePr?: { id: string; prNo: string } | null;
+  /** The PR's real history (submitted, recommended, approved…), oldest first. */
+  approvalTrail?: PrTrailEntry[];
+  /** The checks as last run on this PR (saved with it), per item where they apply. */
+  savedValidation?: (ValidationCheck & { itemId?: string })[];
+}
+
+/** One step in a PR's approval history. */
+export interface PrTrailEntry {
+  id: string;
+  action: string;
+  role: string | null;
+  actor: string | null;
+  remarks: string | null;
+  at: string | null;
 }
 
 export const purchaseRequests: PurchaseRequest[] = [

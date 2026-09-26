@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowLeft, Ban, Download, Eye, FileSpreadsheet, Loader2, Pencil, RotateCcw } from "lucide-react";
+import { ArrowLeft, Ban, FileSpreadsheet, Loader2, Pencil, Printer, RotateCcw } from "lucide-react";
 import { exportPurchaseRequestExcel, PR_FORM_DEFAULTS } from "@/lib/pr-excel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -102,16 +102,14 @@ function PRDetail() {
                 </Link>
               </Button>
             )}
-            {pr.status !== "Draft" && pr.status !== "Returned" && (
-              // The PR form exactly as submitted, read-only.
-              <Button asChild variant="outline" className="gap-2 border-border">
-                <Link to="/purchase-requests/new" search={{ view: pr.id }}>
-                  <Eye className="h-4 w-4" /> View submitted PR
-                </Link>
-              </Button>
-            )}
+
             <Button variant="outline" className="gap-2 border-border" onClick={exportExcel}><FileSpreadsheet className="h-4 w-4" /> Export Excel</Button>
-            <Button variant="outline" className="gap-2 border-border"><Download className="h-4 w-4" /> Export PDF</Button>
+            {/* The PR form, read-only, with its own Print button (print or save as PDF). */}
+            <Button asChild variant="outline" className="gap-2 border-border">
+              <Link to="/purchase-requests/new" search={{ view: pr.id }}>
+                <Printer className="h-4 w-4" /> Print / PDF
+              </Link>
+            </Button>
           </>
         }
       />
@@ -232,12 +230,13 @@ function PRDetail() {
         </TabsContent>
 
         <TabsContent value="validation" className="mt-4">
-          <ValidationResultPanel items={pr.items} results={validationResults} />
+          {/* Live re-check while it can still change; the checks saved with it once approved or cancelled. */}
+          <ValidationResultPanel items={pr.items} results={validationResults ?? pr.savedValidation} />
         </TabsContent>
 
         <TabsContent value="trail" className="mt-4">
           <Card className="border border-border bg-card p-6">
-            <AuditTimeline />
+            <AuditTimeline entries={pr.approvalTrail ?? []} emptyText="Nothing recorded yet. The trail starts when the PR is submitted." />
           </Card>
         </TabsContent>
 

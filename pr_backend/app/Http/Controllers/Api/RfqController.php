@@ -38,6 +38,12 @@ class RfqController extends Controller
             $query->whereIn('status', explode(',', (string) $request->query('status')));
         }
 
+        // `search`: the RFQ No. or the PR No. it was generated from (the global search box).
+        if (($search = trim((string) $request->query('search', ''))) !== '') {
+            $query->where(fn ($q) => $q->where('rfq_no', 'like', "%{$search}%")
+                ->orWhereHas('purchaseRequest', fn ($pr) => $pr->where('pr_no', 'like', "%{$search}%")));
+        }
+
         // Never the whole table: capped, real pagination (defaults to 20/page).
         $page = $query->latest('id')->paginate(min((int) $request->query('per_page', 20), 100));
 
