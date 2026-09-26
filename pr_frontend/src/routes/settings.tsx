@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
+import { cn } from "@/lib/utils";
 import { apiGetSystemSettings, apiUpdateSystemSettings, apiGetSignatories, apiUpdateProfile, type SystemPreferenceRecord, type Signatory } from "@/lib/api";
 import { useCanAccess, useCurrentUser } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -270,6 +271,12 @@ function SystemPreferenceField({
   onChange: (value: SystemPreferenceRecord["value"]) => void;
 }) {
   const isUserPicker = setting.key.endsWith("_user_id");
+  // An officer post lists only accounts holding its role; the current choice stays visible (flagged) if not.
+  const role = setting.requiredRole;
+  const eligible = role ? users.filter((u) => u.roles.includes(role)) : users;
+  const current = users.find((u) => String(u.id) === String(value ?? ""));
+  const currentLacksRole = Boolean(role && current && !current.roles.includes(role));
+  const options = currentLacksRole && current ? [current, ...eligible] : eligible;
   return (
     <div className="rounded-md border border-border bg-secondary/20 p-3">
       <div className="flex items-start justify-between gap-4">
@@ -285,7 +292,8 @@ function SystemPreferenceField({
             <SelectValue placeholder="Select an account" />
           </SelectTrigger>
           <SelectContent>
-            {users.map((u) => (
+            {options.length === 0 && <div className="px-2 py-1.5 text-sm text-muted-foreground">No account holds the {role} role yet.</div>}
+            {options.map((u) => (
               <SelectItem key={u.id} value={String(u.id)}>
                 {u.name}
                 {u.position ? ` — ${u.position}` : ""}
@@ -293,15 +301,23 @@ function SystemPreferenceField({
             ))}
           </SelectContent>
         </Select>
-      ) : (
-        setting.type !== "boolean" && (
-          <Input
-            type={setting.type === "number" ? "number" : "text"}
-            value={value == null ? "" : String(value)}
-            onChange={(event) => onChange(setting.type === "number" ? Number(event.target.value) : event.target.value)}
-            className="mt-3 h-10 border-border bg-background"
-          />
-        )
+      ) : null}
+      {isUserPicker && role && (
+        <p className={cn("mt-1.5 text-xs", currentLacksRole || eligible.length === 0 ? "text-warning-foreground" : "text-muted-foreground")}>
+          {currentLacksRole
+            ? `${current?.name} does not hold the ${role} role. Give them the role in User Management, or choose a ${role} here.`
+            : eligible.length === 0
+              ? `No account holds the ${role} role. Assign it in User Management first.`
+              : `Only accounts with the ${role} role are listed.`}
+        </p>
+      )}
+      {!isUserPicker && setting.type !== "boolean" && (
+        <Input
+          type={setting.type === "number" ? "number" : "text"}
+          value={value == null ? "" : String(value)}
+          onChange={(event) => onChange(setting.type === "number" ? Number(event.target.value) : event.target.value)}
+          className="mt-3 h-10 border-border bg-background"
+        />
       )}
     </div>
   );

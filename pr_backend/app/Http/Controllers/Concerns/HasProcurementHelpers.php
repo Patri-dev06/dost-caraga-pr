@@ -19,6 +19,17 @@ use Illuminate\Support\Facades\Mail;
  */
 trait HasProcurementHelpers
 {
+    /**
+     * Settings designations that must go to an account holding the matching role (assigned in User
+     * Management), so the officer who signs is always one the role-based pickers also list.
+     */
+    private const DESIGNATION_ROLES = [
+        'bac_chair_user_id' => 'BAC Chairman',
+        'bac_vice_chair_user_id' => 'BAC Vice-Chairman',
+        'regional_director_user_id' => 'Regional Director',
+        'supply_officer_user_id' => 'Supply Officer',
+    ];
+
     /** Abort with 403 unless the current user may access the given module. */
     private function guardModule(string $module): void
     {

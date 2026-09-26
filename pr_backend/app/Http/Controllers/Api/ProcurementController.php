@@ -1207,6 +1207,7 @@ class ProcurementController extends Controller
         $validated = $this->validated($request, $resource, true);
         if ($record instanceof User && $request->has('role_ids')) {
             $this->abortIfSecondRegionalDirector((array) $request->input('role_ids', []), $record->id);
+            $this->abortIfRemovingDesignatedRole($record, (array) $request->input('role_ids', []));
         }
         $record->fill($validated)->save();
 
@@ -2352,8 +2353,10 @@ class ProcurementController extends Controller
         $this->guardModule('settings');
         $this->ensureDefaultSystemPreferences();
 
+        // Each officer designation carries the role its account must hold, for the picker's filter.
         return response()->json([
-            'data' => SystemPreference::orderBy('category')->orderBy('id')->get(),
+            'data' => SystemPreference::orderBy('category')->orderBy('id')->get()
+                ->map(fn (SystemPreference $p): array => $p->toArray() + ['required_role' => self::DESIGNATION_ROLES[$p->key] ?? null]),
         ]);
     }
 
@@ -2361,12 +2364,24 @@ class ProcurementController extends Controller
     {
         $this->guardModule('settings');
         abort_unless($request->user()?->roles->contains('name', 'Admin'), 403, 'Only administrators can update system preferences.');
+        $this->ensureDefaultSystemPreferences(); // every known key exists, even before Settings was first opened
 
         $data = $request->validate([
             'settings' => ['required', 'array'],
             'settings.*.key' => ['required', 'string', 'exists:system_preferences,key'],
             'settings.*.value' => ['nullable'],
         ]);
+
+        // An officer designation must go to an active account holding that office's role.
+        foreach ($data['settings'] as $setting) {
+            $role = self::DESIGNATION_ROLES[$setting['key']] ?? null;
+            if ($role === null || blank($setting['value'] ?? null)) {
+                continue;
+            }
+            $user = User::with('roles')->find((int) $setting['value']);
+            abort_unless($user && $user->status === 'Active' && $user->roles->contains('name', $role), 422,
+                ($user?->name ?? 'That account').' cannot be designated '.$role.': they do not hold the '.$role.' role. Assign it in User Management first.');
+        }
 
         foreach ($data['settings'] as $setting) {
             SystemPreference::where('key', $setting['key'])->update([
@@ -2635,6 +2650,24 @@ class ProcurementController extends Controller
         $this->audit($request, 'User Management', 'Created User', $user->email);
 
         return response()->json(['data' => $user->load('office', 'roles')], 201);
+    }
+
+    /**
+     * An account designated in Settings (e.g. as Regional Director) keeps that role until someone
+     * else is designated — otherwise the officer who signs would no longer hold the office's role.
+     *
+     * @param  array<int, int|string>  $roleIds
+     */
+    private function abortIfRemovingDesignatedRole(User $user, array $roleIds): void
+    {
+        $keeping = Role::whereIn('id', array_map('intval', $roleIds))->pluck('name');
+        $user->loadMissing('roles');
+        foreach (self::DESIGNATION_ROLES as $key => $role) {
+            $losing = $user->roles->contains('name', $role) && ! $keeping->contains($role);
+            if ($losing && (int) $this->preferenceValue($key, 0) === $user->id) {
+                abort(422, "{$user->name} is the designated {$role} in Settings. Designate someone else there before removing the role.");
+            }
+        }
     }
 
     /**

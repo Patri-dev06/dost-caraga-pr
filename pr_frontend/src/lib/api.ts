@@ -72,6 +72,8 @@ export type SystemPreferenceRecord = {
   label: string;
   description?: string | null;
   type: "text" | "number" | "boolean";
+  /** For an officer designation: the role its account must hold (only holders are offered). */
+  requiredRole?: string | null;
 };
 
 export type PpmpRecord = {
@@ -1301,6 +1303,7 @@ type BackendSystemPreference = {
   label: string;
   description: string | null;
   type: "text" | "number" | "boolean";
+  required_role?: string | null;
 };
 
 type BackendPpmpIndex = {
@@ -2527,6 +2530,7 @@ function mapSystemPreference(setting: BackendSystemPreference): SystemPreference
     label: setting.label,
     description: setting.description,
     type: setting.type,
+    requiredRole: setting.required_role ?? null,
   };
 }
 
