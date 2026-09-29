@@ -159,6 +159,34 @@ class ProcurementController extends Controller
         ]);
     }
 
+    /**
+     * Who a new Purchase Request would be routed to for recommendation, given the requester (the
+     * signed-in user, unless Admin/Superadmin is filing on someone's behalf) and the PPMP it is
+     * charged to so far — the same rule storePurchaseRequest() applies, computed ahead of saving so
+     * the create form can suggest it as the requester fills the form in.
+     */
+    public function recommendingOfficerSuggestion(Request $request): JsonResponse
+    {
+        $this->guardModule('pr');
+
+        $requesterId = $request->query('requested_by');
+        $requester = $requesterId && in_array($request->user()->tier, ['superadmin', 'admin'], true)
+            ? User::with('office')->find($requesterId)
+            : $request->user()?->loadMissing('office');
+
+        $ppmpUid = $request->query('ppmp_client_uid');
+        $ppmp = $ppmpUid ? PpmpDocument::with('project.fundSource')->where('client_uid', $ppmpUid)->first() : null;
+
+        $officer = $requester ? $this->resolveRecommendingOfficer($requester, $ppmp) : null;
+
+        return response()->json(['data' => $officer ? [
+            'id' => $officer->id,
+            'name' => $officer->name,
+            'position' => $officer->position ?: 'Recommending Officer',
+            'isCurrentUser' => $officer->id === $request->user()?->id,
+        ] : null]);
+    }
+
     /** The designated routing signatories (Budget Officer, Regional Director, BAC Chair/Vice-Chair). */
     public function workflowSignatories(Request $request): JsonResponse
     {
@@ -2023,6 +2051,18 @@ class ProcurementController extends Controller
      */
     private function completeSubmission(Request $request, PurchaseRequest $purchaseRequest): \Illuminate\Support\Collection
     {
+        // A draft saved before an office/LGIA mapping existed (or before a PPMP was charged) gets
+        // one more chance to resolve its recommending officer here, at the moment it actually matters.
+        if (! $purchaseRequest->recommending_officer_id) {
+            $purchaseRequest->loadMissing('requester.office', 'ppmpDocument.project.fundSource');
+            $officer = $purchaseRequest->requester
+                ? $this->resolveRecommendingOfficer($purchaseRequest->requester, $purchaseRequest->ppmpDocument)
+                : null;
+            if ($officer) {
+                $purchaseRequest->recommending_officer_id = $officer->id;
+            }
+        }
+
         $purchaseRequest->forceFill([
             'status' => 'For Recommendation',
             'stage' => $this->preferenceValue('recommending_approval_stage', 'Division Chief Recommendation'),
@@ -2419,17 +2459,28 @@ class ProcurementController extends Controller
         $this->abortUnlessCanRecommend($data['recommending_officer_id'] ?? null);
 
         $purchaseRequest = DB::transaction(function () use ($data, $request): PurchaseRequest {
+            // Only Admin/Superadmin may file a PR on someone else's behalf; everyone else is always the requester.
+            $requesterId = in_array($request->user()->tier, ['superadmin', 'admin'], true)
+                ? ($data['requested_by'] ?? $request->user()->id)
+                : $request->user()->id;
+
+            // The requester's choice wins; absent that, route by office (or the LGIA override) —
+            // an older/unmapped office leaves this null, falling back to a manual pick or any Recommender.
+            $recommendingOfficerId = $data['recommending_officer_id'] ?? null;
+            if (! $recommendingOfficerId) {
+                $requester = User::with('office')->find($requesterId);
+                $ppmp = ! empty($data['ppmp_document_id']) ? PpmpDocument::with('project.fundSource')->find($data['ppmp_document_id']) : null;
+                $recommendingOfficerId = $requester ? $this->resolveRecommendingOfficer($requester, $ppmp)?->id : null;
+            }
+
             $pr = PurchaseRequest::create([
                 'pr_no' => $this->nextPrNo(),
                 'office_id' => $data['office_id'],
                 'fund_source_id' => $data['fund_source_id'],
                 'project_id' => $data['project_id'] ?? null,
                 'ppmp_document_id' => $data['ppmp_document_id'] ?? null,
-                // Only Admin/Superadmin may file a PR on someone else's behalf; everyone else is always the requester.
-                'requested_by' => in_array($request->user()->tier, ['superadmin', 'admin'], true)
-                    ? ($data['requested_by'] ?? $request->user()->id)
-                    : $request->user()->id,
-                'recommending_officer_id' => $data['recommending_officer_id'] ?? null,
+                'requested_by' => $requesterId,
+                'recommending_officer_id' => $recommendingOfficerId,
                 'recommending_designation' => $data['recommending_designation'] ?? null,
                 'approving_designation' => $data['approving_designation'] ?? null,
                 'mode_of_procurement' => $data['mode_of_procurement'],
@@ -2805,7 +2856,7 @@ class ProcurementController extends Controller
 
         return match ($resource) {
             'roles' => $request->validate(['name' => [$required, 'string'], 'description' => ['nullable', 'string'], 'permissions' => ['nullable', 'array']]),
-            'offices' => $request->validate(['name' => [$required, 'string'], 'code' => ['nullable', 'string'], 'description' => ['nullable', 'string']]),
+            'offices' => $request->validate(['name' => [$required, 'string'], 'code' => ['nullable', 'string'], 'description' => ['nullable', 'string'], 'recommending_officer_id' => ['nullable', Rule::exists('users', 'id')->where('status', 'Active')]]),
             'fund-sources' => $request->validate(['name' => [$required, 'string'], 'fund_type' => [$required, 'string'], 'description' => ['nullable', 'string'], 'active' => ['sometimes', 'boolean']]),
             'projects' => $request->validate(['office_id' => ['nullable', 'exists:offices,id'], 'fund_source_id' => ['nullable', 'exists:fund_sources,id'], 'code' => [$required, 'string'], 'title' => [$required, 'string'], 'description' => ['nullable', 'string'], 'fiscal_year' => [$required, 'integer'], 'status' => ['sometimes', 'string']]),
             'procurement-items' => $request->validate(['name' => [$required, 'string'], 'description' => ['nullable', 'string'], 'category' => ['nullable', 'string'], 'uom' => [$required, 'string'], 'is_cse' => ['sometimes', 'boolean'], 'active' => ['sometimes', 'boolean']]),

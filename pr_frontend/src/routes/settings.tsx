@@ -8,7 +8,17 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
 import { cn } from "@/lib/utils";
-import { apiGetSystemSettings, apiUpdateSystemSettings, apiGetSignatories, apiUpdateProfile, type SystemPreferenceRecord, type Signatory } from "@/lib/api";
+import {
+  apiGetSystemSettings,
+  apiUpdateSystemSettings,
+  apiGetSignatories,
+  apiUpdateProfile,
+  apiGetOffices,
+  apiUpdateOfficeRecommendingOfficer,
+  type SystemPreferenceRecord,
+  type Signatory,
+  type OfficeRecord,
+} from "@/lib/api";
 import { useCanAccess, useCurrentUser } from "@/lib/current-user";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -64,6 +74,21 @@ function SettingsPage() {
     queryKey: ["signatories"],
     queryFn: () => apiGetSignatories(),
     enabled: canManageSystem,
+  });
+  const { data: offices = [], isLoading: officesLoading } = useQuery({
+    queryKey: ["offices"],
+    queryFn: apiGetOffices,
+    enabled: canManageSystem,
+  });
+  const updateOfficeRecommender = useMutation({
+    mutationFn: ({ officeId, userId }: { officeId: number; userId: number | null }) => apiUpdateOfficeRecommendingOfficer(officeId, userId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<OfficeRecord[]>(["offices"], (current) => (current ?? []).map((o) => (o.id === updated.id ? updated : o)));
+      toast.success(`Recommending officer updated for ${updated.name}.`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Unable to update the recommending officer.");
+    },
   });
   const updateSettings = useMutation({
     mutationFn: apiUpdateSystemSettings,
@@ -209,6 +234,38 @@ function SettingsPage() {
       </Card>
       )}
 
+      {canManageSystem && (
+      <Card className="border border-border bg-card p-6">
+        <div>
+          <p className="label-eyebrow">Workflow</p>
+          <h3 className="mt-1 text-base font-bold text-navy">Recommending Officers by Office</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            A submitted Purchase Request is routed to its requester&apos;s office recommender automatically. Leave an
+            office blank to fall back to a manual pick, or any account with the Recommender role. The LGIA
+            Recommending Officer above overrides this for a PR charged to an LGIA-funded project, regardless of office.
+          </p>
+        </div>
+
+        {officesLoading ? (
+          <div className="mt-5 rounded-md border border-border bg-secondary/25 p-4 text-sm text-muted-foreground">
+            Fetching offices, kindly wait.
+          </div>
+        ) : (
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+            {offices.map((office) => (
+              <OfficeRecommenderField
+                key={office.id}
+                office={office}
+                users={signatories}
+                saving={updateOfficeRecommender.isPending && updateOfficeRecommender.variables?.officeId === office.id}
+                onChange={(userId) => updateOfficeRecommender.mutate({ officeId: office.id, userId })}
+              />
+            ))}
+          </div>
+        )}
+      </Card>
+      )}
+
       <Card className="border border-border bg-card p-6">
         <p className="label-eyebrow">Notifications</p>
         <h3 className="mt-1 text-base font-bold text-navy">Email Notifications</h3>
@@ -318,6 +375,46 @@ function SystemPreferenceField({
           onChange={(event) => onChange(setting.type === "number" ? Number(event.target.value) : event.target.value)}
           className="mt-3 h-10 border-border bg-background"
         />
+      )}
+    </div>
+  );
+}
+
+function OfficeRecommenderField({
+  office,
+  users,
+  saving,
+  onChange,
+}: {
+  office: OfficeRecord;
+  users: Signatory[];
+  saving: boolean;
+  onChange: (userId: number | null) => void;
+}) {
+  const current = users.find((u) => u.id === office.recommendingOfficerId);
+  return (
+    <div className="rounded-md border border-border bg-secondary/20 p-3">
+      <Label className="label-eyebrow">{office.name}{office.code ? ` (${office.code})` : ""}</Label>
+      <Select
+        value={office.recommendingOfficerId == null ? "__none__" : String(office.recommendingOfficerId)}
+        onValueChange={(v) => onChange(v === "__none__" ? null : Number(v))}
+        disabled={saving}
+      >
+        <SelectTrigger className="mt-3 h-10 border-border bg-background">
+          <SelectValue placeholder="No automatic routing — manual pick" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">No automatic routing — manual pick</SelectItem>
+          {users.map((u) => (
+            <SelectItem key={u.id} value={String(u.id)}>
+              {u.name}
+              {u.position ? ` — ${u.position}` : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {!current && office.recommendingOfficerId != null && (
+        <p className="mt-1.5 text-xs text-warning-foreground">This account is no longer active.</p>
       )}
     </div>
   );

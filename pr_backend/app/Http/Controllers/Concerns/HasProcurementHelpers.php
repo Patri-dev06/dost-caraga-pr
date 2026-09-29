@@ -251,6 +251,14 @@ trait HasProcurementHelpers
                 'type' => 'text',
             ],
             [
+                'key' => 'lgia_recommending_user_id',
+                'value' => ['value' => null],
+                'category' => 'Workflow',
+                'label' => 'LGIA Recommending Officer',
+                'description' => 'A Purchase Request charged to a Project-class PPMP whose fund source is typed "LGIA" is routed here for recommendation, instead of the requester\'s office default.',
+                'type' => 'text',
+            ],
+            [
                 'key' => 'regular_fund_types',
                 'value' => ['value' => 'GAA'],
                 'category' => 'Procurement',
@@ -331,6 +339,30 @@ trait HasProcurementHelpers
         $id = $this->preferenceValue('regional_director_user_id', null);
 
         return $id ? User::find((int) $id) : null;
+    }
+
+    private function designatedLgiaRecommendingOfficer(): ?User
+    {
+        $id = $this->preferenceValue('lgia_recommending_user_id', null);
+
+        return $id ? User::where('status', 'Active')->find((int) $id) : null;
+    }
+
+    /**
+     * Who a Purchase Request is routed to for recommendation: the LGIA officer, when it is charged
+     * to a Project-class PPMP whose fund source is typed "LGIA"; otherwise the requester's office
+     * default. Null when neither applies — the caller falls back to a manual pick or any Recommender.
+     */
+    private function resolveRecommendingOfficer(\App\Models\User $requester, ?\App\Models\PpmpDocument $ppmp): ?User
+    {
+        $fundType = mb_strtoupper((string) ($ppmp?->project?->fundSource?->fund_type ?? ''));
+        if ($fundType === 'LGIA' && ($lgia = $this->designatedLgiaRecommendingOfficer())) {
+            return $lgia;
+        }
+
+        $officeOfficerId = $requester->office?->recommending_officer_id;
+
+        return $officeOfficerId ? User::where('status', 'Active')->find($officeOfficerId) : null;
     }
 
     private function designatedBacChair(): ?User

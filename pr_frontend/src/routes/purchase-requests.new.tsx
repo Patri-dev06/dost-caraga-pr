@@ -10,6 +10,7 @@ import {
   apiGetPurchaseRequest,
   apiGetPurchaseRequestUsage,
   apiGetWorkflowSignatories,
+  apiGetRecommendingOfficerSuggestion,
   apiSubmitPurchaseRequest,
   apiUpdatePurchaseRequest,
   type PurchaseRequestCreatePayload,
@@ -446,6 +447,21 @@ function NewPR() {
     const rd = workflowSignatories?.regionalDirector;
     return rd ? [{ id: rd.id, name: rd.name, tier: "regular", position: rd.position, roles: ["Regional Director"] }] : [];
   }, [directorHolders, workflowSignatories]);
+
+  // Who the requester's office (or, for an LGIA-charged PPMP, the LGIA override) routes this PR to —
+  // suggested as soon as it can be worked out, and re-checked once "Charged to" is picked.
+  const { data: recommendedOfficer } = useQuery({
+    queryKey: ["recommending-officer-suggestion", selectedPpmp?.id ?? null],
+    queryFn: () => apiGetRecommendingOfficerSuggestion({ ppmpClientUid: selectedPpmp?.id }),
+    enabled: !existing,
+    staleTime: 30_000,
+  });
+  useEffect(() => {
+    if (existing || recOfficerId || !recommendedOfficer) return;
+    setRecName(recommendedOfficer.name);
+    setRecOfficerId(recommendedOfficer.id);
+    setRecDesig(recommendedOfficer.position);
+  }, [existing, recOfficerId, recommendedOfficer]);
 
   // "Requested by" is always the signed-in user — auto-fill their name and
   // position on a brand-new PR (never override an existing/edited one).

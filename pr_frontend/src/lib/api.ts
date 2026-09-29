@@ -872,6 +872,19 @@ export async function apiGetWorkflowSignatories(): Promise<WorkflowSignatories> 
   return result.data;
 }
 
+/**
+ * Who a new Purchase Request would be routed to for recommendation, given the requester and (once
+ * picked) the PPMP it is charged to — the office/LGIA routing rule, computed ahead of saving.
+ */
+export async function apiGetRecommendingOfficerSuggestion(params: { requestedBy?: number; ppmpClientUid?: string } = {}): Promise<WorkflowSignatory | null> {
+  const query = new URLSearchParams();
+  if (params.requestedBy) query.set("requested_by", String(params.requestedBy));
+  if (params.ppmpClientUid) query.set("ppmp_client_uid", params.ppmpClientUid);
+  const qs = query.toString();
+  const result = await request<{ data: WorkflowSignatory | null }>(`/purchase-requests/recommending-officer-suggestion${qs ? `?${qs}` : ""}`);
+  return result.data;
+}
+
 export type AppNotification = {
   id: number;
   type: string;
@@ -957,6 +970,41 @@ export async function apiUpdateSystemSettings(settings: Array<Pick<SystemPrefere
     body: { settings },
   });
   return result.data.map(mapSystemPreference);
+}
+
+export type OfficeRecord = {
+  id: number;
+  name: string;
+  code: string | null;
+  description: string | null;
+  recommendingOfficerId: number | null;
+};
+
+type BackendOffice = { id: number; name: string; code?: string | null; description?: string | null; recommending_officer_id?: number | null };
+
+function mapOffice(office: BackendOffice): OfficeRecord {
+  return {
+    id: office.id,
+    name: office.name,
+    code: office.code ?? null,
+    description: office.description ?? null,
+    recommendingOfficerId: office.recommending_officer_id ?? null,
+  };
+}
+
+/** Every office — who a PR from it is routed to for recommendation (Settings-managed). */
+export async function apiGetOffices(): Promise<OfficeRecord[]> {
+  const result = await request<ApiList<BackendOffice>>("/offices");
+  return result.data.map(mapOffice);
+}
+
+/** Sets (or clears) an office's designated recommending officer. */
+export async function apiUpdateOfficeRecommendingOfficer(officeId: number, recommendingOfficerId: number | null): Promise<OfficeRecord> {
+  const result = await request<{ data: BackendOffice }>(`/offices/${officeId}`, {
+    method: "PUT",
+    body: { recommending_officer_id: recommendingOfficerId },
+  });
+  return mapOffice(result.data);
 }
 
 export async function apiGetPpmp(projectId = 1) {
