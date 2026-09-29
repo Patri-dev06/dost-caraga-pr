@@ -826,10 +826,10 @@ export async function apiGetApprovals(limit?: number, perPage = 100) {
   return result.data.map(mapPurchaseRequest);
 }
 
-export async function apiApprovalAction(id: string | number, action: "recommend" | "approve" | "reject", reason?: string) {
+export async function apiApprovalAction(id: string | number, action: "recommend" | "approve" | "reject" | "return", reason?: string) {
   return request<ApiRecord<BackendPurchaseRequest> & { message: string }>(`/approvals/${id}/${action}`, {
     method: "POST",
-    body: action === "reject" ? { reason: reason || "Rejected from approval inbox." } : { remarks: reason },
+    body: action === "reject" || action === "return" ? { reason } : { remarks: reason },
   });
 }
 

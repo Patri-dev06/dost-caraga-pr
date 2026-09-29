@@ -36,6 +36,7 @@ const PER_PAGE = 20;
 
 function Inbox() {
   const [open, setOpen] = useState<PurchaseRequest | null>(null);
+  const [remarks, setRemarks] = useState("");
   const queryClient = useQueryClient();
   const { user } = useCurrentUser();
   const search = Route.useSearch();
@@ -58,15 +59,25 @@ function Inbox() {
   });
   const queue = prPageData?.items ?? [];
   const actionMutation = useMutation({
-    mutationFn: ({ id, action, reason }: { id: string; action: "recommend" | "approve" | "reject"; reason?: string }) => apiApprovalAction(id, action, reason),
+    mutationFn: ({ id, action, reason }: { id: string; action: "recommend" | "approve" | "reject" | "return"; reason?: string }) => apiApprovalAction(id, action, reason),
     onSuccess: async (result) => {
       toast.success(result.message);
       setOpen(null);
+      setRemarks("");
       await queryClient.invalidateQueries({ queryKey: ["approvals"] });
       await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to complete approval action."),
   });
+  // Reject and Return both require a reason — everything else sends the free-text remarks as-is.
+  const runAction = (action: "recommend" | "approve" | "reject" | "return") => {
+    if ((action === "reject" || action === "return") && !remarks.trim()) {
+      toast.error(`Add a remark explaining why before you ${action === "reject" ? "reject" : "return"} this Purchase Request.`);
+      return;
+    }
+    if (!open) return;
+    actionMutation.mutate({ id: open.id, action, reason: remarks.trim() || undefined });
+  };
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
@@ -136,7 +147,7 @@ function Inbox() {
                 <TableCell className="text-muted-foreground">{pr.stage}</TableCell>
                 <TableCell><StatusBadge status={pr.status} /></TableCell>
                 <TableCell className="text-right">
-                  <Button size="sm" variant="outline" className="gap-1.5 border-border" onClick={() => setOpen(pr)}>
+                  <Button size="sm" variant="outline" className="gap-1.5 border-border" onClick={() => { setOpen(pr); setRemarks(""); }}>
                     <Eye className="h-3.5 w-3.5" /> Review
                   </Button>
                 </TableCell>
@@ -153,7 +164,7 @@ function Inbox() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={!!open} onOpenChange={(v) => !v && setOpen(null)}>
+      <Dialog open={!!open} onOpenChange={(v) => { if (!v) { setOpen(null); setRemarks(""); } }}>
         <DialogContent className="max-w-2xl">
           {open && (
             <>
@@ -176,21 +187,22 @@ function Inbox() {
               </div>
 
               <div>
-                <p className="label-eyebrow mb-1.5">Remarks (required for Reject)</p>
-                <Textarea rows={3} placeholder="Add remarks…" className="border-border" />
+                <p className="label-eyebrow mb-1.5">Remarks (required for Return / Reject)</p>
+                <Textarea rows={3} placeholder="Add remarks…" className="border-border" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
               </div>
 
               <DialogFooter className="flex-wrap gap-2 sm:justify-between">
                 <div className="flex gap-2">
-                  <Button variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => actionMutation.mutate({ id: open.id, action: "reject", reason: "Rejected from approval inbox." })}>Reject</Button>
+                  <Button variant="outline" className="border-warning/50 text-warning-foreground hover:bg-warning/10" onClick={() => runAction("return")}>Return</Button>
+                  <Button variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => runAction("reject")}>Reject</Button>
                 </div>
                 <div className="flex gap-2">
                   {/* Only the action for this PR's actual stage: Recommend while it's For Recommendation, Approve once it's been recommended (For Approval). */}
                   {open.status === "For Recommendation" && (
-                    <Button variant="outline" className="border-border" onClick={() => actionMutation.mutate({ id: open.id, action: "recommend" })}>Recommend</Button>
+                    <Button variant="outline" className="border-border" onClick={() => runAction("recommend")}>Recommend</Button>
                   )}
                   {open.status === "For Approval" && (
-                    <Button onClick={() => actionMutation.mutate({ id: open.id, action: "approve" })}>Approve</Button>
+                    <Button onClick={() => runAction("approve")}>Approve</Button>
                   )}
                 </div>
               </DialogFooter>

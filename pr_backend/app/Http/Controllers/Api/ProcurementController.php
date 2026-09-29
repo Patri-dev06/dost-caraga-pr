@@ -2283,15 +2283,53 @@ class ProcurementController extends Controller
     public function reject(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->guardModule('approvals');
-        $this->abortUnlessDesignatedApprover($request->user());
         abort_unless(in_array($purchaseRequest->status, ['For Recommendation', 'For Approval'], true), 422, "Only a Purchase Request under review can be rejected (this one is {$purchaseRequest->status}).");
+        $role = $this->abortUnlessCanActOnPr($request->user(), $purchaseRequest);
         $data = $request->validate(['reason' => ['required', 'string']]);
         $purchaseRequest->forceFill(['status' => 'Rejected', 'stage' => 'Rejected'])->save();
-        $this->recordAction($request, $purchaseRequest, 'Approver', 'Rejected', $data['reason']);
+        $this->recordAction($request, $purchaseRequest, $role, 'Rejected', $data['reason']);
         $this->notify($purchaseRequest->requester, 'pr_rejected', 'Purchase Request rejected',
             "{$purchaseRequest->pr_no} was rejected: {$data['reason']}", "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id]);
 
         return response()->json(['message' => 'Purchase Request rejected.', 'data' => $this->format($purchaseRequest->fresh())]);
+    }
+
+    /**
+     * Sends a PR back to the requester for minor corrections, instead of rejecting it outright —
+     * available to whoever may currently act on it (the recommending officer while it awaits
+     * recommendation, or the Regional Director once it has been recommended). The PR reopens as
+     * Draft-editable ("Returned") and can be resubmitted through the normal submit flow.
+     */
+    public function returnPurchaseRequestForRevision(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->guardModule('approvals');
+        abort_unless(in_array($purchaseRequest->status, ['For Recommendation', 'For Approval'], true), 422, "Only a Purchase Request under review can be returned (this one is {$purchaseRequest->status}).");
+        $role = $this->abortUnlessCanActOnPr($request->user(), $purchaseRequest);
+        $data = $request->validate(['reason' => ['required', 'string']]);
+        $purchaseRequest->forceFill(['status' => 'Returned', 'stage' => "Returned by {$role}"])->save();
+        $this->recordAction($request, $purchaseRequest, $role, 'Returned', $data['reason']);
+        $this->notify($purchaseRequest->requester, 'pr_returned', 'Purchase Request returned for revision',
+            "{$purchaseRequest->pr_no} was returned: {$data['reason']}", "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id]);
+
+        return response()->json(['message' => 'Purchase Request returned to the requester.', 'data' => $this->format($purchaseRequest->fresh())]);
+    }
+
+    /**
+     * Who may act on a PR right now, given its stage: the recommending officer while it awaits
+     * recommendation, the Regional Director once it has been recommended. A superadmin always may.
+     * Returns the role label ("Recommender"/"Approver") to record on the resulting approval action.
+     */
+    private function abortUnlessCanActOnPr(?User $user, PurchaseRequest $purchaseRequest): string
+    {
+        if ($purchaseRequest->status === 'For Recommendation') {
+            $this->abortUnlessRecommender($user, $purchaseRequest);
+
+            return 'Recommender';
+        }
+
+        $this->abortUnlessDesignatedApprover($user);
+
+        return 'Approver';
     }
 
     /** Tells everyone who can recommend a PR (anyone with the Recommender role) that it is waiting. */

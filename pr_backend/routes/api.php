@@ -101,6 +101,7 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/approvals/{purchaseRequest}/recommend', [ProcurementController::class, 'recommend']);
         Route::post('/approvals/{purchaseRequest}/approve', [ProcurementController::class, 'approve']);
         Route::post('/approvals/{purchaseRequest}/reject', [ProcurementController::class, 'reject']);
+        Route::post('/approvals/{purchaseRequest}/return', [ProcurementController::class, 'returnPurchaseRequestForRevision']);
 
         Route::get('/rfqs', [RfqController::class, 'index']);
         Route::post('/rfqs', [RfqController::class, 'store']);
