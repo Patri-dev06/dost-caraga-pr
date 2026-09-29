@@ -185,7 +185,7 @@ export function GlobalSearch() {
       <CommandDialog open={open} onOpenChange={setOpen}>
         <CommandInput placeholder="Search purchase requests, budgets, PPMP, RFQ…" value={query} onValueChange={setQuery} />
         <CommandList>
-          <CommandEmpty>No matches found.</CommandEmpty>
+          <CommandEmpty>{query.trim() ? `No matches found for “${query.trim()}”.` : "Type to search."}</CommandEmpty>
           {group("Purchase Requests", ShoppingCart, prHits, "pr")}
           {group("Line Item Budgets", FileText, libHits, "lib")}
           {group("PPMP", BookOpen, ppmpHits, "ppmp")}

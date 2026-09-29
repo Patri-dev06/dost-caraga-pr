@@ -1,30 +1,48 @@
 import { Link } from "@tanstack/react-router";
-import { Pencil } from "lucide-react";
+import { Eye, Pencil, SearchX } from "lucide-react";
 import type { MonitoringRow } from "@/lib/api";
 import { MONITORING_COLUMNS } from "@/lib/monitoring-columns";
+import { MonitoringCell } from "@/components/app/monitoring-cell";
 import { cn } from "@/lib/utils";
 
 /**
- * The Procurement Monitoring Sheet's table, on the Purchase Requests page. With `onEdit`, rows the
- * viewer may edit get a leading pencil that opens the Supply team's editor.
+ * The Procurement Monitoring Sheet's table, on the Purchase Requests page. Every row gets a leading
+ * "view" button that opens the whole entry (`onView`); rows the viewer may edit also get the Supply
+ * team's pencil (`onEdit`). Long and list cells open their full text on click.
  */
 export function MonitoringTable({
   rows,
   emptyMessage = "No Purchase Requests yet.",
+  emptyHint,
   onEdit,
+  onView,
 }: {
   rows: MonitoringRow[];
   emptyMessage?: string;
+  emptyHint?: string;
   onEdit?: (row: MonitoringRow) => void;
+  onView?: (row: MonitoringRow) => void;
 }) {
+  // Nothing to show: a small centered note in the card — not a cell stretched across 60 columns.
+  if (rows.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-4 py-12 text-center">
+        <SearchX className="mb-2 h-6 w-6 text-muted-foreground/60" strokeWidth={1.5} />
+        <p className="text-sm font-medium text-navy">{emptyMessage}</p>
+        {emptyHint && <p className="mt-1 text-xs text-muted-foreground">{emptyHint}</p>}
+      </div>
+    );
+  }
+
   const editable = onEdit !== undefined && rows.some((r) => r.canEdit);
+  const actions = onView !== undefined || editable;
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-card">
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr className="bg-secondary/40">
-            {editable && <th className="sticky left-0 z-10 w-9 border-b border-r border-border bg-secondary px-1 py-2" aria-label="Edit" />}
+            {actions && <th className="sticky left-0 z-10 border-b border-r border-border bg-secondary px-1 py-2" aria-label="Actions" />}
             {MONITORING_COLUMNS.map((c, i) => (
               <th
                 key={i}
@@ -40,28 +58,38 @@ export function MonitoringTable({
           </tr>
         </thead>
         <tbody>
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={MONITORING_COLUMNS.length + (editable ? 1 : 0)} className="px-4 py-8 text-center text-muted-foreground">
-                {emptyMessage}
-              </td>
-            </tr>
-          )}
           {rows.map((row) => (
-            <tr key={row.prId} className="group hover:bg-secondary/20">
-              {editable && (
-                <td className="sticky left-0 z-10 border-b border-r border-border bg-card px-1 py-1 text-center group-hover:bg-secondary">
-                  {row.canEdit && (
-                    <button
-                      type="button"
-                      onClick={() => onEdit?.(row)}
-                      className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-primary/10 hover:text-primary"
-                      title={`Edit ${row.prNo ?? "entry"}`}
-                      aria-label={`Edit ${row.prNo ?? "entry"}`}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+            <tr key={row.prId} className="group align-top hover:bg-secondary/20">
+              {actions && (
+                <td className="sticky left-0 z-10 border-b border-r border-border bg-card px-1 py-1 group-hover:bg-secondary">
+                  <div className="flex items-center gap-0.5">
+                    {onView && (
+                      <button
+                        type="button"
+                        onClick={() => onView(row)}
+                        className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                        title={`View the whole entry for ${row.prNo ?? "this PR"}`}
+                        aria-label={`View ${row.prNo ?? "entry"}`}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {editable && (
+                      row.canEdit ? (
+                        <button
+                          type="button"
+                          onClick={() => onEdit?.(row)}
+                          className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                          title={`Edit ${row.prNo ?? "entry"}`}
+                          aria-label={`Edit ${row.prNo ?? "entry"}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      ) : (
+                        <span className="inline-block h-6 w-6" />
+                      )
+                    )}
+                  </div>
                 </td>
               )}
               {MONITORING_COLUMNS.map((c, i) => {
@@ -79,10 +107,9 @@ export function MonitoringTable({
                 return (
                   <td
                     key={i}
-                    className={cn("max-w-[16rem] truncate border-b border-r border-border px-2 py-1.5 last:border-r-0", c.field && "bg-muted/10")}
-                    title={value || undefined}
+                    className={cn("max-w-[16rem] border-b border-r border-border px-2 py-1.5 last:border-r-0", c.field && "bg-muted/10")}
                   >
-                    {value}
+                    <MonitoringCell value={value} label={c.label} list={c.list} />
                   </td>
                 );
               })}

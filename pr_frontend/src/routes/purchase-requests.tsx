@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { ListPagination } from "@/components/app/list-pagination";
 import { MonitoringTable } from "@/components/app/monitoring-table";
 import { MonitoringEntryDialog } from "@/components/app/monitoring-entry-dialog";
+import { MonitoringEntryPanel } from "@/components/app/monitoring-entry-panel";
 import { PeriodFilter } from "@/components/app/period-filter";
 import { currentPeriodValue, periodText, type PeriodValue } from "@/lib/period";
 import { apiGetPurchaseRequestMonitoringPage, type MonitoringFilters, type MonitoringRow } from "@/lib/api";
@@ -47,6 +48,7 @@ function PRListPage() {
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState<MonitoringRow | null>(null);
+  const [viewing, setViewing] = useState<MonitoringRow | null>(null);
 
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -201,12 +203,37 @@ function PRListPage() {
           <MonitoringTable
             rows={rows}
             onEdit={setEditing}
-            emptyMessage={filtered ? "No Purchase Requests match these filters." : "No Purchase Requests yet."}
+            onView={setViewing}
+            emptyMessage={
+              filters.search
+                ? `No Purchase Request found for “${filters.search}”`
+                : filtered
+                  ? "No Purchase Requests match these filters."
+                  : "No Purchase Requests yet."
+            }
+            emptyHint={
+              filtered
+                ? [
+                    filters.search && period.period !== "all" ? `Searched ${periodPhrase(period)}.` : null,
+                    filters.status ? `Status: ${filters.status}.` : null,
+                    stage ? `Step: ${PR_STAGE_LABELS[stage]}.` : null,
+                    "Check the spelling or clear the filters.",
+                  ].filter(Boolean).join(" ")
+                : undefined
+            }
           />
           {data && <ListPagination page={page} lastPage={data.lastPage} total={data.total} onPageChange={setPage} />}
         </>
       )}
 
+      <MonitoringEntryPanel
+        row={viewing}
+        onClose={() => setViewing(null)}
+        onEdit={(row) => {
+          setViewing(null);
+          setEditing(row);
+        }}
+      />
       <MonitoringEntryDialog row={editing} onClose={() => setEditing(null)} />
     </div>
   );

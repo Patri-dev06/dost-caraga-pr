@@ -84,7 +84,9 @@ function ValidationPage() {
         // A fresh re-run, else the checks saved with the PR (switching PRs clears the re-run).
         <ValidationResultPanel items={pr.items} results={validation.data ?? pr.savedValidation} />
       ) : (
-        <Card className="border border-border bg-card p-5 text-sm text-muted-foreground">{searching ? "Searching…" : "No purchase requests found."}</Card>
+        <Card className="border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
+          {searching ? "Searching…" : search ? `No Purchase Request found for “${search}”.` : "No Purchase Requests yet."}
+        </Card>
       )}
     </div>
   );

@@ -3065,7 +3065,10 @@ class ProcurementController extends Controller
             'description' => $pr->items->pluck('name')->filter()->implode('; '),
             'purpose' => $pr->purpose,
             'amount' => $pr->items->sum(fn ($item) => (float) $item->quantity * (float) $item->unit_cost),
-            'pr_signatories' => $pr->approvalActions->map(fn ($a) => "{$a->action} by {$a->user?->name}")->implode('; ') ?: null,
+            // One entry per step, oldest first: "Recommended — Juan Dela Cruz · Sep 26" (the sheet shows them as a list).
+            'pr_signatories' => $pr->approvalActions->sortBy('id')
+                ->map(fn ($a) => trim($a->action.($a->user ? ' — '.$a->user->name : '').($a->created_at ? ' · '.$a->created_at->timezone(config('app.timezone'))->format('M j') : '')))
+                ->implode('; ') ?: null,
             'pr_remarks' => ($pr->status === 'Cancelled' ? 'Cancelled: '.$pr->cancel_reason : null)
                 ?? $pr->approvalActions->firstWhere('action', 'Rejected')?->remarks
                 ?? $pr->approvalActions->firstWhere('action', 'Returned')?->remarks,

@@ -35,7 +35,15 @@ function fmtAmount(value: number | null): string {
 
 export type MonitoringFieldType = "date" | "datetime" | "number" | "text";
 
+/** Where a hand-kept field sits in the Supply team's editor. */
 export type MonitoringSection = "Purchase Request" | "Purchase Order" | "Delivery" | "Inspection & Acceptance" | "Issuance" | "Payment";
+
+/** Every column's place in the flow — the entry panel groups the whole row by these. */
+export type MonitoringColumnSection = MonitoringSection | "RFQ" | "Abstract of Canvas";
+
+export const MONITORING_COLUMN_SECTIONS: MonitoringColumnSection[] = [
+  "Purchase Request", "RFQ", "Abstract of Canvas", "Purchase Order", "Delivery", "Inspection & Acceptance", "Issuance", "Payment",
+];
 
 /** A column the Supply team fills in by hand. */
 export type MonitoringField = {
@@ -47,16 +55,19 @@ export type MonitoringField = {
 
 export type MonitoringColumn = {
   label: string;
+  section: MonitoringColumnSection;
   get: (row: MonitoringRow) => string;
   field?: MonitoringField; // set = kept by hand (editable); unset = filled in by the system
+  list?: boolean; // several entries joined by "; " (signatories, suppliers, remarks) — shown one per line
 };
 
-const col = (label: string, get: (row: MonitoringRow) => string): MonitoringColumn => ({ label, get });
+const col = (section: MonitoringColumnSection, label: string, get: (row: MonitoringRow) => string, list = false): MonitoringColumn => ({ section, label, get, list });
 
 function manual(section: MonitoringSection, label: string, key: string, type: MonitoringFieldType = "text"): MonitoringColumn {
   const field: MonitoringField = { key, label, type, section };
   return {
     label,
+    section,
     field,
     get: (row) => {
       const value = row.manual[key];
@@ -69,45 +80,46 @@ function manual(section: MonitoringSection, label: string, key: string, type: Mo
 }
 
 export const MONITORING_COLUMNS: MonitoringColumn[] = [
-  col("DATE", (r) => fmtDate(r.date)),
-  col("End User Unit / In-Charge", (r) => r.endUserUnit ?? ""),
-  col("Charging", (r) => r.charging ?? ""),
-  col("PR No.", (r) => r.prNo ?? ""),
-  col("Description / Particulars", (r) => r.description ?? ""),
-  col("Purpose", (r) => r.purpose ?? ""),
-  col("Amount", (r) => fmtAmount(r.amount)),
+  col("Purchase Request", "DATE", (r) => fmtDate(r.date)),
+  col("Purchase Request", "End User Unit / In-Charge", (r) => r.endUserUnit ?? ""),
+  col("Purchase Request", "Charging", (r) => r.charging ?? ""),
+  col("Purchase Request", "PR No.", (r) => r.prNo ?? ""),
+  col("Purchase Request", "Description / Particulars", (r) => r.description ?? ""),
+  col("Purchase Request", "Purpose", (r) => r.purpose ?? ""),
+  col("Purchase Request", "Amount", (r) => fmtAmount(r.amount)),
   // PPMP and LIB are attached by the system at submission; Supply can note any other SD by hand.
   {
     label: "SD Attached",
+    section: "Purchase Request",
     field: { key: "sd_attached", label: "Other SD attached (besides the PPMP and LIB)", type: "text", section: "Purchase Request" },
     get: (r) => [r.sdAttached, r.manual.sd_attached == null ? "" : String(r.manual.sd_attached)].filter(Boolean).join("; "),
   },
-  col("PR Signatories", (r) => r.prSignatories ?? ""),
-  col("Remarks (if any)", (r) => r.prRemarks ?? ""),
-  col("RFQ #", (r) => r.rfqNo ?? ""),
-  col("RFQ Out for Signature", (r) => fmtDate(r.rfqOutForSignature)),
-  col("RFQ IN with Signature", (r) => fmtDate(r.rfqInWithSignature)),
-  col("RFQ Out", (r) => fmtDate(r.rfqOut)),
-  col("Quotation Routed by", (r) => r.quotationRoutedBy ?? ""),
-  col("IN with Quotation", (r) => fmtDate(r.inWithQuotation)),
-  col("Suppliers", (r) => r.suppliers ?? ""),
-  col("Remarks (if any)", (r) => r.rfqRemarks ?? ""),
-  col("AOC Out", (r) => fmtDate(r.aocOut)),
-  col("AOC IN with signature", (r) => fmtDate(r.aocInWithSignature)),
-  col("BAC Member who signed", (r) => r.bacMemberWhoSigned ?? ""),
-  col("Remarks (if any)", (r) => r.aocRemarks ?? ""),
-  col("Supplier", (r) => r.awardedSupplier ?? ""),
-  col("PO #", (r) => r.poNo ?? ""),
-  col("Amount Awarded", (r) => fmtAmount(r.amountAwarded)),
-  col("PO Out to BUDGET (MA'AM MATET- ACCTNG- ORD)", (r) => fmtDate(r.poOutToBudget)),
-  col("Date & Time Received- Approved PO", (r) => fmtDate(r.poApprovedAt)),
+  col("Purchase Request", "PR Signatories", (r) => r.prSignatories ?? "", true),
+  col("Purchase Request", "Remarks (if any)", (r) => r.prRemarks ?? ""),
+  col("RFQ", "RFQ #", (r) => r.rfqNo ?? ""),
+  col("RFQ", "RFQ Out for Signature", (r) => fmtDate(r.rfqOutForSignature)),
+  col("RFQ", "RFQ IN with Signature", (r) => fmtDate(r.rfqInWithSignature)),
+  col("RFQ", "RFQ Out", (r) => fmtDate(r.rfqOut)),
+  col("RFQ", "Quotation Routed by", (r) => r.quotationRoutedBy ?? ""),
+  col("RFQ", "IN with Quotation", (r) => fmtDate(r.inWithQuotation)),
+  col("RFQ", "Suppliers", (r) => r.suppliers ?? "", true),
+  col("RFQ", "Remarks (if any)", (r) => r.rfqRemarks ?? "", true),
+  col("Abstract of Canvas", "AOC Out", (r) => fmtDate(r.aocOut)),
+  col("Abstract of Canvas", "AOC IN with signature", (r) => fmtDate(r.aocInWithSignature)),
+  col("Abstract of Canvas", "BAC Member who signed", (r) => r.bacMemberWhoSigned ?? ""),
+  col("Abstract of Canvas", "Remarks (if any)", (r) => r.aocRemarks ?? ""),
+  col("Abstract of Canvas", "Supplier", (r) => r.awardedSupplier ?? ""),
+  col("Purchase Order", "PO #", (r) => r.poNo ?? ""),
+  col("Purchase Order", "Amount Awarded", (r) => fmtAmount(r.amountAwarded)),
+  col("Purchase Order", "PO Out to BUDGET (MA'AM MATET- ACCTNG- ORD)", (r) => fmtDate(r.poOutToBudget)),
+  col("Purchase Order", "Date & Time Received- Approved PO", (r) => fmtDate(r.poApprovedAt)),
   manual("Purchase Order", "Delivery term in calendar days", "delivery_term_days", "number"),
-  col("Remarks (if any)", (r) => r.poRemarks ?? ""),
+  col("Purchase Order", "Remarks (if any)", (r) => r.poRemarks ?? ""),
   manual("Purchase Order", "ORS/BURS NO.", "ors_burs_no"),
   manual("Purchase Order", "Date / Time", "ors_burs_at", "datetime"),
   manual("Purchase Order", "By", "ors_burs_by"),
   // The supplier's conforme, recorded by the Supply team.
-  col("Date Conformed", (r) => fmtDate(r.poConformedAt)),
+  col("Purchase Order", "Date Conformed", (r) => fmtDate(r.poConformedAt)),
   manual("Purchase Order", "Date received by Supply Unit", "received_by_supply_at", "date"),
   manual("Purchase Order", "Date Stamped Received by COA", "po_coa_received_at", "date"),
   manual("Purchase Order", "Due date for Delivery", "delivery_due_at", "date"),
@@ -140,3 +152,8 @@ export const MONITORING_COLUMNS: MonitoringColumn[] = [
 
 /** The hand-kept columns, in sheet order — what the Supply team's edit dialog shows. */
 export const MONITORING_FIELDS: MonitoringField[] = MONITORING_COLUMNS.flatMap((c) => (c.field ? [c.field] : []));
+
+/** "a; b; c" → ["a", "b", "c"] — how list columns (signatories, suppliers, remarks) join entries. */
+export function splitEntries(value: string): string[] {
+  return value.split(";").map((s) => s.trim()).filter(Boolean);
+}
