@@ -176,18 +176,22 @@ function Inbox() {
               </div>
 
               <div>
-                <p className="label-eyebrow mb-1.5">Remarks (required for Return / Reject)</p>
+                <p className="label-eyebrow mb-1.5">Remarks (required for Reject)</p>
                 <Textarea rows={3} placeholder="Add remarks…" className="border-border" />
               </div>
 
               <DialogFooter className="flex-wrap gap-2 sm:justify-between">
                 <div className="flex gap-2">
-                  <Button variant="outline" className="border-warning/50 text-warning-foreground hover:bg-warning/10" onClick={() => { toast("Return action is not available yet."); }}>Return</Button>
                   <Button variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10" onClick={() => actionMutation.mutate({ id: open.id, action: "reject", reason: "Rejected from approval inbox." })}>Reject</Button>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" className="border-border" onClick={() => actionMutation.mutate({ id: open.id, action: "recommend" })}>Recommend</Button>
-                  <Button onClick={() => actionMutation.mutate({ id: open.id, action: "approve" })}>Approve</Button>
+                  {/* Only the action for this PR's actual stage: Recommend while it's For Recommendation, Approve once it's been recommended (For Approval). */}
+                  {open.status === "For Recommendation" && (
+                    <Button variant="outline" className="border-border" onClick={() => actionMutation.mutate({ id: open.id, action: "recommend" })}>Recommend</Button>
+                  )}
+                  {open.status === "For Approval" && (
+                    <Button onClick={() => actionMutation.mutate({ id: open.id, action: "approve" })}>Approve</Button>
+                  )}
                 </div>
               </DialogFooter>
             </>
