@@ -73,10 +73,28 @@ class ProcurementController extends Controller
         }
     }
 
+    /**
+     * Same as guardResource(), except reading the Purchase Request list/detail is also open to
+     * whoever a PR is already visible to under PurchaseRequest::seesAllFor() (RFQ, PO, Validation,
+     * Approvals) -- they need it to generate RFQs, POs, etc. from approved PRs, not just to see them
+     * in the Approval Inbox. Creating, editing, or deleting a PR still requires the 'pr' module.
+     */
+    private function guardResourceRead(string $resource, Request $request): void
+    {
+        if ($resource !== 'purchase-requests') {
+            $this->guardResource($resource);
+
+            return;
+        }
+
+        $user = $request->user();
+        abort_unless($user?->canAccessModule('pr') || PurchaseRequest::seesAllFor($user), 403, 'You do not have access to this module.');
+    }
+
     public function index(Request $request): JsonResponse
     {
         $resource = $this->resource($request);
-        $this->guardResource($resource);
+        $this->guardResourceRead($resource, $request);
         $query = $this->query($resource);
         if ($resource === 'purchase-requests') {
             $query->visibleTo($request->user());
@@ -1212,7 +1230,7 @@ class ProcurementController extends Controller
     public function show(Request $request, int $resourceId): JsonResponse
     {
         $resource = $this->resource($request);
-        $this->guardResource($resource);
+        $this->guardResourceRead($resource, $request);
         $query = $this->query($resource);
         if ($resource === 'purchase-requests') {
             $query->visibleTo($request->user()); // someone else's PR is a 404, not a 403
