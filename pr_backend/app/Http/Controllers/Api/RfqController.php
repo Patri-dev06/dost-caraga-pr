@@ -91,7 +91,7 @@ class RfqController extends Controller
                 'rfq_no' => $this->nextRfqNo(),
                 'purchase_request_id' => $purchaseRequest->id,
                 'procurement_category' => $data['procurement_category'] ?? 'Goods',
-                'quotation_no' => $data['quotation_no'] ?? null,
+                'quotation_no' => ($data['quotation_no'] ?? null) ?: self::quotationNoFor($purchaseRequest->pr_no),
                 'rfq_date' => $data['rfq_date'] ?? null,
                 'opening_date' => $data['opening_date'] ?? null,
                 'place_of_delivery' => $data['place_of_delivery'] ?? null,
@@ -119,6 +119,16 @@ class RfqController extends Controller
             "{$rfq->rfq_no} was generated and is awaiting your counter-signature.", "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
 
         return response()->json(['data' => $this->format($rfq->fresh())], 201);
+    }
+
+    /** The RFQ's Quotation No. from its PR No., as the form writes it: PR 2026-08-714 → 714-2026. */
+    public static function quotationNoFor(?string $prNo): ?string
+    {
+        if ($prNo && preg_match('/^(?:PR-)?(\d{4})-(?:\d{2}-)?(\d+)$/', $prNo, $m)) {
+            return ((int) $m[2]).'-'.$m[1];
+        }
+
+        return $prNo;
     }
 
     /** Trimmed, blank lines dropped; an empty list means the RFQ asks for no documents. */

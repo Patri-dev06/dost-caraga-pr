@@ -43,3 +43,9 @@ export function splitRfqDescription(description: string): { name: string; specs:
 
 /** The form prints fewer items with blank ruled rows below them, like the paper form. */
 export const RFQ_MIN_TABLE_ROWS = 10;
+
+/** The RFQ's Quotation No. from its PR No., as the form writes it: PR 2026-08-714 → 714-2026. */
+export function quotationNoFromPrNo(prNo: string): string {
+  const m = /^(?:PR-)?(\d{4})-(?:\d{2}-)?(\d+)$/.exec(prNo.trim());
+  return m ? `${Number(m[2])}-${m[1]}` : prNo;
+}

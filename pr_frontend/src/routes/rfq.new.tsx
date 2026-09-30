@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { DatePickerField } from "@/components/app/date-picker-field";
 import { RfqDocument, type RfqPrintData } from "@/components/app/rfq-document";
 import { RfqDocumentsEditor } from "@/components/app/rfq-documents-editor";
-import { DEFAULT_RFQ_DOCUMENTS, DEFAULT_RFQ_NOTES } from "@/lib/rfq-format";
+import { DEFAULT_RFQ_DOCUMENTS, DEFAULT_RFQ_NOTES, quotationNoFromPrNo } from "@/lib/rfq-format";
 import { PersonPicker } from "@/components/app/person-picker";
 import { useSignatories } from "@/lib/signatories";
 import { formatLongDate } from "@/lib/date-format";
@@ -185,7 +185,7 @@ function CreateRfqPage() {
 
         setDoc((d) => ({
           ...d,
-          quotationNo: pr.prNo.replace("PR-", ""),
+          quotationNo: quotationNoFromPrNo(pr.prNo),
           prNo: pr.prNo,
           estimatedBudget: String(totalBudget),
           purpose: pr.purpose,

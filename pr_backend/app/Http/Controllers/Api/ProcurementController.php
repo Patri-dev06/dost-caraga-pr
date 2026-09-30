@@ -3170,17 +3170,21 @@ class ProcurementController extends Controller
         ];
     }
 
+    /**
+     * The Supply Unit's PR numbering: year-month-sequence, e.g. 2026-08-714. The sequence runs
+     * through the whole year (it does not restart each month) and carries on from this year's older
+     * "PR-2026-0142"-style numbers. Taking the highest one used (not a count) means deleting a PR
+     * never causes a duplicate number.
+     */
     private function nextPrNo(): string
     {
-        $year = now()->year;
-        // Continuous numbering: take the highest sequence already used this year and add one,
-        // so deleting a PR never causes a duplicate PR number (count()+1 would).
-        $lastNo = PurchaseRequest::where('pr_no', 'like', "PR-{$year}-%")
-            ->orderByRaw('CAST(SUBSTRING(pr_no FROM \'[0-9]+$\') AS INTEGER) DESC')
-            ->value('pr_no');
-        $lastSeq = $lastNo ? (int) preg_replace('/\D/', '', substr((string) $lastNo, strlen("PR-{$year}-"))) : 0;
+        $now = now();
+        $year = $now->year;
+        $lastSeq = (int) PurchaseRequest::query()
+            ->where(fn (Builder $q) => $q->where('pr_no', 'like', "{$year}-%")->orWhere('pr_no', 'like', "PR-{$year}-%"))
+            ->max(DB::raw('CAST(SUBSTRING(pr_no FROM \'[0-9]+$\') AS INTEGER)'));
 
-        return sprintf('PR-%d-%04d', $year, $lastSeq + 1);
+        return sprintf('%d-%s-%03d', $year, $now->format('m'), $lastSeq + 1);
     }
 
     /** Continuous, collision-safe PPMP number for a fiscal year (unique across projects). */
