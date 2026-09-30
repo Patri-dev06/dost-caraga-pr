@@ -61,6 +61,8 @@ class SupplierController extends Controller
     {
         $this->guardModule('rfq');
         $supplier->fill($this->validated($request, $supplier) + $request->validate(['active' => ['sometimes', 'boolean']]))->save();
+        // A correction reaches the RFQs still waiting on this supplier, not just the directory.
+        $supplier->syncToOpenCanvasses();
         $this->audit($request, 'Suppliers', 'Updated supplier', $supplier->name);
 
         return response()->json(['data' => $supplier->fresh()]);

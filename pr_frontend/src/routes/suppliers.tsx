@@ -72,6 +72,9 @@ function SuppliersPage() {
     <Card className="space-y-3 border border-primary/30 bg-card p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-navy">{editing === "new" ? "New supplier" : "Edit supplier"}</h2>
+        {editing !== "new" && (
+          <p className="mt-0.5 text-xs text-muted-foreground">Corrections also update every RFQ still waiting on this supplier&apos;s reply.</p>
+        )}
         <Button variant="ghost" size="sm" className="h-7" onClick={() => { setEditing(null); setForm(EMPTY); }} aria-label="Close">
           <X className="h-4 w-4" />
         </Button>

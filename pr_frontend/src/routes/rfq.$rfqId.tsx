@@ -4,6 +4,7 @@ import { DatePickerField } from "@/components/app/date-picker-field";
 import { PersonPicker } from "@/components/app/person-picker";
 import { RfqDocument, type RfqPrintData } from "@/components/app/rfq-document";
 import { RfqDocumentsEditor } from "@/components/app/rfq-documents-editor";
+import { RfqSupplierEditDialog } from "@/components/app/rfq-supplier-edit-dialog";
 import { exportRfqExcel } from "@/lib/rfq-excel";
 import { formatLongDate } from "@/lib/date-format";
 import { useSignatories } from "@/lib/signatories";
@@ -16,6 +17,8 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
+  Lock,
+  Pencil,
   Plus,
   Printer,
   Save,
@@ -136,6 +139,7 @@ function RfqDetailPage() {
   const isTwgLead = Boolean(user?.isTwgLead || isSuperadmin);
 
   const [rfq, setRfq] = useState<Rfq | null>(null);
+  const [editingSupplier, setEditingSupplier] = useState<RfqSupplier | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editDoc, setEditDoc] = useState<EditDoc | null>(null);
@@ -260,6 +264,10 @@ function RfqDetailPage() {
 
   const preSend = PRE_SEND.includes(rfq.status);
   const pendingSuppliers = rfq.suppliers.filter((s) => s.status === "Pending");
+  // The canvass list is chosen before the Supply Officer signs, and fixed from then on.
+  const suppliersOpen = rfq.status === "Draft" || rfq.status === "Pending Supply Officer Countersign";
+  // An RFQ signed before that rule, with fewer than 3 chosen, may still fill its list (no swapping).
+  const canAddSupplier = suppliersOpen || ((rfq.status === "Pending BAC Signature" || rfq.status === "Ready to Send") && pendingSuppliers.length < 3);
   const canvassed = rfq.suppliers.filter((s) => s.status !== "Pending");
   const awaiting = rfq.suppliers.filter((s) => s.status === "Sent");
   const replied = rfq.suppliers.filter((s) => s.status === "Replied");
@@ -362,6 +370,7 @@ function RfqDetailPage() {
             current={rfq.status === "Draft" || rfq.status === "Pending Supply Officer Countersign"}
             canSign={canSignAsSupply}
             waitingFor="the designated Supply Officer"
+            blockedReason={pendingSuppliers.length < 3 ? `Choose the 3 suppliers in Supplier Canvass first (${pendingSuppliers.length}/3). The signatures cover the canvass list.` : undefined}
             busy={busy}
             onSign={() => run(() => apiSignRfq(rfq.id, "supply-officer"), "Counter-signed as Supply Officer.")}
           />
@@ -548,19 +557,29 @@ function RfqDetailPage() {
           {preSend && (
             <div className="space-y-2">
               <p className="label-eyebrow">Chosen suppliers ({pendingSuppliers.length}/3)</p>
-              {pendingSuppliers.length === 0 && <p className="text-xs text-muted-foreground">Choose 3 {rfq.supplierCategory} suppliers from the directory.</p>}
+              {pendingSuppliers.length === 0 && <p className="text-xs text-muted-foreground">Choose 3 {rfq.supplierCategory} suppliers from the directory, before the Supply Officer signs.</p>}
               {pendingSuppliers.map((s) => (
                 <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm">
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium text-navy">{s.supplierName}</p>
                     <p className="truncate text-xs text-muted-foreground">{[s.supplierContactNo, s.supplierEmail, s.supplierAddress].filter(Boolean).join(" · ") || "No contact details on file"}</p>
                   </div>
-                  <Button size="sm" variant="ghost" className="h-7 text-muted-foreground hover:text-destructive" disabled={busy} onClick={() => run(() => apiRemoveRfqSupplier(rfq.id, s.id), "Supplier removed.")} aria-label={`Remove ${s.supplierName}`}>
-                    <Trash2 className="h-3.5 w-3.5" />
+                  <Button size="sm" variant="ghost" className="h-7 text-muted-foreground hover:text-primary" disabled={busy} onClick={() => setEditingSupplier(s)} aria-label={`Correct ${s.supplierName}'s details`} title="Correct details">
+                    <Pencil className="h-3.5 w-3.5" />
                   </Button>
+                  {suppliersOpen && (
+                    <Button size="sm" variant="ghost" className="h-7 text-muted-foreground hover:text-destructive" disabled={busy} onClick={() => run(() => apiRemoveRfqSupplier(rfq.id, s.id), "Supplier removed.")} aria-label={`Remove ${s.supplierName}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
                 </div>
               ))}
-              {pendingSuppliers.length < 3 && (
+              {!canAddSupplier && (
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Lock className="h-3 w-3" /> The canvass list was fixed when the Supply Officer signed. Details can still be corrected with the pencil.
+                </p>
+              )}
+              {canAddSupplier && pendingSuppliers.length < 3 && (
                 <SupplierPicker
                   category={rfq.supplierCategory}
                   excludeSupplierIds={onRfq}
@@ -612,6 +631,11 @@ function RfqDetailPage() {
                         {s.status === "Replaced" && "Replaced by a newly chosen supplier"}
                       </p>
                     </div>
+                    {s.status === "Sent" && (
+                      <Button size="sm" variant="ghost" className="h-7 text-muted-foreground hover:text-primary" onClick={() => setEditingSupplier(s)} aria-label={`Correct ${s.supplierName}'s details`} title="Correct details">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     {s.twgResult && <StatusBadge status={s.twgResult === "Passed" ? "Passed" : "Failed"} />}
                     <StatusBadge status={s.isOverdue ? "Warning" : s.status} />
                     {s.status === "Replied" && <p className="text-xs font-semibold tabular-nums text-navy">₱{fmtAmount(quoteTotal(s))}</p>}
@@ -869,6 +893,7 @@ function RfqDetailPage() {
           )}
         </Card>
       )}
+      <RfqSupplierEditDialog rfqId={rfq.id} supplier={editingSupplier} onClose={() => setEditingSupplier(null)} onSaved={setRfq} />
     </div>
     </>
   );
@@ -881,6 +906,7 @@ function SignStep({
   current,
   canSign,
   waitingFor,
+  blockedReason,
   busy,
   onSign,
 }: {
@@ -890,6 +916,8 @@ function SignStep({
   current: boolean;
   canSign: boolean;
   waitingFor: string;
+  /** Why this step cannot be signed yet, even by the right person (e.g. no suppliers chosen). */
+  blockedReason?: string;
   busy: boolean;
   onSign: () => void;
 }) {
@@ -907,7 +935,12 @@ function SignStep({
           {fmtDateTime(signedAt)}
         </p>
       ) : current ? (
-        canSign ? (
+        blockedReason ? (
+          <>
+            <Button size="sm" className="mt-2 h-7 gap-1 text-xs" disabled>Sign now</Button>
+            <p className="mt-1 text-warning-foreground">{blockedReason}</p>
+          </>
+        ) : canSign ? (
           <Button size="sm" className="mt-2 h-7 gap-1 text-xs" disabled={busy} onClick={onSign}>
             Sign now
           </Button>

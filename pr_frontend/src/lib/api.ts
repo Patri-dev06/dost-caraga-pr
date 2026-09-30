@@ -1841,6 +1841,14 @@ export async function apiAddRfqSupplier(rfqId: string | number, payload: RfqSupp
   return mapRfq(result.data);
 }
 
+export type RfqSupplierDetails = { name: string; address?: string; contact_no?: string; email?: string; tin?: string };
+
+/** Corrects a canvassed supplier's details until they reply (and the directory entry, with every RFQ still waiting on them). */
+export async function apiUpdateRfqSupplier(rfqId: string | number, rfqSupplierId: string | number, details: RfqSupplierDetails) {
+  const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}`, { method: "PUT", body: details });
+  return { message: result.message, data: mapRfq(result.data) };
+}
+
 export async function apiRemoveRfqSupplier(rfqId: string | number, rfqSupplierId: string | number) {
   const result = await request<ApiRecord<BackendRfq>>(`/rfqs/${rfqId}/suppliers/${rfqSupplierId}`, { method: "DELETE" });
   return mapRfq(result.data);

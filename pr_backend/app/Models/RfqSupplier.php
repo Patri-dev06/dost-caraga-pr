@@ -8,6 +8,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class RfqSupplier extends Model
 {
+    /** Chosen or sent, but no reply recorded yet: their details can still be corrected. */
+    public const AWAITING_REPLY_STATUSES = ['Pending', 'Sent'];
+
     protected $fillable = [
         'rfq_id',
         'supplier_id',

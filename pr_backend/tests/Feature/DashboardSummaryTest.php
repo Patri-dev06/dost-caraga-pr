@@ -121,8 +121,8 @@ class DashboardSummaryTest extends TestCase
             'purchase_request_id' => $prId, 'procurement_category' => 'Goods', 'canvasser' => 'Juan Dela Cruz',
             'items' => [['description' => 'Item', 'uom' => 'unit', 'quantity' => 1, 'unit_abc' => 300, 'total_abc' => 300]],
         ])->assertCreated()->json('data.id');
-        $this->completeRfqSigning($rfqId);
         $this->addSuppliers($token, $rfqId);
+        $this->completeRfqSigning($rfqId);
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
         $dueSoon = RfqSupplier::where('rfq_id', $rfqId)->orderBy('id')->first();
         $dueSoon->update(['reply_due_at' => now()->addDay(), 'supplier_contact_no' => '0917-000-0000']);

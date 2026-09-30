@@ -132,6 +132,7 @@ class RfqApiTest extends TestCase
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
+        $this->addSuppliers($token, $rfqId);
         $this->signRfq($rfqId, 'supply-officer')->assertOk();
 
         $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}", ['canvasser' => 'Should Not Save'])
@@ -147,6 +148,7 @@ class RfqApiTest extends TestCase
         // Flowchart order: the Supply Officer counter-signs first, so the BAC cannot sign a Draft.
         $this->signRfq($rfqId, 'bac')->assertStatus(422);
 
+        $this->addSuppliers($token, $rfqId);
         $this->completeRfqSigning($rfqId);
         $this->signRfq($rfqId, 'bac-vice-chair')->assertStatus(422); // one BAC signature completes the step
 
@@ -179,8 +181,8 @@ class RfqApiTest extends TestCase
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createRfq($token, $prId)->json('data.id');
 
-        $this->completeRfqSigning($rfqId);
         $this->addSuppliers($token, $rfqId);
+        $this->completeRfqSigning($rfqId);
 
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")
             ->assertOk()

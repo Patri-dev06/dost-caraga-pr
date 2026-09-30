@@ -81,8 +81,9 @@ trait SignsRfq
             'items' => [['description' => 'Canvassed item', 'uom' => 'unit', 'quantity' => 1, 'unit_abc' => 300, 'total_abc' => 300]],
         ])->assertCreated()->json('data.id');
 
-        $this->completeRfqSigning($rfqId);
+        // The 3 suppliers are chosen first: the signatures cover the canvass list.
         $this->addSuppliers($token, $rfqId);
+        $this->completeRfqSigning($rfqId);
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
 
         $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');

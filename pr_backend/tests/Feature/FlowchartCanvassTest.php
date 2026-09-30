@@ -49,23 +49,29 @@ class FlowchartCanvassTest extends TestCase
         return $prId;
     }
 
-    private function signedRfq(string $token, int $prId, string $category = 'Goods', int $items = 1): int
+    /** A draft RFQ: not signed yet, so its canvass list can still be chosen. */
+    private function draftRfq(string $token, int $prId, string $category = 'Goods', int $items = 1): int
     {
-        $rfqId = $this->withToken($token)->postJson('/api/v1/rfqs', [
+        return $this->withToken($token)->postJson('/api/v1/rfqs', [
             'purchase_request_id' => $prId,
             'procurement_category' => $category,
             'items' => collect(range(1, $items))->map(fn ($i) => ['description' => "Item {$i}", 'uom' => 'unit', 'quantity' => 2, 'unit_abc' => 500, 'total_abc' => 1000])->all(),
         ])->assertCreated()->json('data.id');
+    }
+
+    /** Chooses the 3 suppliers, then signs (Supply Officer, BAC) — the signatures cover the canvass list. */
+    private function signedRfq(string $token, int $prId, string $category = 'Goods', int $items = 1, array $suppliers = ['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants']): int
+    {
+        $rfqId = $this->draftRfq($token, $prId, $category, $items);
+        $this->addSuppliers($token, $rfqId, $suppliers);
         $this->completeRfqSigning($rfqId);
 
         return $rfqId;
     }
 
-    /** Marks the RFQ as sent to 3 suppliers; returns their rfq_supplier ids in order. */
-    private function sendTo(string $token, int $rfqId, array $names = ['ACME Trading', 'Bayanihan Supplies', 'Caraga Merchants']): array
+    /** Marks the signed RFQ as sent to its 3 suppliers; returns their rfq_supplier ids in order. */
+    private function sendTo(string $token, int $rfqId): array
     {
-        $this->addSuppliers($token, $rfqId, $names);
-
         return collect($this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk()->json('data.suppliers'))
             ->pluck('id')->all();
     }
@@ -86,21 +92,21 @@ class FlowchartCanvassTest extends TestCase
 
         $this->withToken($token)->getJson('/api/v1/suppliers?category=Services')->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.name', 'Almont Hotel');
 
-        $rfqId = $this->signedRfq($token, $this->approvedPr($token));
+        $rfqId = $this->draftRfq($token, $this->approvedPr($token));
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_id' => $venue])->assertStatus(422);
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_id' => $goods])->assertCreated()
             ->assertJsonPath('data.suppliers.0.supplier_email', 'sales@bod.example');
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_id' => $goods])->assertStatus(422); // already on it
 
         $this->withToken($token)->deleteJson("/api/v1/suppliers/{$goods}")->assertOk()->assertJsonPath('data.active', false);
-        $rfq2 = $this->signedRfq($token, $this->approvedPr($token));
+        $rfq2 = $this->draftRfq($token, $this->approvedPr($token));
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfq2}/suppliers", ['supplier_id' => $goods])->assertStatus(422); // deactivated
     }
 
     public function test_a_typed_in_supplier_is_added_to_the_directory_in_the_rfqs_category(): void
     {
         $token = $this->loginAsAdmin();
-        $rfqId = $this->signedRfq($token, $this->approvedPr($token), 'Venue');
+        $rfqId = $this->draftRfq($token, $this->approvedPr($token), 'Venue');
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_name' => 'Watergate Hotel'])->assertCreated();
 
         $this->assertDatabaseHas('suppliers', ['name' => 'Watergate Hotel', 'category' => 'Services']);
@@ -117,7 +123,15 @@ class FlowchartCanvassTest extends TestCase
         ])->json('data.id');
         $this->assertDatabaseHas('user_notifications', ['type' => 'rfq_signing', 'user_id' => User::where('email', 'admin@dost.gov.ph')->value('id')]);
 
+        // The suppliers are identified first: no signing on an empty canvass list.
+        $this->signRfq($rfqId, 'supply-officer')->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, 'Choose the 3 suppliers'));
+        $this->addSuppliers($token, $rfqId);
         $this->signRfq($rfqId, 'supply-officer')->assertOk();
+
+        // Once signed, the canvass list is fixed.
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_name' => 'Late Addition'])->assertStatus(422);
+        $pendingId = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data.suppliers.0.id');
+        $this->withToken($token)->deleteJson("/api/v1/rfqs/{$rfqId}/suppliers/{$pendingId}")->assertStatus(422);
         foreach (['jbautista.bac@dost.gov.ph', 'rsantiago.bac@dost.gov.ph'] as $email) {
             $this->assertDatabaseHas('user_notifications', ['type' => 'rfq_signing', 'user_id' => User::where('email', $email)->value('id')]);
         }
@@ -275,8 +289,8 @@ class FlowchartCanvassTest extends TestCase
     {
         $admin = $this->loginAsAdmin();
         $prId = $this->approvedPr($admin, 'mdelacruz@dost.gov.ph');
-        $rfqId = $this->signedRfq($admin, $prId, 'Venue');
-        $ids = $this->sendTo($admin, $rfqId, ['Almont Inland Resort', 'Watergate Hotel', 'Balanghai Hotel']);
+        $rfqId = $this->signedRfq($admin, $prId, 'Venue', 1, ['Almont Inland Resort', 'Watergate Hotel', 'Balanghai Hotel']);
+        $ids = $this->sendTo($admin, $rfqId);
         $item = $this->itemIds($admin, $rfqId)[0];
         foreach ([30000, 25000, 28000] as $i => $price) {
             $this->recordQuote($admin, $rfqId, $ids[$i], [['rfq_item_id' => $item, 'unit_price' => $price]])->assertOk();
@@ -371,5 +385,50 @@ class FlowchartCanvassTest extends TestCase
             'items' => [['description' => 'Item', 'uom' => 'unit', 'quantity' => 1]],
         ])->assertStatus(422); // a cancelled PR cannot start a new RFQ
         $this->assertSame(0, Supplier::where('active', false)->count());
+    }
+
+    // --- Correcting a supplier's details ---
+
+    public function test_a_wrong_supplier_detail_is_corrected_everywhere_it_is_still_open(): void
+    {
+        $token = $this->loginAsAdmin();
+        $rfqId = $this->signedRfq($token, $this->approvedPr($token));
+        $ids = $this->sendTo($token, $rfqId);
+        $other = $this->draftRfq($token, $this->approvedPr($token));
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$other}/suppliers", ['supplier_name' => 'ACME Trading'])->assertCreated();
+
+        // A typo fixed from the RFQ goes to the directory and to every RFQ still waiting on that supplier.
+        $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}/suppliers/{$ids[0]}", [
+            'name' => 'ACME Trading Corp.', 'contact_no' => '0917-123-4567', 'email' => 'sales@acme.example',
+        ])->assertOk()->assertJsonPath('data.suppliers.0.supplier_name', 'ACME Trading Corp.');
+        $this->assertDatabaseHas('suppliers', ['name' => 'ACME Trading Corp.', 'contact_no' => '0917-123-4567']);
+        $this->withToken($token)->getJson("/api/v1/rfqs/{$other}")->assertJsonPath('data.suppliers.0.supplier_contact_no', '0917-123-4567');
+
+        // Editing in the Suppliers directory reaches the open RFQs too.
+        $acme = \App\Models\Supplier::where('name', 'ACME Trading Corp.')->first();
+        $this->withToken($token)->putJson("/api/v1/suppliers/{$acme->id}", ['address' => 'J.C. Aquino Ave., Butuan City'])->assertOk();
+        $this->withToken($token)->getJson("/api/v1/rfqs/{$other}")->assertJsonPath('data.suppliers.0.supplier_address', 'J.C. Aquino Ave., Butuan City');
+
+        // Once the signed quotation is recorded, that RFQ keeps the details it had.
+        $item = $this->itemIds($token, $rfqId)[0];
+        $this->recordQuote($token, $rfqId, $ids[0], [['rfq_item_id' => $item, 'unit_price' => 450]])->assertOk();
+        $this->withToken($token)->putJson("/api/v1/rfqs/{$rfqId}/suppliers/{$ids[0]}", ['name' => 'Changed Again'])->assertStatus(422);
+        $this->withToken($token)->putJson("/api/v1/suppliers/{$acme->id}", ['contact_no' => '0999-000-0000'])->assertOk();
+        $this->assertSame('0917-123-4567', \App\Models\RfqSupplier::find($ids[0])->supplier_contact_no);
+    }
+
+    public function test_an_rfq_signed_under_the_old_order_can_still_complete_its_list(): void
+    {
+        $token = $this->loginAsAdmin();
+        $rfqId = $this->draftRfq($token, $this->approvedPr($token));
+        $this->addSuppliers($token, $rfqId, ['ACME Trading']);
+        // Signed before suppliers were required (simulated): Ready to Send with 1 of 3 chosen.
+        \App\Models\Rfq::whereKey($rfqId)->update(['status' => 'Ready to Send']);
+
+        $this->addSuppliers($token, $rfqId, ['Bayanihan Supplies', 'Caraga Merchants']);
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_name' => 'Fourth One'])->assertStatus(422);
+        $first = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data.suppliers.0.id');
+        $this->withToken($token)->deleteJson("/api/v1/rfqs/{$rfqId}/suppliers/{$first}")->assertStatus(422); // no swapping
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
     }
 }

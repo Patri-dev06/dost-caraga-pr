@@ -123,6 +123,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/rfqs/{rfq}/suppliers', [RfqController::class, 'addSupplier']);
         Route::post('/rfqs/{rfq}/suppliers/choose', [RfqController::class, 'chooseReplacements']);
         Route::delete('/rfqs/{rfq}/suppliers/{rfqSupplier}', [RfqController::class, 'removeSupplier']);
+        // Correct a canvassed supplier's details (until they reply); directory fixes reach every open RFQ.
+        Route::put('/rfqs/{rfq}/suppliers/{rfqSupplier}', [RfqController::class, 'updateSupplier']);
         Route::post('/rfqs/{rfq}/send', [RfqController::class, 'send']);
         Route::post('/rfqs/{rfq}/suppliers/{rfqSupplier}/quote', [RfqController::class, 'recordQuote']);
         Route::get('/rfqs/{rfq}/suppliers/{rfqSupplier}/quotation', [RfqController::class, 'quotation']);

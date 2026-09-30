@@ -13,6 +13,7 @@ use App\Models\Supplier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -212,6 +213,9 @@ class RfqController extends Controller
         return response()->json(['data' => $this->format($rfq->fresh())]);
     }
 
+    /** The canvass list can change only before the Supply Officer signs; the signatures cover it. */
+    private const SUPPLIERS_OPEN = ['Draft', 'Pending Supply Officer Countersign'];
+
     // --- Flowchart: Generate RFQ -> Supply Officer counter-sign -> BAC Chair/Vice-Chair sign ---
 
     public function signAsSupplyOfficer(Request $request, Rfq $rfq): JsonResponse
@@ -223,6 +227,8 @@ class RfqController extends Controller
         $user = $request->user();
         $designated = $this->designatedSupplyOfficer();
         abort_unless($user?->tier === 'superadmin' || ($designated !== null && $designated->id === $user?->id), 403, 'You are not the designated Supply Officer signatory.');
+        // The signatures cover the canvass list, so the 3 suppliers are identified first.
+        abort_unless($rfq->suppliers()->where('status', 'Pending')->count() === 3, 422, 'Choose the 3 suppliers to canvass before signing. The canvass list is fixed once signed.');
         $this->requireSignature($user);
 
         $next = $rfq->bac_signed_at ? 'Ready to Send' : 'Pending BAC Signature';
@@ -285,9 +291,13 @@ class RfqController extends Controller
     public function addSupplier(Request $request, Rfq $rfq): JsonResponse
     {
         $this->guardModule('rfq');
-        abort_unless(in_array($rfq->status, ['Draft', 'Pending Supply Officer Countersign', 'Pending BAC Signature', 'Ready to Send'], true),
-            422, 'Suppliers can only be added before the RFQ is sent.');
-        abort_if($rfq->suppliers()->where('status', 'Pending')->count() >= 3, 422, 'This RFQ already has 3 suppliers.');
+        $chosen = $rfq->suppliers()->where('status', 'Pending')->count();
+        // Normally the list is fixed at the Supply Officer's signature. An RFQ signed before that rule
+        // (with fewer than 3 chosen) may still fill its list up to 3 so it can be sent; nothing is swapped.
+        $completingOlderRfq = in_array($rfq->status, ['Pending BAC Signature', 'Ready to Send'], true) && $chosen < 3;
+        abort_unless(in_array($rfq->status, self::SUPPLIERS_OPEN, true) || $completingOlderRfq, 422,
+            'The canvass list is fixed once the Supply Officer signs. Suppliers are chosen before signing.');
+        abort_if($chosen >= 3, 422, 'This RFQ already has 3 suppliers.');
 
         $supplier = $this->directorySupplier($request->all(), $rfq);
         $rfq->suppliers()->create($this->snapshot($supplier, $request->input('supplier_by')) + ['status' => 'Pending']);
@@ -302,11 +312,54 @@ class RfqController extends Controller
         $this->guardModule('rfq');
         abort_unless($rfqSupplier->rfq_id === $rfq->id, 404);
         abort_unless($rfqSupplier->status === 'Pending', 422, 'Only a supplier the RFQ has not been sent to can be removed.');
+        abort_unless(in_array($rfq->status, self::SUPPLIERS_OPEN, true), 422,
+            'The canvass list is fixed once the Supply Officer signs. Suppliers are chosen before signing.');
 
         $rfqSupplier->delete();
         $this->audit($request, 'RFQ', 'Removed canvass supplier', $rfq->rfq_no);
 
         return response()->json(['data' => $this->format($rfq->fresh())]);
+    }
+
+    /**
+     * Corrects a canvassed supplier's details (a typo in the name, a wrong contact number…) until
+     * they reply. A directory supplier is corrected in the directory, which carries the fix to every
+     * RFQ still waiting on them; an older entry with no directory record is corrected on this RFQ.
+     */
+    public function updateSupplier(Request $request, Rfq $rfq, RfqSupplier $rfqSupplier): JsonResponse
+    {
+        $this->guardModule('rfq');
+        abort_unless($rfqSupplier->rfq_id === $rfq->id, 404);
+        abort_unless(in_array($rfqSupplier->status, RfqSupplier::AWAITING_REPLY_STATUSES, true), 422,
+            'This supplier\'s quotation is already recorded, so their details stay as they were then.');
+
+        $directory = $rfqSupplier->supplier;
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255', Rule::unique('suppliers', 'name')
+                ->where('category', $directory?->category ?? self::supplierCategoryFor($rfq->procurement_category))
+                ->ignore($directory?->id)],
+            'address' => ['nullable', 'string', 'max:255'],
+            'contact_no' => ['nullable', 'string', 'max:255'],
+            'email' => ['nullable', 'email', 'max:255'],
+            'tin' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        if ($directory) {
+            $directory->fill($data)->save();
+            $directory->syncToOpenCanvasses();
+        } else {
+            $rfqSupplier->forceFill([
+                'supplier_name' => $data['name'],
+                'supplier_address' => $data['address'] ?? null,
+                'supplier_contact_no' => $data['contact_no'] ?? null,
+                'supplier_email' => $data['email'] ?? null,
+                'supplier_tin' => $data['tin'] ?? null,
+            ])->save();
+        }
+
+        $this->audit($request, 'RFQ', 'Corrected canvass supplier details', "{$rfq->rfq_no}: {$data['name']}");
+
+        return response()->json(['message' => "{$data['name']}'s details were updated.", 'data' => $this->format($rfq->fresh())]);
     }
 
     public function send(Request $request, Rfq $rfq): JsonResponse
