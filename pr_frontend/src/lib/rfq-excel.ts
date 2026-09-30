@@ -23,6 +23,10 @@ export interface RfqExcelData {
   items: RfqExcelItem[];
   canvasser: string;
   bacAction: string;
+  /** Documents the supplier submits with the quotation (empty = none asked for). */
+  requiredDocuments: string[];
+  /** FOB / VAT lines, printed in italics under the items. */
+  notes: string;
 }
 
 const BLACK = "FF000000";
@@ -44,12 +48,15 @@ function parseRange(range: string) {
 
 const money = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+import { RFQ_FORM_CODE, RFQ_MIN_TABLE_ROWS, rfqDocumentLines, rfqDocumentsLead, splitRfqDescription } from "@/lib/rfq-format";
+
 export async function exportRfqExcel(data: RfqExcelData, filename: string) {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("RFQ", {
     views: [{ showGridLines: false }],
-    pageSetup: { fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.4, bottom: 0.4, header: 0.3, footer: 0.3 } },
+    pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.4, bottom: 0.5, header: 0.3, footer: 0.3 } },
+    headerFooter: { oddFooter: "&CPage &P of &N" },
   });
 
   ws.columns = [
@@ -100,121 +107,136 @@ export async function exportRfqExcel(data: RfqExcelData, filename: string) {
 
   let r = 1;
 
+  // Form code (top right), as on the official form
+  put(`E${r}:H${r}`, RFQ_FORM_CODE, { size: 6, align: "right" }); r++;
+
   // Letterhead
-  put(`A${r}:H${r}`, "Republic of the Philippines", { italic: true, size: 10, align: "center" }); r++;
+  put(`A${r}:H${r}`, "Republic of the Philippines", { size: 10, align: "center" }); r++;
   put(`A${r}:H${r}`, "DEPARTMENT OF SCIENCE AND TECHNOLOGY", { bold: true, size: 11, align: "center" }); r++;
   put(`A${r}:H${r}`, "Caraga Regional Office No. 13", { size: 10, align: "center" }); r++;
   put(`A${r}:H${r}`, "CSU Campus, Ampayon, Butuan City", { size: 10, align: "center" }); r++;
   put(`A${r}:H${r}`, "Telephone No.: (085) 226-3831", { size: 10, align: "center" }); r++;
-  put(`A${r}:H${r}`, "Email Address: supply@caraga.dost.gov.ph", { size: 10, align: "center" }); r++;
+  put(`A${r}:H${r}`, "Email Address: supply@caraga.dost.gov.ph", { bold: true, size: 10, align: "center" }); r++;
   r++;
 
-  // Title
-  put(`A${r}:H${r}`, "REQUEST FOR QUOTATION", { bold: true, size: 14, align: "center" });
-  ws.getRow(r).height = 22;
-  r += 2;
+  put(`A${r}:H${r}`, "REQUEST FOR QUOTATION", { bold: true, size: 11, align: "center" }); r++;
 
-  // Meta fields (right-aligned)
-  const metaFields = [
-    ["Quotation No.:", data.quotationNo],
-    ["RFQ Date:", data.rfqDate],
-    ["Place of Delivery:", data.placeOfDelivery],
-    ["Estimated Budget:", `₱ ${money(data.estimatedBudget)}`],
-    ["Purchase Request No.:", data.prNo],
+  // Quotation details (right), each value on an underline
+  const underline = (range: string) => eachCell(range, (c) => (c.border = { bottom: thin }));
+  const metaFields: [string, string, boolean][] = [
+    ["Quotation No.:", data.quotationNo, true],
+    ["RFQ Date:", data.rfqDate, false],
+    ["Place of Delivery:", data.placeOfDelivery, false],
+    ["Estimated Budget:", data.estimatedBudget ? `₱ ${money(data.estimatedBudget)}` : "", false],
+    ["Purchase Request No.:", data.prNo, true],
   ];
-  for (const [label, value] of metaFields) {
+  for (const [label, value, bold] of metaFields) {
     put(`E${r}:F${r}`, label, { align: "right", size: 10 });
-    put(`G${r}:H${r}`, value, { bold: true, size: 10 });
+    put(`G${r}:H${r}`, value, { bold, size: 10 });
+    underline(`G${r}:H${r}`);
     r++;
   }
   r++;
 
-  // Letter body
+  // Letter
   put(`A${r}:H${r}`, "Sir/Madam:", { size: 10 }); r++;
+  put(`A${r}:H${r}`, `        Please quote us your government price/s for the item/s listed below which will be opened on ${data.openingDate || "_______________________"}`, { size: 10, wrap: true });
+  ws.getRow(r).height = 26;
   r++;
-  put(`A${r}:H${r}`, `    Please quote us your government price/s for the item/s listed below which will be opened on ${data.openingDate || "_______________"}.`, { size: 10, wrap: true });
-  ws.getRow(r).height = 28;
+  put(`A${r}:H${r}`, `        ${rfqDocumentsLead(data.requiredDocuments)}`, { size: 10, wrap: true });
+  ws.getRow(r).height = 26;
   r++;
-  put(`A${r}:H${r}`, "    May we have your quotation on or before the scheduled opening of bids together with the following documents, viz:", { size: 10, wrap: true });
-  ws.getRow(r).height = 28;
-  r++;
-  put(`A${r}:H${r}`, "        1. Valid PhilGeps Registration;", { size: 10 }); r++;
-  put(`A${r}:H${r}`, "        2. Valid Mayor's / Business Permit, and", { size: 10 }); r++;
-  put(`A${r}:H${r}`, "        3. Tax Clearance Certificate", { size: 10 }); r++;
-  put(`A${r}:H${r}`, "    Thank you.", { size: 10 }); r++;
-  r++;
-
-  // BAC Chairman signatory
-  put(`E${r}:H${r}`, "Very truly yours,", { size: 10, align: "right" }); r++;
-  r++;
-  put(`E${r}:H${r}`, data.bacChairman, { bold: true, size: 10, align: "right" }); r++;
-  put(`E${r}:H${r}`, data.bacChairmanTitle, { italic: true, size: 9, align: "right" }); r++;
+  for (const line of rfqDocumentLines(data.requiredDocuments)) {
+    put(`A${r}:H${r}`, `            ${line}`, { size: 10 }); r++;
+  }
+  put(`A${r}:H${r}`, "        Thank you.", { size: 10 }); r++;
   r++;
 
-  // Table intro
-  put(`A${r}:H${r}`, "This office is in the market for the following:", { size: 9 }); r++;
+  // BAC Chairman
+  put(`E${r}:H${r}`, "Very truly yours,", { size: 10 }); r += 3;
+  const chair = put(`E${r}:H${r}`, (data.bacChairman || "").toUpperCase(), { bold: true, size: 10, align: "center" });
+  chair.font = { ...chair.font, underline: true };
+  r++;
+  put(`E${r}:H${r}`, data.bacChairmanTitle, { size: 10, align: "center" }); r++;
 
-  // Table header
-  const headers = ["Item\nNo.", "QTY", "UNIT", "ITEM DESCRIPTION", "UNIT ABC", "TOTAL ABC", "UNIT PRICE", "TOTAL"];
+  // Items table
+  put(`A${r}:H${r}`, "        This office is in the market for the following:", { size: 10 }); r++;
+  const headers = ["Item No.", "QTY", "UNIT", "ITEM DESCRIPTION", "UNIT ABC", "TOTAL ABC", "UNIT PRICE", "TOTAL"];
   headers.forEach((h, i) => {
-    const col = String.fromCharCode(65 + i);
-    put(`${col}${r}`, h, { bold: true, size: 9, align: "center", vAlign: "middle", wrap: true, border: true, fill: "FFF2F2F2" });
+    put(`${String.fromCharCode(65 + i)}${r}`, h, { bold: true, size: 10, align: "center", vAlign: "middle", wrap: true, border: true });
   });
   ws.getRow(r).height = 28;
   r++;
 
-  // Item rows
+  const blankRow = (height = 15) => {
+    for (let c = 0; c < 8; c++) put(`${String.fromCharCode(65 + c)}${r}`, "", { border: true });
+    ws.getRow(r).height = height;
+  };
+  const descRow = (value: import("exceljs").CellValue, opts: { bold?: boolean; italic?: boolean } = {}) => {
+    blankRow();
+    put(`D${r}`, value, { ...opts, size: 10, wrap: true, vAlign: "top", border: true });
+    const text = typeof value === "string" ? value : "";
+    ws.getRow(r).height = Math.max(15, Math.ceil(text.length / 42) * 13);
+  };
+
+  let used = 0;
   for (const it of data.items) {
-    put(`A${r}`, it.itemNo, { align: "center", vAlign: "top", border: true, bold: true });
-    put(`B${r}`, it.qty || "", { align: "center", vAlign: "top", border: true });
-    put(`C${r}`, it.unit, { align: "center", vAlign: "top", border: true });
-    put(`D${r}`, it.description, { align: "left", vAlign: "top", wrap: true, border: true });
-    put(`E${r}`, it.unitAbc || "", { align: "right", vAlign: "top", border: true, numFmt: "#,##0.00" });
-    put(`F${r}`, it.totalAbc || "", { align: "right", vAlign: "top", border: true, numFmt: "#,##0.00" });
-    put(`G${r}`, "", { border: true });
-    put(`H${r}`, "", { border: true });
-    const lines = it.description.split("\n").reduce((sum, ln) => sum + Math.max(1, Math.ceil(ln.length / 30)), 0);
-    ws.getRow(r).height = Math.max(15, lines * 13);
-    r++;
-  }
-
-  // Empty rows
-  for (let i = 0; i < Math.max(0, 3 - data.items.length); i++) {
-    for (let c = 0; c < 8; c++) {
-      put(`${String.fromCharCode(65 + c)}${r}`, "", { border: true });
+    const { name, specs } = splitRfqDescription(it.description);
+    blankRow();
+    put(`A${r}`, it.itemNo, { align: "center", vAlign: "top", border: true, bold: true, size: 10 });
+    put(`B${r}`, it.qty || "", { align: "center", vAlign: "top", border: true, size: 10 });
+    put(`C${r}`, it.unit, { align: "center", vAlign: "top", border: true, size: 10 });
+    put(`D${r}`, name, { bold: true, vAlign: "top", wrap: true, border: true, size: 10 });
+    put(`E${r}`, it.unitAbc || "", { align: "right", vAlign: "top", border: true, numFmt: "#,##0.00", size: 10 });
+    put(`F${r}`, it.totalAbc || "", { align: "right", vAlign: "top", border: true, numFmt: "#,##0.00", size: 10 });
+    ws.getRow(r).height = Math.max(15, Math.ceil(name.length / 42) * 13);
+    r++; used++;
+    for (const spec of specs) {
+      descRow(spec);
+      r++; used++;
     }
-    ws.getRow(r).height = 20;
+  }
+  for (let i = used; i < RFQ_MIN_TABLE_ROWS; i++) {
+    blankRow();
     r++;
   }
 
-  r++;
-
-  // Notes
-  put(`A${r}:H${r}`, "-FOB DOST- Caraga CSU Campus, Ampayon", { size: 9 }); r++;
-  put(`A${r}:H${r}`, "-VAT Inclusive", { size: 9 }); r++;
-  r++;
-
-  // Purpose & Fund Source
-  put(`A${r}:H${r}`, { richText: [
+  // FOB / VAT notes, then purpose and fund source — inside the table, as on the form
+  const notes = data.notes.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (notes.length > 0) {
+    descRow(notes.join("\n\n"), { italic: true });
+    ws.getRow(r).height = Math.max(26, notes.reduce((h, l) => h + Math.ceil(l.length / 42) * 13, 0) + 13);
+    r++;
+  }
+  blankRow();
+  put(`D${r}`, { richText: [
     { font: { name: "Times New Roman", size: 10, bold: true }, text: "Purpose: " },
-    { font: { name: "Times New Roman", size: 10 }, text: data.purpose },
-  ] }, { wrap: true, border: true });
-  ws.getRow(r).height = 30;
-  r++;
-  put(`A${r}:H${r}`, { richText: [
+    { font: { name: "Times New Roman", size: 10 }, text: `${data.purpose}\n` },
     { font: { name: "Times New Roman", size: 10, bold: true }, text: "Fund Source: " },
     { font: { name: "Times New Roman", size: 10 }, text: data.fundSource },
-  ] }, { border: true });
+  ] }, { wrap: true, vAlign: "top", border: true });
+  ws.getRow(r).height = Math.max(40, Math.ceil((data.purpose.length + data.fundSource.length) / 42) * 13 + 20);
   r += 2;
 
-  // Bottom section
-  put(`A${r}:D${r}`, "Procurement Unit/Canvasser", { bold: true, size: 10 });
-  put(`E${r}:H${r}`, "Quotation Submitted by:", { bold: true, size: 10, align: "right" }); r++;
-  put(`A${r}:D${r}`, data.canvasser, { size: 10 });
-  r++;
-  put(`A${r}:D${r}`, "BAC Action:", { bold: true, size: 10 });
-  r++;
-  put(`A${r}:D${r}`, data.bacAction, { size: 10 });
+  // Supplier's block (right) and canvasser / BAC action (left)
+  const supplierLines = ["Quotation Submitted by:", "Name of Company/Establishment:", "Address:", "By:"];
+  for (const label of supplierLines) {
+    put(`E${r}:F${r}`, label, { size: 10 });
+    underline(`G${r}:H${r}`);
+    r++;
+  }
+  put(`F${r}:H${r}`, "(Printed Name and Signature)", { size: 10, align: "center" }); r++;
+  const canvasserRow = r - 3;
+  put(`A${canvasserRow}:C${canvasserRow}`, data.canvasser, { size: 10, align: "center" });
+  const label = put(`A${canvasserRow + 1}:C${canvasserRow + 1}`, "Procurement Unit/Canvasser", { size: 10, align: "center" });
+  eachCell(`A${canvasserRow + 1}:C${canvasserRow + 1}`, (c) => (c.border = { top: thin }));
+  label.alignment = { horizontal: "center" };
+  for (const labelText of ["Date:", "Contact No.:", "TIN No.:"]) {
+    put(`E${r}:F${r}`, labelText, { size: 10 });
+    underline(`G${r}:H${r}`);
+    r++;
+  }
+  put(`A${r - 3}:C${r - 1}`, `BAC Action:${data.bacAction ? `\n${data.bacAction}` : ""}`, { size: 10, vAlign: "top", wrap: true, border: true });
 
   // Download
   const buffer = await wb.xlsx.writeBuffer();

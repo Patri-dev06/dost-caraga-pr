@@ -6,6 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { DatePickerField } from "@/components/app/date-picker-field";
+import { RfqDocument, type RfqPrintData } from "@/components/app/rfq-document";
+import { RfqDocumentsEditor } from "@/components/app/rfq-documents-editor";
+import { DEFAULT_RFQ_DOCUMENTS, DEFAULT_RFQ_NOTES } from "@/lib/rfq-format";
 import { PersonPicker } from "@/components/app/person-picker";
 import { useSignatories } from "@/lib/signatories";
 import { formatLongDate } from "@/lib/date-format";
@@ -121,6 +124,8 @@ interface RfqFormDoc {
   items: RfqFormItem[];
   canvasser: string;
   bacAction: string;
+  requiredDocuments: string[];
+  notes: string;
 }
 
 function todayStr() {
@@ -151,6 +156,8 @@ function CreateRfqPage() {
     items: [],
     canvasser: "",
     bacAction: "",
+    requiredDocuments: DEFAULT_RFQ_DOCUMENTS,
+    notes: DEFAULT_RFQ_NOTES,
   });
 
   useEffect(() => {
@@ -227,6 +234,8 @@ function CreateRfqPage() {
       fund_source_snapshot: doc.fundSource,
       canvasser: doc.canvasser,
       bac_action: doc.bacAction,
+      required_documents: doc.requiredDocuments,
+      notes: doc.notes,
       items: doc.items.map((it) => ({
         item_no: it.itemNo,
         description: it.description,
@@ -282,10 +291,30 @@ function CreateRfqPage() {
         })),
         canvasser: doc.canvasser,
         bacAction: doc.bacAction,
+        requiredDocuments: doc.requiredDocuments,
+        notes: doc.notes,
       },
       `RFQ-${doc.quotationNo || "draft"}`,
     );
   }
+
+  const printData: RfqPrintData = {
+    quotationNo: doc.quotationNo,
+    rfqDate: doc.rfqDate,
+    placeOfDelivery: doc.placeOfDelivery,
+    estimatedBudget: parseAmount(doc.estimatedBudget),
+    prNo: doc.prNo,
+    openingDate: doc.openingDate,
+    bacChairman: doc.bacChairman,
+    bacChairmanTitle: doc.bacChairmanTitle,
+    requiredDocuments: doc.requiredDocuments,
+    items: doc.items.map((it) => ({ itemNo: it.itemNo, qty: it.qty, unit: it.unit, description: it.description, unitAbc: parseAmount(it.unitAbc), totalAbc: parseAmount(it.totalAbc) })),
+    notes: doc.notes,
+    purpose: doc.purpose,
+    fundSource: doc.fundSource,
+    canvasser: doc.canvasser,
+    bacAction: doc.bacAction,
+  };
 
   if (loading) {
     return (
@@ -338,8 +367,11 @@ function CreateRfqPage() {
         </div>
       </div>
 
-      {/* Document */}
-      <div className="w-full overflow-x-auto px-3 py-6 sm:px-6 print:overflow-visible print:p-0">
+      {/* Printing uses the official RFQ layout; the editor below is for the screen only. */}
+      <RfqDocument data={printData} className="hidden print:block" />
+
+      {/* Document (editor) */}
+      <div className="w-full overflow-x-auto px-3 py-6 sm:px-6 print:hidden">
         <div className="pr-print-root mx-auto w-[850px] max-w-full">
           <div
             className="bg-white px-10 py-8 text-[11px] text-black shadow-card ring-1 ring-black/5 print:shadow-none print:ring-0"
@@ -403,14 +435,7 @@ function CreateRfqPage() {
                     <DatePickerField variant="inline" value={doc.openingDate} onChange={(v) => set("openingDate", v)} placeholder="pick a date" notBeforeToday />
                   </span>
                 </p>
-                <p className="mt-1">
-                  May we have your quotation on or before the scheduled opening of bids together with the following documents, viz:
-                </p>
-                <ol className="mt-1 list-inside space-y-0.5 pl-4">
-                  <li>1. Valid PhilGeps Registration;</li>
-                  <li>2. Valid Mayor's / Business Permit, and</li>
-                  <li>3. Tax Clearance Certificate</li>
-                </ol>
+                <RfqDocumentsEditor value={doc.requiredDocuments} onChange={(v) => set("requiredDocuments", v)} />
                 <p className="mt-1">Thank you.</p>
               </div>
             </div>
@@ -479,10 +504,9 @@ function CreateRfqPage() {
               <Lock className="h-3 w-3" /> Items, quantities and ABC come from the approved Purchase Request and cannot be added or changed here.
             </p>
 
-            {/* Notes */}
-            <div className="mt-3 text-[10px]">
-              <p>-FOB DOST- Caraga CSU Campus, Ampayon</p>
-              <p>-VAT Inclusive</p>
+            {/* FOB / VAT notes — printed in italics under the items */}
+            <div className="mt-3 text-[10px] italic">
+              <AutoTextarea value={doc.notes} onChange={(v) => set("notes", v)} />
             </div>
 
             {/* Purpose & Fund Source */}
@@ -507,7 +531,7 @@ function CreateRfqPage() {
 
           <p className="no-print mx-auto mt-3 max-w-xl text-center text-xs text-muted-foreground">
             {sourcePr ? "Items are auto-populated from the Purchase Request. " : ""}
-            After saving, you'll sign the RFQ as BAC Chair → BAC Vice-Chair → Supply Officer, then canvass 3 suppliers.
+            After saving, the Supply Officer signs it, then the BAC Chairman (or Vice-Chairman); Supply then delivers it to 3 suppliers. Print shows the official form, with UNIT PRICE and TOTAL left blank for the supplier.
           </p>
         </div>
       </div>

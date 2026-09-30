@@ -10,6 +10,13 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class Rfq extends Model
 {
+    /** What the official RFQ form asks for by default when the RFQ does not say otherwise. */
+    public const DEFAULT_REQUIRED_DOCUMENTS = [
+        'Valid PhilGEPS Registration',
+        "Valid Mayor's / Business Permit",
+        'Tax Clearance Certificate',
+    ];
+
     protected $fillable = [
         'rfq_no',
         'purchase_request_id',
@@ -25,6 +32,8 @@ class Rfq extends Model
         'fund_source_snapshot',
         'canvasser',
         'bac_action',
+        'required_documents',
+        'notes',
         'bac_chair_signed_by',
         'bac_chair_signed_name',
         'bac_chair_signed_at',
@@ -48,6 +57,7 @@ class Rfq extends Model
     protected function casts(): array
     {
         return [
+            'required_documents' => 'array',
             'estimated_budget' => 'decimal:2',
             'bac_chair_signed_at' => 'datetime',
             'bac_vice_chair_signed_at' => 'datetime',

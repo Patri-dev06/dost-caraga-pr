@@ -1557,6 +1557,10 @@ export interface Rfq {
   suppliers: RfqSupplier[];
   canvasser: string;
   bacAction: string;
+  /** Documents the supplier submits with the quotation (empty = none asked for). */
+  requiredDocuments: string[];
+  /** The FOB / VAT lines printed under the items. */
+  notes: string;
   /** Flowchart order: Supply Officer counter-signs first, then ONE of the BAC Chairman / Vice-Chairman. */
   supplyOfficerSignedName: string;
   supplyOfficerSignedAt: string;
@@ -1637,6 +1641,8 @@ type BackendRfq = {
   fund_source: string | null;
   canvasser: string | null;
   bac_action: string | null;
+  required_documents?: string[] | null;
+  notes?: string | null;
   supply_officer_signed_name: string | null;
   supply_officer_signed_at: string | null;
   bac_signed_name?: string | null;
@@ -1726,6 +1732,8 @@ function mapRfq(rfq: BackendRfq): Rfq {
     suppliers: (rfq.suppliers ?? []).map(mapRfqSupplier),
     canvasser: rfq.canvasser ?? "",
     bacAction: rfq.bac_action ?? "",
+    requiredDocuments: rfq.required_documents ?? [],
+    notes: rfq.notes ?? "",
     supplyOfficerSignedName: rfq.supply_officer_signed_name ?? "",
     supplyOfficerSignedAt: rfq.supply_officer_signed_at ?? "",
     bacSignedName: rfq.bac_signed_name ?? "",
@@ -1767,6 +1775,8 @@ export interface RfqCreatePayload {
   fund_source_snapshot?: string;
   canvasser?: string;
   bac_action?: string;
+  required_documents?: string[];
+  notes?: string;
   items: RfqItemPayload[];
 }
 

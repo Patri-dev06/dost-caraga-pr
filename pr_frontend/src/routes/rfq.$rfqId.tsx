@@ -2,6 +2,10 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { DatePickerField } from "@/components/app/date-picker-field";
 import { PersonPicker } from "@/components/app/person-picker";
+import { RfqDocument, type RfqPrintData } from "@/components/app/rfq-document";
+import { RfqDocumentsEditor } from "@/components/app/rfq-documents-editor";
+import { exportRfqExcel } from "@/lib/rfq-excel";
+import { formatLongDate } from "@/lib/date-format";
 import { useSignatories } from "@/lib/signatories";
 import { useEffect, useState } from "react";
 import {
@@ -13,6 +17,7 @@ import {
   FileSpreadsheet,
   Loader2,
   Plus,
+  Printer,
   Save,
   Send,
   Trash2,
@@ -73,6 +78,8 @@ interface EditDoc {
   fundSource: string;
   canvasser: string;
   bacAction: string;
+  requiredDocuments: string[];
+  notes: string;
 }
 
 interface EditItem {
@@ -99,6 +106,8 @@ function docFromRfq(rfq: Rfq): EditDoc {
     fundSource: rfq.fundSource,
     canvasser: rfq.canvasser,
     bacAction: rfq.bacAction,
+    requiredDocuments: rfq.requiredDocuments,
+    notes: rfq.notes,
   };
 }
 
@@ -215,6 +224,8 @@ function RfqDetailPage() {
       fund_source_snapshot: editDoc.fundSource,
       canvasser: editDoc.canvasser,
       bac_action: editDoc.bacAction,
+      required_documents: editDoc.requiredDocuments,
+      notes: editDoc.notes,
       items: editItems.map((it) => ({
         item_no: it.itemNo,
         description: it.description,
@@ -266,13 +277,45 @@ function RfqDetailPage() {
     return { ...saved, ...(twgDrafts[s.id] ?? {}) };
   }
 
+  // The saved RFQ in the official form's layout, for Print and Excel.
+  const printData: RfqPrintData = {
+    quotationNo: rfq.quotationNo,
+    rfqDate: rfq.rfqDate,
+    placeOfDelivery: rfq.placeOfDelivery,
+    estimatedBudget: rfq.estimatedBudget,
+    prNo: rfq.prNo,
+    openingDate: rfq.openingDate,
+    bacChairman: rfq.bacChairman,
+    bacChairmanTitle: rfq.bacChairmanTitle,
+    requiredDocuments: rfq.requiredDocuments,
+    items: rfq.items.map((it) => ({ itemNo: it.itemNo, qty: it.qty, unit: it.unit, description: it.description, unitAbc: it.unitAbc, totalAbc: it.totalAbc })),
+    notes: rfq.notes,
+    purpose: rfq.purpose,
+    fundSource: rfq.fundSource,
+    canvasser: rfq.canvasser,
+    bacAction: rfq.bacAction,
+  };
+
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
+    <>
+    <RfqDocument data={printData} className="hidden print:block" />
+    <div className="mx-auto w-full max-w-5xl space-y-5 px-3 py-4 print:hidden sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
       <PageHeader
         eyebrow={`PR ${rfq.prNo} · ${rfq.procurementCategory}`}
         title={rfq.rfqNo}
         subtitle={`Request for Quotation${rfq.preparedByName ? ` · Prepared by ${rfq.preparedByName}${rfq.preparedByPosition ? `, ${rfq.preparedByPosition}` : ""}` : ""}`}
-        actions={<StatusBadge status={rfq.status} />}
+        actions={
+          <>
+            <StatusBadge status={rfq.status} />
+            {/* The official RFQ form, as saved — what Supply prints and brings to each supplier. */}
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
+              <Printer className="h-4 w-4" /> Print RFQ
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => exportRfqExcel({ ...printData, openingDate: formatLongDate(printData.openingDate), items: printData.items.map((it) => ({ ...it, qty: Number(it.qty) || 0, unitPrice: "", total: "" })) }, `RFQ-${rfq.rfqNo}`)}>
+              <FileSpreadsheet className="h-4 w-4" /> Export Excel
+            </Button>
+          </>
+        }
       />
 
       <Card className="grid grid-cols-2 gap-4 border border-border bg-card p-4 sm:grid-cols-4">
@@ -400,6 +443,18 @@ function RfqDetailPage() {
               <div className="space-y-1.5">
                 <p className="label-eyebrow">Canvasser</p>
                 <Input value={editDoc.canvasser} onChange={(e) => setDocField("canvasser", e.target.value)} className="border-border" />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <p className="label-eyebrow">Documents the supplier submits</p>
+                <div className="rounded-md border border-border p-2 text-sm">
+                  <RfqDocumentsEditor value={editDoc.requiredDocuments} onChange={(v) => setDocField("requiredDocuments", v)} />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <p className="label-eyebrow">FOB / VAT notes (printed under the items)</p>
+                <Textarea rows={3} value={editDoc.notes} onChange={(e) => setDocField("notes", e.target.value)} className="border-border" />
               </div>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -815,6 +870,7 @@ function RfqDetailPage() {
         </Card>
       )}
     </div>
+    </>
   );
 }
 

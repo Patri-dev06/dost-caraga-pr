@@ -68,6 +68,10 @@ class RfqController extends Controller
             'fund_source_snapshot' => ['nullable', 'string', 'max:255'],
             'canvasser' => ['nullable', 'string', 'max:255'],
             'bac_action' => ['nullable', 'string', 'max:255'],
+            // The documents the supplier submits with the quotation (an empty list asks for none).
+            'required_documents' => ['nullable', 'array', 'max:12'],
+            'required_documents.*' => ['nullable', 'string', 'max:200'],
+            'notes' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.purchase_request_item_id' => ['nullable', 'exists:purchase_request_items,id'],
             'items.*.item_no' => ['nullable', 'integer'],
@@ -98,6 +102,8 @@ class RfqController extends Controller
                 'fund_source_snapshot' => $data['fund_source_snapshot'] ?? $purchaseRequest->fundSource?->name,
                 'canvasser' => $data['canvasser'] ?? null,
                 'bac_action' => $data['bac_action'] ?? null,
+                'required_documents' => array_key_exists('required_documents', $data) ? self::cleanDocuments($data['required_documents']) : Rfq::DEFAULT_REQUIRED_DOCUMENTS,
+                'notes' => $data['notes'] ?? null,
                 'created_by' => $request->user()->id,
             ]);
 
@@ -113,6 +119,12 @@ class RfqController extends Controller
             "{$rfq->rfq_no} was generated and is awaiting your counter-signature.", "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
 
         return response()->json(['data' => $this->format($rfq->fresh())], 201);
+    }
+
+    /** Trimmed, blank lines dropped; an empty list means the RFQ asks for no documents. */
+    private static function cleanDocuments(?array $documents): array
+    {
+        return array_values(array_filter(array_map(fn ($d) => trim((string) $d), $documents ?? []), fn (string $d) => $d !== ''));
     }
 
     /** An RFQ canvasses the approved PR's items — none may be added beyond what the PR lists. */
@@ -147,6 +159,10 @@ class RfqController extends Controller
             'fund_source_snapshot' => ['nullable', 'string', 'max:255'],
             'canvasser' => ['nullable', 'string', 'max:255'],
             'bac_action' => ['nullable', 'string', 'max:255'],
+            // The documents the supplier submits with the quotation (an empty list asks for none).
+            'required_documents' => ['nullable', 'array', 'max:12'],
+            'required_documents.*' => ['nullable', 'string', 'max:200'],
+            'notes' => ['nullable', 'string', 'max:2000'],
             'items' => ['sometimes', 'array', 'min:1'],
             'items.*.purchase_request_item_id' => ['nullable', 'exists:purchase_request_items,id'],
             'items.*.item_no' => ['nullable', 'integer'],
@@ -164,6 +180,10 @@ class RfqController extends Controller
 
         if (isset($data['items'])) {
             $this->abortIfItemsAdded($data['items'], $rfq->purchaseRequest);
+        }
+
+        if (array_key_exists('required_documents', $data)) {
+            $data['required_documents'] = self::cleanDocuments($data['required_documents']);
         }
 
         DB::transaction(function () use ($data, $rfq): void {
@@ -591,6 +611,8 @@ class RfqController extends Controller
             'fund_source' => $rfq->fund_source_snapshot,
             'canvasser' => $rfq->canvasser,
             'bac_action' => $rfq->bac_action,
+            'required_documents' => $rfq->required_documents ?? Rfq::DEFAULT_REQUIRED_DOCUMENTS,
+            'notes' => $rfq->notes,
             'supply_officer_signed_name' => $rfq->supply_officer_signed_name,
             'supply_officer_signed_at' => $rfq->supply_officer_signed_at?->toISOString(),
             'bac_signed_name' => $rfq->bac_signed_name,
