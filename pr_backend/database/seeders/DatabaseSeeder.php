@@ -40,6 +40,7 @@ class DatabaseSeeder extends Seeder
             ['name' => 'BAC Vice-Chairman', 'description' => 'Acts for the BAC Chairman on RFQs and Abstracts of Canvas.', 'permissions' => ['Sign RFQ', 'Review AOC']],
             ['name' => 'Regional Director', 'description' => 'Head of the regional office and final approving authority. Only one account holds this role.', 'permissions' => ['Approve PR', 'Approve LIB', 'Approve PO']],
             ['name' => 'Supply Officer', 'description' => 'Counter-signs RFQs, notes the lowest bidder on an approved Abstract of Canvas, and rates venues.', 'permissions' => ['Sign RFQ', 'Note lowest bidder', 'Rate venues']],
+            ['name' => 'BAC Member', 'description' => 'Member of the Bids and Awards Committee; signs the Abstract of Canvas.', 'permissions' => ['Sign AOC']],
         ])->map(fn ($data) => Role::updateOrCreate(['name' => $data['name']], $data));
 
         $superadmin = User::updateOrCreate(['email' => 'superadmin@dost.gov.ph'], [

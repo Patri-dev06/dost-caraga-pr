@@ -2041,6 +2041,27 @@ export interface AbstractOfCanvas {
   suppliers: AocSupplierSummary[];
   items: RfqItem[];
   venueRating: VenueRating | null;
+  /** What the printed Abstract of Canvas needs: the RFQ particulars and the signatories. */
+  document: AocDocumentDetails | null;
+}
+
+export type AocSignatory = { name: string; position: string };
+
+export interface AocDocumentDetails {
+  quotationNo: string;
+  rfqDate: string;
+  openingDate: string;
+  placeOfDelivery: string;
+  estimatedBudget: number;
+  purpose: string;
+  fundSource: string;
+  modeOfProcurement: string;
+  bacChair: AocSignatory | null;
+  bacViceChair: AocSignatory | null;
+  bacMembers: AocSignatory[];
+  twgLead: AocSignatory | null;
+  supplyOfficer: AocSignatory | null;
+  regionalDirector: AocSignatory | null;
 }
 
 type BackendAocSupplierSummary = {
@@ -2084,6 +2105,24 @@ type BackendAbstractOfCanvas = {
   suppliers?: BackendAocSupplierSummary[];
   items?: BackendRfqItem[];
   venue_rating?: BackendVenueRating | null;
+  document?: {
+    quotation_no: string | null;
+    rfq_date: string | null;
+    opening_date: string | null;
+    place_of_delivery: string | null;
+    estimated_budget: number | string | null;
+    purpose: string | null;
+    fund_source: string | null;
+    mode_of_procurement: string | null;
+    signatories: {
+      bac_chair: AocSignatory | null;
+      bac_vice_chair: AocSignatory | null;
+      bac_members: AocSignatory[];
+      twg_lead: AocSignatory | null;
+      supply_officer: AocSignatory | null;
+      regional_director: AocSignatory | null;
+    };
+  } | null;
 };
 
 function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
@@ -2141,6 +2180,24 @@ function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
             score: r.score,
             remarks: r.remarks ?? "",
           })),
+        }
+      : null,
+    document: aoc.document
+      ? {
+          quotationNo: aoc.document.quotation_no ?? "",
+          rfqDate: aoc.document.rfq_date ?? "",
+          openingDate: aoc.document.opening_date ?? "",
+          placeOfDelivery: aoc.document.place_of_delivery ?? "",
+          estimatedBudget: Number(aoc.document.estimated_budget ?? 0),
+          purpose: aoc.document.purpose ?? "",
+          fundSource: aoc.document.fund_source ?? "",
+          modeOfProcurement: aoc.document.mode_of_procurement ?? "",
+          bacChair: aoc.document.signatories.bac_chair,
+          bacViceChair: aoc.document.signatories.bac_vice_chair,
+          bacMembers: aoc.document.signatories.bac_members ?? [],
+          twgLead: aoc.document.signatories.twg_lead,
+          supplyOfficer: aoc.document.signatories.supply_officer,
+          regionalDirector: aoc.document.signatories.regional_director,
         }
       : null,
   };

@@ -1,12 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Ban, CheckCircle2, ClipboardCheck, Loader2, Star, ThumbsDown, ThumbsUp } from "lucide-react";
+import { ArrowLeft, Ban, CheckCircle2, ClipboardCheck, Loader2, Printer, Star, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
+import { AocDocument } from "@/components/app/aoc-document";
 import {
   apiGetAoc,
   apiSubmitAocForBacReview,
@@ -91,7 +92,10 @@ function AocDetailPage() {
   const venues = venue ? aoc.suppliers.filter((s) => venue.venueIds.includes(s.id)) : [];
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
+    <>
+    {/* The printed, wet-signed Abstract of Canvas; the page below is for the screen only. */}
+    <AocDocument aoc={aoc} className="hidden print:block" />
+    <div className="mx-auto w-full max-w-5xl space-y-5 px-3 py-4 print:hidden sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
       {isStaff && (
         <Button variant="ghost" size="sm" asChild className="gap-1.5 text-muted-foreground">
           <Link to="/rfq/$rfqId" params={{ rfqId: aoc.rfqId }}>
@@ -104,7 +108,14 @@ function AocDetailPage() {
         eyebrow={`RFQ ${aoc.rfqNo} · PR ${aoc.prNo}`}
         title="Abstract of Canvas"
         subtitle={`${aoc.procurementCategory === "Venue" ? "List of Venue" : aoc.procurementCategory} procurement${aoc.preparedByName ? ` · Prepared by ${aoc.preparedByName}${aoc.preparedByPosition ? `, ${aoc.preparedByPosition}` : ""}` : ""}`}
-        actions={<StatusBadge status={aoc.status} />}
+        actions={
+          <>
+            <StatusBadge status={aoc.status} />
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()} title="Print the Abstract of Canvas for the BAC's signatures">
+              <Printer className="h-4 w-4" /> Print AOC
+            </Button>
+          </>
+        }
       />
 
       {aoc.status === "Cancelled" && (
@@ -408,6 +419,7 @@ function AocDetailPage() {
         </Card>
       )}
     </div>
+    </>
   );
 }
 

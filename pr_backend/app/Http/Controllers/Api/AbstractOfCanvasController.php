@@ -512,7 +512,53 @@ class AbstractOfCanvasController extends Controller
                 'ratings' => $aoc->venueRatings->map(fn (VenueRating $r) => $r->only(['rfq_supplier_id', 'rater_id', 'rater_role', 'criterion', 'score', 'remarks'])),
             ],
             'approval_trail' => $aoc->approvalActions,
+            // For the printed Abstract of Canvas: the RFQ's particulars and every signature line.
+            'document' => $this->documentDetails($aoc),
             'created_at' => $aoc->created_at?->toISOString(),
+        ];
+    }
+
+    /**
+     * What the printed Abstract of Canvas needs beyond the prices: the RFQ/PR particulars and the
+     * signatories — the BAC (Chairman, Vice-Chairman, members), the TWG Lead for equipment, the
+     * Supply Officer who notes the lowest bidder, and the Regional Director who approves.
+     *
+     * @return array<string, mixed>
+     */
+    private function documentDetails(AbstractOfCanvas $aoc): array
+    {
+        $rfq = $aoc->rfq;
+        $pr = $rfq?->purchaseRequest;
+        $person = fn (?User $u, string $fallback): ?array => $u ? ['name' => $u->name, 'position' => $u->position ?: $fallback] : null;
+        $chair = $this->designatedBacChair();
+        $vice = $this->designatedBacViceChair();
+
+        $members = User::query()
+            ->where('status', 'Active')
+            ->whereHas('roles', fn ($q) => $q->where('name', 'BAC Member'))
+            ->whereNotIn('id', array_filter([$chair?->id, $vice?->id]))
+            ->orderBy('name')
+            ->get()
+            ->map(fn (User $u) => ['name' => $u->name, 'position' => $u->position ?: 'BAC Member'])
+            ->values();
+
+        return [
+            'quotation_no' => $rfq?->quotation_no,
+            'rfq_date' => $rfq?->rfq_date,
+            'opening_date' => $rfq?->opening_date,
+            'place_of_delivery' => $rfq?->place_of_delivery,
+            'estimated_budget' => (float) ($rfq?->estimated_budget ?? 0),
+            'purpose' => $rfq?->purpose ?? $pr?->purpose,
+            'fund_source' => $rfq?->fund_source_snapshot,
+            'mode_of_procurement' => $pr?->mode_of_procurement,
+            'signatories' => [
+                'bac_chair' => $person($chair, 'Chairman, Bids & Awards Committee'),
+                'bac_vice_chair' => $person($vice, 'Vice-Chairman, Bids & Awards Committee'),
+                'bac_members' => $members,
+                'twg_lead' => $aoc->procurement_category === 'Equipment' ? $person($this->designatedTwgLead(), 'TWG Lead') : null,
+                'supply_officer' => $person($this->designatedSupplyOfficer(), 'Supply Officer'),
+                'regional_director' => $person($this->designatedRegionalDirector(), 'Regional Director'),
+            ],
         ];
     }
 }
