@@ -140,7 +140,8 @@ class PurchaseOrderApiTest extends TestCase
         // RD approval completes the signed PO and releases it to Supply to bring to the supplier.
         $final = $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/final-approve")
             ->assertOk()->assertJsonPath('data.status', 'Forwarded to Supplier');
-        $this->assertNotNull($final->json('data.approved_by_signature'));
+        // E-signatures are off until PNPKI: the PO records who approved and when, with no signature image.
+        $this->assertNull($final->json('data.approved_by_signature'));
         $this->assertDatabaseHas('user_notifications', ['type' => 'po_forwarded', 'user_id' => \App\Models\PurchaseRequest::find($prId)->requested_by]);
 
         $this->assertDatabaseHas('approval_actions', [

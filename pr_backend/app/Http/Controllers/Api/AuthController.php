@@ -196,6 +196,8 @@ class AuthController extends Controller
             'is_bac_vice_chair' => $bacViceChairId !== null && (int) $bacViceChairId === $user->id,
             'is_supply_officer' => $supplyOfficerId !== null && (int) $supplyOfficerId === $user->id,
             'is_twg_lead' => $twgLeadId !== null && (int) $twgLeadId === $user->id,
+            // Whether uploaded e-signatures are in use (off until PNPKI) — the app hides them when not.
+            'e_signature_enabled' => (bool) config('features.e_signature'),
         ]);
     }
 

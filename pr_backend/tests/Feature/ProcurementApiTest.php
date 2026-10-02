@@ -461,6 +461,7 @@ class ProcurementApiTest extends TestCase
 
     public function test_recommend_and_approve_require_an_e_signature(): void
     {
+        config(['features.e_signature' => true]); // the rule as it will work again once switched back on
         $adminToken = $this->loginAsAdmin();
         $prId = $this->createSubmittedPr($adminToken);
 
@@ -469,6 +470,19 @@ class ProcurementApiTest extends TestCase
         $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/recommend")->assertStatus(422);
         $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/approve")->assertStatus(422);
         $this->assertSame('For Recommendation', \App\Models\PurchaseRequest::find($prId)->status);
+    }
+
+    public function test_with_e_signatures_turned_off_signing_needs_no_upload(): void
+    {
+        config(['features.e_signature' => false]);
+        $adminToken = $this->loginAsAdmin();
+        $prId = $this->createSubmittedPr($adminToken);
+        User::where('email', 'admin@dost.gov.ph')->update(['signature' => null]);
+
+        $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/recommend")->assertOk();
+        $this->withToken($adminToken)->postJson("/api/v1/approvals/{$prId}/approve")->assertOk();
+        $this->withToken($adminToken)->getJson('/api/v1/auth/me')->assertJsonPath('data.e_signature_enabled', false);
+        $this->withToken($adminToken)->postJson('/api/v1/me/signature', ['signature' => 'data:image/png;base64,iVBORw0KGgo='])->assertForbidden();
     }
 
     public function test_regular_requester_can_submit_a_draft_without_the_validation_module(): void

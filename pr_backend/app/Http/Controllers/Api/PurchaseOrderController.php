@@ -377,9 +377,10 @@ class PurchaseOrderController extends Controller
             'approved_by_name' => $po->approved_by_name,
             'approved_by_signed_at' => $po->approved_by_signed_at?->toISOString(),
             // "Generate PO (with complete digital signature)": the e-signature images of each signer.
-            'budget_officer_signature' => $po->budget_officer_signed_at ? $po->budgetOfficer?->signature : null,
-            'accounting_officer_signature' => $po->accounting_officer_signed_at ? $po->accountingOfficer?->signature : null,
-            'approved_by_signature' => $po->approved_by_signed_at ? $po->approvedBy?->signature : null,
+            // Signature images only while e-signatures are on (off until PNPKI); names and dates always show.
+            'budget_officer_signature' => config('features.e_signature') && $po->budget_officer_signed_at ? $po->budgetOfficer?->signature : null,
+            'accounting_officer_signature' => config('features.e_signature') && $po->accounting_officer_signed_at ? $po->accountingOfficer?->signature : null,
+            'approved_by_signature' => config('features.e_signature') && $po->approved_by_signed_at ? $po->approvedBy?->signature : null,
             'supplier_email' => $po->supplier_email,
             'forwarded_to_supplier_at' => $po->forwarded_to_supplier_at?->toISOString(),
             'delivery_accepted_at' => $po->delivery_accepted_at?->toISOString(),

@@ -561,8 +561,9 @@ function LibForm() {
   const canCertify = (Boolean(currentUser?.isBudgetOfficer) || isSuperadmin) && doc.status === "Forwarded to Budget Officer";
   const canApprove = (Boolean(currentUser?.isRegionalDirector) || isSuperadmin) && doc.status === "Pending Regional Director Approval";
   const canReturn = canRecommend || canCertify || canApprove;
-  // Signing/approving requires an uploaded e-signature (also enforced server-side).
-  const noSignature = !currentUser?.hasSignature;
+  // While e-signatures are on, signing/approving requires an uploaded one (also enforced server-side).
+  // They are off until PNPKI, so nothing is blocked then.
+  const noSignature = Boolean(currentUser?.eSignatureEnabled) && !currentUser?.hasSignature;
   const signatureHint = noSignature ? "Upload your e-signature first (account menu → My E-Signature)." : undefined;
 
   async function runWorkflow(label: LibStatus | "return", fn: () => Promise<LibDoc>, message: string, stay = false) {

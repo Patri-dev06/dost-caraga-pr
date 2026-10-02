@@ -44,7 +44,9 @@ export type CurrentUser = {
   isBacViceChair: boolean; // designated BAC Vice-Chairman: reviews Abstracts of Canvas
   isSupplyOfficer: boolean; // designated Supply Officer: counter-signs RFQs, notes the lowest bidder
   isTwgLead: boolean; // designated TWG Lead: evaluates equipment, answers BAC remarks, rates venues
-  hasSignature: boolean; // an e-signature is uploaded (required to sign/approve)
+  hasSignature: boolean; // an e-signature is uploaded (required to sign/approve while e-signatures are on)
+  /** Uploaded e-signatures are in use. Off until PNPKI: signing needs no upload, and none are shown. */
+  eSignatureEnabled: boolean;
 };
 
 export type RoleRecord = {
@@ -1323,6 +1325,7 @@ type BackendUser = {
   is_supply_officer?: boolean;
   is_twg_lead?: boolean;
   has_signature?: boolean;
+  e_signature_enabled?: boolean;
   last_login_at: string | null;
 };
 
@@ -2546,6 +2549,7 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     isSupplyOfficer: Boolean(user.is_supply_officer),
     isTwgLead: Boolean(user.is_twg_lead),
     hasSignature: Boolean(user.has_signature),
+    eSignatureEnabled: Boolean(user.e_signature_enabled),
   };
 }
 

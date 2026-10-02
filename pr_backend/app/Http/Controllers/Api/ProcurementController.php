@@ -235,6 +235,7 @@ class ProcurementController extends Controller
     /** Upload / replace the current user's e-signature image (base64 data URL). */
     public function storeSignature(Request $request): JsonResponse
     {
+        abort_unless(config('features.e_signature'), 403, 'E-signatures are turned off for now. Digital signing will come with PNPKI.');
         $data = $request->validate([
             'signature' => ['required', 'string', 'starts_with:data:image/', 'max:2000000'],
         ]);

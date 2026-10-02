@@ -113,10 +113,13 @@ export function AppTopbar() {
               )}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setSigOpen(true); }}>
-              <PenLine className="h-4 w-4" /> My E-Signature
-              {user && !user.hasSignature && <span className="ml-auto text-[10px] font-semibold text-destructive">Required</span>}
-            </DropdownMenuItem>
+            {/* Uploaded e-signatures are off until PNPKI digital signing is in place. */}
+            {user?.eSignatureEnabled && (
+              <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setSigOpen(true); }}>
+                <PenLine className="h-4 w-4" /> My E-Signature
+                {!user.hasSignature && <span className="ml-auto text-[10px] font-semibold text-destructive">Required</span>}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem asChild><Link to="/settings">Settings</Link></DropdownMenuItem>
             <DropdownMenuItem
               disabled={signingOut}
@@ -131,7 +134,7 @@ export function AppTopbar() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <SignatureDialog open={sigOpen} onOpenChange={setSigOpen} onChanged={refresh} />
+      {user?.eSignatureEnabled && <SignatureDialog open={sigOpen} onOpenChange={setSigOpen} onChanged={refresh} />}
     </header>
   );
 }

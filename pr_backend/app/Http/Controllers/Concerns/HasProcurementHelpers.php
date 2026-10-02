@@ -87,6 +87,11 @@ trait HasProcurementHelpers
     /** Block a signing/approval action when the acting user has no e-signature on file. */
     private function requireSignature(?User $user): void
     {
+        // Turned off until PNPKI digital signatures are in place (config/features.php).
+        if (! config('features.e_signature')) {
+            return;
+        }
+
         abort_if(
             $user === null || empty($user->signature),
             422,
