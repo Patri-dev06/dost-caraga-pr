@@ -48,16 +48,23 @@ trait ManagesCanvass
         $rfqItemIds = $rfq->items()->pluck('id')->map(fn ($id) => (int) $id)->all();
         $given = collect($items)->pluck('rfq_item_id')->map(fn ($id) => (int) $id);
         abort_unless($given->diff($rfqItemIds)->isEmpty(), 422, 'Every quoted item must belong to this RFQ.');
-        abort_unless(collect($rfqItemIds)->diff($given)->isEmpty(), 422, 'Quote a unit price for every item on the RFQ.');
+        // A supplier need not offer every line — the Abstract of Canvass prints "NONE" against the
+        // ones it did not quote — but a reply that prices nothing at all is not a quotation.
+        abort_if(collect($items)->every(fn (array $i) => ($i['unit_price'] ?? null) === null),
+            422, 'Quote a unit price for at least one item on the RFQ.');
 
         $path = $signedQuotation->store($this->quotationFolder.'/'.$rfq->id, 'local');
 
         DB::transaction(function () use ($items, $rfqSupplier, $signedQuotation, $path, $via): void {
             foreach ($items as $item) {
                 $rfqItem = RfqItem::find($item['rfq_item_id']);
+                $unitPrice = $item['unit_price'] ?? null;
                 RfqQuoteItem::updateOrCreate(
                     ['rfq_supplier_id' => $rfqSupplier->id, 'rfq_item_id' => $rfqItem->id],
-                    ['unit_price' => $item['unit_price'], 'total_price' => (float) $item['unit_price'] * (float) $rfqItem->quantity],
+                    [
+                        'unit_price' => $unitPrice,
+                        'total_price' => $unitPrice === null ? null : (float) $unitPrice * (float) $rfqItem->quantity,
+                    ],
                 );
             }
             $rfqSupplier->forceFill([

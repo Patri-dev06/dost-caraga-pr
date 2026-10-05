@@ -69,13 +69,13 @@ class PurchaseOrderApiTest extends TestCase
 
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")
             ->assertCreated()
-            ->assertJsonPath('data.rfq_id', $rfqId)
-            ->assertJsonPath('data.purchase_request_id', $prId)
-            ->assertJsonPath('data.status', 'Draft')
-            ->assertJsonPath('data.supplier_name', 'ACME Trading')
-            ->assertJsonPath('data.items.0.unit_cost', '240.00')
-            ->assertJsonPath('data.total_amount', '240.00')
-            ->assertJsonStructure(['data' => ['po_no']]);
+            ->assertJsonPath('data.0.rfq_id', $rfqId)
+            ->assertJsonPath('data.0.purchase_request_id', $prId)
+            ->assertJsonPath('data.0.status', 'Draft')
+            ->assertJsonPath('data.0.supplier_name', 'ACME Trading')
+            ->assertJsonPath('data.0.items.0.unit_cost', '240.00')
+            ->assertJsonPath('data.0.total_amount', '240.00')
+            ->assertJsonStructure(['data' => [['po_no']]]);
 
         $this->assertDatabaseHas('purchase_orders', ['rfq_id' => $rfqId, 'supplier_name' => 'ACME Trading']);
     }
@@ -126,7 +126,7 @@ class PurchaseOrderApiTest extends TestCase
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createApprovedAoc($token, $prId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.0.id');
 
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")
             ->assertOk()->assertJsonPath('data.status', 'Pending Budget Obligation');
@@ -161,7 +161,7 @@ class PurchaseOrderApiTest extends TestCase
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createApprovedAoc($token, $prId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.0.id');
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
 
         $requesterLogin = $this->postJson('/api/v1/auth/login', [
@@ -179,7 +179,7 @@ class PurchaseOrderApiTest extends TestCase
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createApprovedAoc($token, $prId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.0.id');
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
 
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/reject")->assertStatus(422);
@@ -194,7 +194,7 @@ class PurchaseOrderApiTest extends TestCase
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createApprovedAoc($token, $prId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.0.id');
 
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/deliver", ['waived' => false])->assertStatus(422);
 

@@ -275,7 +275,8 @@ function RfqDetailPage() {
   const onRfq = rfq.suppliers.filter((s) => s.status !== "Replaced").map((s) => s.supplierId).filter((id): id is string => !!id);
   const isEquipment = rfq.procurementCategory === "Equipment";
   const twgDone = replied.length > 0 && replied.every((s) => s.twgResult !== null);
-  const anyPassed = replied.some((s) => s.twgResult === "Passed");
+  // A dealer that met the specification on only some items still competes for those items.
+  const anyPassed = replied.some((s) => s.twgResult === "Passed" || s.twgResult === "Partial");
   const aocReady = isEquipment
     ? rfq.status === "TWG Evaluation" && twgDone && anyPassed && !!rfq.twgEvaluationNotes
     : rfq.status === "Canvassing" && awaiting.length === 0 && replied.length > 0;
@@ -636,7 +637,7 @@ function RfqDetailPage() {
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
                     )}
-                    {s.twgResult && <StatusBadge status={s.twgResult === "Passed" ? "Passed" : "Failed"} />}
+                    {s.twgResult && <StatusBadge status={s.twgResult} />}
                     <StatusBadge status={s.isOverdue ? "Warning" : s.status} />
                     {s.status === "Replied" && <p className="text-xs font-semibold tabular-nums text-navy">₱{fmtAmount(quoteTotal(s))}</p>}
                   </div>
@@ -800,7 +801,7 @@ function RfqDetailPage() {
               <div key={s.id} className="space-y-2 rounded-lg border border-border p-3">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-navy">{s.supplierName}</p>
-                  {s.twgResult ? <StatusBadge status={s.twgResult === "Passed" ? "Passed" : "Failed"} /> : <span className="text-xs text-muted-foreground">Not checked yet</span>}
+                  {s.twgResult ? <StatusBadge status={s.twgResult} /> : <span className="text-xs text-muted-foreground">Not checked yet</span>}
                 </div>
                 {rfq.items.map((item) => {
                   const row = draft[item.id] ?? { complies: null, remarks: "" };

@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { AocDocument } from "@/components/app/aoc-document";
+import { AocAwardTable } from "@/components/app/aoc-award-table";
 import {
   apiGetAoc,
   apiSubmitAocForBacReview,
@@ -141,16 +142,21 @@ function AocDetailPage() {
                 <TableHead className="label-eyebrow">Status</TableHead>
                 {isEquipment && <TableHead className="label-eyebrow">TWG check</TableHead>}
                 <TableHead className="label-eyebrow text-right">Total Quoted</TableHead>
+                <TableHead className="label-eyebrow text-right">Awarded</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {aoc.suppliers.map((s) => (
-                <TableRow key={s.id} className={s.isWinner ? "bg-success/5" : undefined}>
+              {aoc.suppliers.map((s) => {
+                // The award is split line by line, so a dealer is described by what it won, not by
+                // being "the" winner of the canvass.
+                const won = s.quoteItems.filter((qi) => qi.isAwarded).length;
+                return (
+                <TableRow key={s.id} className={won > 0 ? "bg-success/5" : undefined}>
                   <TableCell className="font-medium text-navy">
                     {s.supplierName}
-                    {s.isWinner && (
+                    {won > 0 && (
                       <span className="ml-2 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-success">
-                        {aoc.procurementCategory === "Venue" ? "Top-rated / Winner" : "Lowest / Winner"}
+                        {aoc.procurementCategory === "Venue" ? "Top-rated venue" : `Won ${won} item${won === 1 ? "" : "s"}`}
                       </span>
                     )}
                   </TableCell>
@@ -159,7 +165,7 @@ function AocDetailPage() {
                     <TableCell>
                       {s.twgResult ? (
                         <span className="text-xs">
-                          <StatusBadge status={s.twgResult === "Passed" ? "Passed" : "Failed"} />
+                          <StatusBadge status={s.twgResult} />
                           {s.quoteItems.filter((qi) => qi.twgComplies === false && qi.twgRemarks).map((qi) => (
                             <span key={qi.rfqItemId} className="mt-1 block text-muted-foreground">{qi.twgRemarks}</span>
                           ))}
@@ -170,12 +176,25 @@ function AocDetailPage() {
                     </TableCell>
                   )}
                   <TableCell className="text-right font-medium tabular-nums">{s.status === "Replied" ? `₱${fmtAmount(s.totalQuoted)}` : "—"}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {won > 0 ? <span className="text-success">₱{fmtAmount(s.awardedTotal)}</span> : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </div>
       </Card>
+
+      {/* A venue is booked whole, so only goods and equipment are awarded line by line. */}
+      {!venue && aoc.items.length > 0 && (
+        <AocAwardTable
+          aoc={aoc}
+          editable={isStaff && ["Draft", "BAC Returned"].includes(aoc.status)}
+          onSaved={reload}
+        />
+      )}
 
       {/* Venue: Individual rating of list of venue -> Summary of rating */}
       {venue && (
@@ -403,9 +422,14 @@ function AocDetailPage() {
               onClick={async () => {
                 setBusy(true);
                 try {
-                  const po = await apiGenerateFromRfq(aoc.rfqId);
-                  toast.success("Purchase Order created.");
-                  navigate({ to: "/po/$poId", params: { poId: po.id } });
+                  const { purchaseOrders, message } = await apiGenerateFromRfq(aoc.rfqId);
+                  toast.success(message ?? "Purchase Order created.");
+                  // A split award makes one PO per supplier; the list shows them all.
+                  if (purchaseOrders.length === 1) {
+                    navigate({ to: "/po/$poId", params: { poId: purchaseOrders[0].id } });
+                  } else {
+                    navigate({ to: "/po" });
+                  }
                 } catch (error) {
                   toast.error(error instanceof Error ? error.message : "Unable to create the Purchase Order.");
                 } finally {

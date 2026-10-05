@@ -11,6 +11,8 @@ const styles: Record<string, string> = {
   "Returned": "bg-warning/15 text-warning-foreground border-warning/40",
   "Rejected": "bg-destructive/10 text-destructive border-destructive/30",
   "Passed": "bg-success/10 text-success border-success/30",
+  // Met the specification on some items but not all: still in the canvass for the ones it met.
+  "Partial": "bg-warning/15 text-warning-foreground border-warning/40",
   "Failed": "bg-destructive/10 text-destructive border-destructive/30",
   "Warning": "bg-warning/15 text-warning-foreground border-warning/40",
   "N/A": "bg-muted text-muted-foreground border-border",

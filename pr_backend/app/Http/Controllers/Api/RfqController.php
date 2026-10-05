@@ -400,7 +400,8 @@ class RfqController extends Controller
         $data = $request->validate([
             'items' => ['required', 'array', 'min:1'],
             'items.*.rfq_item_id' => ['required', 'exists:rfq_items,id'],
-            'items.*.unit_price' => ['required', 'numeric', 'min:0'],
+            // Null is a quoted "NONE": the supplier did not offer that line at all.
+            'items.*.unit_price' => ['present', 'nullable', 'numeric', 'min:0'],
             'quotation' => self::QUOTATION_RULES,
         ], ['quotation.required' => 'Attach the supplier\'s signed quotation (PDF or photo).']);
 
@@ -516,14 +517,26 @@ class RfqController extends Controller
         abort_unless($given->keys()->sort()->values()->all() === $quoteItems->keys()->sort()->values()->all(),
             422, 'Check every quoted equipment item for this supplier.');
 
-        $passed = $given->every(fn (array $row) => (bool) $row['complies']);
-        DB::transaction(function () use ($given, $quoteItems, $rfqSupplier, $passed): void {
+        // The award is decided line by line, so a dealer that misses the specification on one item
+        // still competes for the items it did meet. Only a dealer that met none of them is out.
+        $complying = $given->filter(fn (array $row) => (bool) $row['complies'])->count();
+        $result = match (true) {
+            $complying === $given->count() => 'Passed',
+            $complying > 0 => 'Partial',
+            default => 'Failed',
+        };
+
+        DB::transaction(function () use ($given, $quoteItems, $rfqSupplier, $result): void {
             foreach ($given as $rfqItemId => $row) {
                 $quoteItems[$rfqItemId]->forceFill(['twg_complies' => (bool) $row['complies'], 'twg_remarks' => $row['remarks'] ?? null])->save();
             }
-            $rfqSupplier->forceFill(['twg_result' => $passed ? 'Passed' : 'Failed', 'twg_evaluated_at' => now()])->save();
+            $rfqSupplier->forceFill(['twg_result' => $result, 'twg_evaluated_at' => now()])->save();
         });
-        $this->recordAction($request, $rfq, 'TWG', $passed ? 'Equipment check passed' : 'Equipment check failed', $rfqSupplier->supplier_name);
+        $this->recordAction($request, $rfq, 'TWG', match ($result) {
+            'Passed' => 'Equipment check passed',
+            'Partial' => 'Equipment check passed in part',
+            default => 'Equipment check failed',
+        }, $rfqSupplier->supplier_name);
 
         $replied = $rfq->suppliers()->where('status', 'Replied')->get();
         $message = "TWG check recorded for {$rfqSupplier->supplier_name}.";

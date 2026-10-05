@@ -170,7 +170,12 @@ class FlowchartCanvassTest extends TestCase
         $items = $this->itemIds($token, $rfqId);
 
         $prices = [['rfq_item_id' => $items[0], 'unit_price' => 480], ['rfq_item_id' => $items[1], 'unit_price' => 450]];
-        $this->recordQuote($token, $rfqId, $firstId, [$prices[0]])->assertStatus(422); // every item must be quoted
+        // A supplier may leave a line unpriced — it prints as NONE on the Abstract of Canvass — but
+        // a reply that prices nothing at all is not a quotation.
+        $this->recordQuote($token, $rfqId, $firstId, [
+            ['rfq_item_id' => $items[0], 'unit_price' => null],
+            ['rfq_item_id' => $items[1], 'unit_price' => null],
+        ])->assertStatus(422);
         $this->recordQuote($token, $rfqId, $firstId, $prices)->assertOk();
         $this->recordQuote($token, $rfqId, $firstId, $prices)->assertStatus(422); // only once
 
@@ -331,7 +336,7 @@ class FlowchartCanvassTest extends TestCase
         $prId = $this->approvedPr($token);
         [$rfqId] = $this->quotedRfq($token, $prId);
         $this->notedAoc($token, $rfqId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated()->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated()->json('data.0.id');
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/obligate")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/account")->assertOk();

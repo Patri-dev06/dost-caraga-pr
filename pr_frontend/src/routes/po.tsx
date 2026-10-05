@@ -52,8 +52,8 @@ function PurchaseOrderListPage() {
 
   const generateMutation = useMutation({
     mutationFn: (rfqId: string) => apiGenerateFromRfq(rfqId),
-    onSuccess: async () => {
-      toast.success("Purchase Order generated.");
+    onSuccess: async ({ message }) => {
+      toast.success(message ?? "Purchase Order generated.");
       await queryClient.invalidateQueries({ queryKey: ["purchase-orders"] });
       await queryClient.invalidateQueries({ queryKey: ["rfqs"] });
     },

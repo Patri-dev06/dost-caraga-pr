@@ -54,16 +54,21 @@ class AbstractOfCanvasController extends Controller
             }
             abort_if(empty($rfq->twg_evaluation_notes), 422, 'TWG evaluation notes are required for Equipment procurement before generating the Abstract of Canvas.');
             abort_if($replied->contains(fn (RfqSupplier $s) => $s->twg_result === null), 422, 'The TWG must check each supplier\'s equipment first.');
-            $replied = $replied->where('twg_result', 'Passed')->values();
+            // A dealer that met the specification on only some items still competes for those items;
+            // awardPerItem() skips its non-compliant lines. Only a dealer that met none drops out.
+            $replied = $replied->where('twg_result', '!=', 'Failed')->values();
             abort_if($replied->isEmpty(), 422, 'No supplier passed the TWG check. Choose new suppliers to canvass.');
         }
 
-        $winner = $category === 'Venue' ? null : $this->lowestBidder($replied);
         $criteria = $category === 'Venue' ? $this->venueCriteria() : [];
         $raters = $category === 'Venue' ? $this->venueRaters($rfq) : [];
         abort_if($category === 'Venue' && ($criteria === [] || $raters === []), 422, 'Set the venue rating criteria and the TWG Lead / Supply Officer in Settings first.');
 
-        $aoc = DB::transaction(function () use ($rfq, $winner, $request, $category, $criteria, $raters, $replied): AbstractOfCanvas {
+        $aoc = DB::transaction(function () use ($rfq, $request, $category, $criteria, $raters, $replied): AbstractOfCanvas {
+            // A venue canvass is decided by the raters' scores, not by price, so it is awarded later
+            // in summarizeVenueRatings(); goods and equipment are awarded line by line here.
+            $winner = $category === 'Venue' ? null : $this->awardPerItem($replied);
+
             $aoc = AbstractOfCanvas::create([
                 'rfq_id' => $rfq->id,
                 'procurement_category' => $category,
@@ -199,6 +204,54 @@ class AbstractOfCanvasController extends Controller
         }
 
         return response()->json(['message' => 'All ratings are in. The summary of rating is ready.', 'data' => $this->format($aoc->fresh())]);
+    }
+
+    /**
+     * Re-assigns which supplier wins which line before the AOC goes to the BAC. The automatic award
+     * takes the lowest compliant quote per line, but the committee's judgement is the one that gets
+     * printed — a supplier may be preferred on delivery terms, or passed over for a reason the TWG
+     * recorded in words rather than as a compliance flag.
+     */
+    public function updateAwards(Request $request, AbstractOfCanvas $aoc): JsonResponse
+    {
+        $this->guardModule('rfq');
+        abort_unless(in_array($aoc->status, ['Draft', 'BAC Returned'], true), 422, 'The award can only be changed while the Abstract of Canvas is a draft or has been returned by the BAC.');
+
+        $data = $request->validate([
+            'awards' => ['required', 'array', 'min:1'],
+            'awards.*.rfq_item_id' => ['required', 'integer'],
+            'awards.*.rfq_supplier_id' => ['nullable', 'integer'],
+            'awards.*.remarks' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $aoc->loadMissing('rfq.suppliers.quoteItems');
+        $quotes = $aoc->rfq->suppliers->flatMap(fn (RfqSupplier $s) => $s->quoteItems->all());
+
+        foreach ($data['awards'] as $row) {
+            $forItem = $quotes->where('rfq_item_id', (int) $row['rfq_item_id']);
+            abort_if($forItem->isEmpty(), 422, 'That item is not part of this canvass.');
+
+            $chosen = $row['rfq_supplier_id'] === null ? null : $forItem->firstWhere('rfq_supplier_id', (int) $row['rfq_supplier_id']);
+            abort_if($row['rfq_supplier_id'] !== null && $chosen === null, 422, 'That supplier did not quote the item you are awarding to them.');
+            abort_if($chosen !== null && ! $chosen->isQuoted(), 422, "{$forItem->first()->rfqItem?->description} was not quoted by that supplier, so it cannot be awarded to them.");
+
+            $forItem->each(fn ($qi) => $qi->forceFill([
+                'is_awarded' => $chosen !== null && $qi->id === $chosen->id,
+                'award_remarks' => $chosen !== null && $qi->id === $chosen->id ? ($row['remarks'] ?? null) : null,
+            ])->save());
+        }
+
+        // Keep the single name the queues show in step with the lines actually awarded.
+        $aoc->rfq->load('suppliers.quoteItems');
+        $primary = $aoc->rfq->suppliers
+            ->sortByDesc(fn (RfqSupplier $s) => $s->quoteItems->where('is_awarded', true)->sum(fn ($qi) => (float) $qi->total_price))
+            ->first(fn (RfqSupplier $s) => $s->quoteItems->contains('is_awarded', true));
+
+        $aoc->rfq->suppliers->each(fn (RfqSupplier $s) => $s->forceFill(['is_winner' => $s->id === $primary?->id])->save());
+        $aoc->forceFill(['winning_rfq_supplier_id' => $primary?->id])->save();
+        $this->recordAction($request, $aoc, 'Supply', 'Adjusted the award', null);
+
+        return response()->json(['message' => 'The award was updated.', 'data' => $this->format($aoc->fresh())]);
     }
 
     public function submitForBacReview(Request $request, AbstractOfCanvas $aoc): JsonResponse
@@ -338,10 +391,42 @@ class AbstractOfCanvasController extends Controller
 
     // --- helpers ---
 
-    /** @param  Collection<int, RfqSupplier>  $suppliers */
-    private function lowestBidder(Collection $suppliers): RfqSupplier
+    /**
+     * Awards each line to the lowest *compliant* quote for that line, which is how the office's own
+     * Abstract of Canvass reads: one canvass can split its items across every supplier that replied.
+     * A supplier that did not quote a line (printed "NONE") cannot win it, and neither can one the
+     * TWG marked non-compliant however cheap it is — the sample form passes over a ₱150 tape for a
+     * ₱200 one for exactly that reason.
+     *
+     * Returns the supplier holding the largest share of the award by value, which stays on the AOC
+     * as `winning_rfq_supplier_id` for the queues and notifications that show a single name.
+     *
+     * @param  Collection<int, RfqSupplier>  $suppliers
+     */
+    private function awardPerItem(Collection $suppliers): ?RfqSupplier
     {
-        return $suppliers->sortBy(fn (RfqSupplier $s) => $s->quoteItems->sum(fn ($qi) => (float) $qi->total_price))->first();
+        $quotes = $suppliers->flatMap(fn (RfqSupplier $s) => $s->quoteItems->all());
+        $quotes->each(fn ($qi) => $qi->forceFill(['is_awarded' => false])->save());
+
+        foreach ($quotes->groupBy('rfq_item_id') as $forItem) {
+            $winner = $forItem
+                ->filter(fn ($qi) => $qi->isQuoted() && $qi->isCompliant())
+                ->sortBy(fn ($qi) => (float) $qi->unit_price)
+                ->first();
+
+            $passedOver = $forItem->contains(fn ($qi) => $qi->isQuoted() && ! $qi->isCompliant()
+                && (float) $qi->unit_price < (float) ($winner?->unit_price ?? INF));
+
+            $winner?->forceFill([
+                'is_awarded' => true,
+                'award_remarks' => $passedOver ? 'Lower quotation(s) passed over as non-compliant.' : null,
+            ])->save();
+        }
+
+        $byValue = $suppliers->sortByDesc(fn (RfqSupplier $s) => $s->quoteItems
+            ->where('is_awarded', true)->sum(fn ($qi) => (float) $qi->total_price));
+
+        return $byValue->first(fn (RfqSupplier $s) => $s->quoteItems->contains('is_awarded', true));
     }
 
     /** @return array<int, string> */
@@ -408,6 +493,8 @@ class AbstractOfCanvasController extends Controller
                 'status' => 'Draft',
             ])->save();
             $winner->forceFill(['is_winner' => true])->save();
+            // A venue is booked whole, so the top-rated one takes every line of the canvass.
+            $winner->quoteItems()->update(['is_awarded' => true]);
         });
     }
 
@@ -488,16 +575,22 @@ class AbstractOfCanvasController extends Controller
             'suppliers' => $aoc->rfq?->suppliers->map(fn (RfqSupplier $s) => [
                 'id' => $s->id,
                 'supplier_name' => $s->supplier_name,
+                // Printed under the dealer's name in the Abstract of Canvass column header.
+                'supplier_address' => $s->supplier_address,
+                'remarks' => $s->remarks,
                 'status' => $s->status,
                 'is_winner' => $s->is_winner,
                 'twg_result' => $s->twg_result,
                 'total_quoted' => $s->quoteItems->sum(fn ($qi) => (float) $qi->total_price),
+                'awarded_total' => $s->quoteItems->where('is_awarded', true)->sum(fn ($qi) => (float) $qi->total_price),
                 'quote_items' => $s->quoteItems->map(fn ($qi) => [
                     'rfq_item_id' => $qi->rfq_item_id,
                     'unit_price' => $qi->unit_price,
                     'total_price' => $qi->total_price,
                     'twg_complies' => $qi->twg_complies,
                     'twg_remarks' => $qi->twg_remarks,
+                    'is_awarded' => $qi->is_awarded,
+                    'award_remarks' => $qi->award_remarks,
                 ]),
             ]),
             'items' => $aoc->rfq?->items,
@@ -516,6 +609,40 @@ class AbstractOfCanvasController extends Controller
             'document' => $this->documentDetails($aoc),
             'created_at' => $aoc->created_at?->toISOString(),
         ];
+    }
+
+    /**
+     * The award block printed under the table: one line per supplier listing the item numbers it
+     * won ("Items No. 2, 3, 4 and 22 … are awarded to: COMPAÑERO COMMERCIAL"), followed by a line
+     * for every quotation the TWG passed over ("Item No. 1 offered by KIMSON … is non-compliant").
+     *
+     * @return array{awards: array<int, array<string, mixed>>, non_compliant: array<int, string>}
+     */
+    private function awardSummary(AbstractOfCanvas $aoc): array
+    {
+        $suppliers = $aoc->rfq?->suppliers ?? collect();
+        $itemNo = ($aoc->rfq?->items ?? collect())->pluck('item_no', 'id');
+
+        $awards = $suppliers->map(function (RfqSupplier $s) use ($itemNo): ?array {
+            $won = $s->quoteItems->where('is_awarded', true)
+                ->map(fn ($qi) => (int) ($itemNo[$qi->rfq_item_id] ?? 0))
+                ->filter()->sort()->values();
+
+            return $won->isEmpty() ? null : [
+                'rfq_supplier_id' => $s->id,
+                'supplier_name' => $s->supplier_name,
+                'item_nos' => $won->all(),
+                'total' => round($s->quoteItems->where('is_awarded', true)->sum(fn ($qi) => (float) $qi->total_price), 2),
+            ];
+        })->filter()->sortByDesc('total')->values()->all();
+
+        $nonCompliant = $suppliers->flatMap(fn (RfqSupplier $s) => $s->quoteItems
+            ->filter(fn ($qi) => $qi->twg_complies === false)
+            ->map(fn ($qi) => 'Item No. '.($itemNo[$qi->rfq_item_id] ?? '?').' offered by '.mb_strtoupper((string) $s->supplier_name)
+                .' is non-compliant'.($qi->twg_remarks ? " ({$qi->twg_remarks})" : '').'.'))
+            ->values()->all();
+
+        return ['awards' => $awards, 'non_compliant' => $nonCompliant];
     }
 
     /**
@@ -551,6 +678,12 @@ class AbstractOfCanvasController extends Controller
             'purpose' => $rfq?->purpose ?? $pr?->purpose,
             'fund_source' => $rfq?->fund_source_snapshot,
             'mode_of_procurement' => $pr?->mode_of_procurement,
+            // "PR#: 2026-08-762 dated 08/12/26" — the date the PR was filed.
+            'pr_date' => $pr?->submitted_at?->toISOString(),
+            // Printed verbatim under the table, as on the office's form: "FOB: …", "Inclusive of VAT".
+            'fob' => $rfq?->place_of_delivery,
+            'notes' => $rfq?->notes,
+            'award_summary' => $this->awardSummary($aoc),
             'signatories' => [
                 'bac_chair' => $person($chair, 'Chairman, Bids & Awards Committee'),
                 'bac_vice_chair' => $person($vice, 'Vice-Chairman, Bids & Awards Committee'),

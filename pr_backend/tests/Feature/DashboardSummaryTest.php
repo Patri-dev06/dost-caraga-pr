@@ -54,7 +54,7 @@ class DashboardSummaryTest extends TestCase
         $prId = $this->approvedPr($token);
         [$rfqId] = $this->quotedRfq($token, $prId);
         $this->notedAoc($token, $rfqId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated()->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated()->json('data.0.id');
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/obligate")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/account")->assertOk();

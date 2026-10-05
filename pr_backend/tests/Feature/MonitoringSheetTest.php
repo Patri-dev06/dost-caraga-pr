@@ -80,7 +80,7 @@ class MonitoringSheetTest extends TestCase
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createApprovedAoc($token, $prId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->json('data.0.id');
 
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/obligate")->assertOk();

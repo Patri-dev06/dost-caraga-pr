@@ -42,7 +42,13 @@ class PurchaseOrderController extends Controller
         return response()->json($page->through(fn (PurchaseOrder $po) => $this->format($po)));
     }
 
-    /** Generates a Draft PO once Supply has noted the lowest bidder on the BAC-approved AOC, copying that supplier's quote. */
+    /**
+     * Generates the Draft POs once Supply has noted the lowest bidder on the BAC-approved AOC.
+     *
+     * One canvass can award its items to several suppliers, and each supplier is a separate
+     * contract: a split award produces one PO per winning supplier, each carrying only the lines
+     * that supplier actually won.
+     */
     public function generateFromRfq(Request $request, Rfq $rfq): JsonResponse
     {
         $this->guardModule('po');
@@ -52,12 +58,13 @@ class PurchaseOrderController extends Controller
         abort_if($rfq->purchaseRequest?->status === 'Cancelled', 422, 'This Purchase Request was cancelled.');
         abort_if($rfq->purchaseOrders()->exists(), 422, 'A Purchase Order has already been generated from this RFQ.');
 
-        $winner = $aoc->winningSupplier()->with('quoteItems.rfqItem')->first();
-        abort_if($winner === null, 422, 'No winning supplier is recorded on this Abstract of Canvas.');
+        $rfq->loadMissing(['purchaseRequest', 'suppliers.quoteItems.rfqItem']);
+        $winners = $rfq->suppliers->filter(fn ($s) => $s->quoteItems->contains('is_awarded', true))->values();
+        abort_if($winners->isEmpty(), 422, 'No items have been awarded on this Abstract of Canvas.');
 
-        $rfq->loadMissing('purchaseRequest');
+        $pos = DB::transaction(fn () => $winners->map(function ($winner) use ($rfq, $request): PurchaseOrder {
+            $awarded = $winner->quoteItems->where('is_awarded', true)->values();
 
-        $po = DB::transaction(function () use ($rfq, $winner, $request): PurchaseOrder {
             $po = PurchaseOrder::create([
                 'po_no' => $this->nextPoNo(),
                 'purchase_request_id' => $rfq->purchase_request_id,
@@ -69,13 +76,13 @@ class PurchaseOrderController extends Controller
                 'supplier_email' => $winner->supplier_email,
                 'place_of_delivery' => $rfq->place_of_delivery,
                 'mode_of_procurement' => $rfq->purchaseRequest?->mode_of_procurement,
-                'total_amount' => $winner->quoteItems->sum(fn ($qi) => (float) $qi->total_price),
+                'total_amount' => $awarded->sum(fn ($qi) => (float) $qi->total_price),
                 'status' => 'Draft',
                 'stage' => 'Draft',
                 'created_by' => $request->user()->id,
             ]);
 
-            $po->items()->createMany($winner->quoteItems->values()->map(fn ($qi, int $index): array => [
+            $po->items()->createMany($awarded->map(fn ($qi, int $index): array => [
                 'rfq_item_id' => $qi->rfq_item_id,
                 'item_no' => $qi->rfqItem?->item_no ?: $index + 1,
                 'description' => $qi->rfqItem?->description,
@@ -86,11 +93,18 @@ class PurchaseOrderController extends Controller
             ])->all());
 
             return $po;
-        });
+        }));
 
-        $this->audit($request, 'PO', 'Generated PO', $po->po_no);
+        foreach ($pos as $po) {
+            $this->audit($request, 'PO', 'Generated PO', $po->po_no);
+        }
 
-        return response()->json(['data' => $this->format($po->fresh())], 201);
+        return response()->json([
+            'message' => $pos->count() === 1
+                ? 'Purchase Order generated.'
+                : "The award is split across {$pos->count()} suppliers, so {$pos->count()} Purchase Orders were generated.",
+            'data' => $pos->map(fn (PurchaseOrder $po) => $this->format($po->fresh()))->all(),
+        ], 201);
     }
 
     public function show(PurchaseOrder $purchaseOrder): JsonResponse

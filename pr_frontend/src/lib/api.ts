@@ -1513,6 +1513,9 @@ export interface RfqQuoteItem {
   /** TWG "check each equipment with supplier": null until checked. */
   twgComplies: boolean | null;
   twgRemarks: string;
+  /** The Abstract of Canvass awards line by line, so each item has its own winning supplier. */
+  isAwarded: boolean;
+  awardRemarks: string;
 }
 
 export interface RfqSupplier {
@@ -1534,7 +1537,7 @@ export interface RfqSupplier {
   hasQuotation: boolean;
   quotationName: string;
   quoteSubmittedVia: string;
-  twgResult: "Passed" | "Failed" | null;
+  twgResult: "Passed" | "Partial" | "Failed" | null;
   remarks: string;
   quoteItems: RfqQuoteItem[];
 }
@@ -1600,6 +1603,8 @@ type BackendRfqQuoteItem = {
   total_price: string | number | null;
   twg_complies?: boolean | null;
   twg_remarks?: string | null;
+  is_awarded?: boolean;
+  award_remarks?: string | null;
 };
 
 type BackendRfqSupplier = {
@@ -1621,7 +1626,7 @@ type BackendRfqSupplier = {
   has_quotation?: boolean;
   quotation_name?: string | null;
   quote_submitted_via?: string | null;
-  twg_result?: "Passed" | "Failed" | null;
+  twg_result?: "Passed" | "Partial" | "Failed" | null;
   remarks?: string | null;
   quote_items: BackendRfqQuoteItem[];
 };
@@ -1684,6 +1689,8 @@ function mapRfqQuoteItem(qi: BackendRfqQuoteItem): RfqQuoteItem {
     totalPrice: qi.total_price === null || qi.total_price === undefined ? null : Number(qi.total_price),
     twgComplies: qi.twg_complies ?? null,
     twgRemarks: qi.twg_remarks ?? "",
+    isAwarded: qi.is_awarded ?? false,
+    awardRemarks: qi.award_remarks ?? "",
   };
 }
 
@@ -2001,10 +2008,15 @@ export async function apiDeactivateSupplier(id: string | number) {
 export interface AocSupplierSummary {
   id: string;
   supplierName: string;
+  /** Printed under the dealer's name in the Abstract of Canvass column header. */
+  supplierAddress: string;
+  remarks: string;
   status: string;
   isWinner: boolean;
-  twgResult: "Passed" | "Failed" | null;
+  twgResult: "Passed" | "Partial" | "Failed" | null;
   totalQuoted: number;
+  /** What the lines this dealer actually won come to — the contract value, not everything it quoted. */
+  awardedTotal: number;
   quoteItems: RfqQuoteItem[];
 }
 
@@ -2047,6 +2059,9 @@ export interface AbstractOfCanvas {
 
 export type AocSignatory = { name: string; position: string };
 
+/** One supplier's share of a split award: the item numbers it won and what they come to. */
+export type AocAward = { rfqSupplierId: string; supplierName: string; itemNos: number[]; total: number };
+
 export interface AocDocumentDetails {
   quotationNo: string;
   rfqDate: string;
@@ -2056,6 +2071,12 @@ export interface AocDocumentDetails {
   purpose: string;
   fundSource: string;
   modeOfProcurement: string;
+  prDate: string;
+  /** Printed verbatim under the table, as on the office's form. */
+  fob: string;
+  notes: string;
+  /** "Items No. 2, 3, 4 and 22 … are awarded to: COMPAÑERO COMMERCIAL", plus the passed-over quotes. */
+  awardSummary: { awards: AocAward[]; nonCompliant: string[] };
   bacChair: AocSignatory | null;
   bacViceChair: AocSignatory | null;
   bacMembers: AocSignatory[];
@@ -2067,10 +2088,13 @@ export interface AocDocumentDetails {
 type BackendAocSupplierSummary = {
   id: number;
   supplier_name: string | null;
+  supplier_address?: string | null;
+  remarks?: string | null;
   status: string;
   is_winner: boolean;
-  twg_result?: "Passed" | "Failed" | null;
+  twg_result?: "Passed" | "Partial" | "Failed" | null;
   total_quoted: number | string;
+  awarded_total?: number | string;
   quote_items?: BackendRfqQuoteItem[];
 };
 
@@ -2114,6 +2138,13 @@ type BackendAbstractOfCanvas = {
     purpose: string | null;
     fund_source: string | null;
     mode_of_procurement: string | null;
+    pr_date?: string | null;
+    fob?: string | null;
+    notes?: string | null;
+    award_summary?: {
+      awards: Array<{ rfq_supplier_id: number; supplier_name: string | null; item_nos: number[]; total: number | string }>;
+      non_compliant: string[];
+    };
     signatories: {
       bac_chair: AocSignatory | null;
       bac_vice_chair: AocSignatory | null;
@@ -2149,10 +2180,13 @@ function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
     suppliers: (aoc.suppliers ?? []).map((s) => ({
       id: String(s.id),
       supplierName: s.supplier_name ?? "",
+      supplierAddress: s.supplier_address ?? "",
+      remarks: s.remarks ?? "",
       status: s.status,
       isWinner: s.is_winner,
       twgResult: s.twg_result ?? null,
       totalQuoted: Number(s.total_quoted),
+      awardedTotal: Number(s.awarded_total ?? 0),
       quoteItems: (s.quote_items ?? []).map(mapRfqQuoteItem),
     })),
     items: (aoc.items ?? []).map(mapRfqItem),
@@ -2192,6 +2226,18 @@ function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
           purpose: aoc.document.purpose ?? "",
           fundSource: aoc.document.fund_source ?? "",
           modeOfProcurement: aoc.document.mode_of_procurement ?? "",
+          prDate: aoc.document.pr_date ?? "",
+          fob: aoc.document.fob ?? "",
+          notes: aoc.document.notes ?? "",
+          awardSummary: {
+            awards: (aoc.document.award_summary?.awards ?? []).map((a) => ({
+              rfqSupplierId: String(a.rfq_supplier_id),
+              supplierName: a.supplier_name ?? "",
+              itemNos: a.item_nos,
+              total: Number(a.total),
+            })),
+            nonCompliant: aoc.document.award_summary?.non_compliant ?? [],
+          },
           bacChair: aoc.document.signatories.bac_chair,
           bacViceChair: aoc.document.signatories.bac_vice_chair,
           bacMembers: aoc.document.signatories.bac_members ?? [],
@@ -2279,6 +2325,24 @@ export async function apiGenerateAoc(rfqId: string | number, twgEvaluationNotes?
 export async function apiGetAoc(aocId: string | number) {
   const result = await request<ApiRecord<BackendAbstractOfCanvas>>(`/aoc/${aocId}`);
   return mapAbstractOfCanvas(result.data);
+}
+
+/**
+ * Re-assigns which dealer wins which line before the AOC goes to the BAC. A null supplier leaves the
+ * item unawarded; items left out of the payload keep the award they already have.
+ */
+export async function apiUpdateAocAwards(aocId: string | number, awards: Array<{ rfqItemId: string; rfqSupplierId: string | null; remarks?: string }>) {
+  const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/awards`, {
+    method: "POST",
+    body: {
+      awards: awards.map((a) => ({
+        rfq_item_id: Number(a.rfqItemId),
+        rfq_supplier_id: a.rfqSupplierId === null ? null : Number(a.rfqSupplierId),
+        remarks: a.remarks,
+      })),
+    },
+  });
+  return { ...result, data: mapAbstractOfCanvas(result.data) };
 }
 
 export async function apiSubmitAocForBacReview(aocId: string | number) {
@@ -2528,10 +2592,13 @@ export async function apiGetPurchaseOrder(id: string | number) {
   return mapPurchaseOrder(result.data);
 }
 
-/** Generates a Draft PO from the RFQ's BAC-approved Abstract of Canvas, copying the winning supplier's quote. */
+/**
+ * Generates the Draft POs from the RFQ's BAC-approved Abstract of Canvas. A canvass whose items are
+ * split across several suppliers yields one PO per supplier, each carrying only the lines it won.
+ */
 export async function apiGenerateFromRfq(rfqId: string | number) {
-  const result = await request<ApiRecord<BackendPurchaseOrder>>(`/rfqs/${rfqId}/generate-po`, { method: "POST" });
-  return mapPurchaseOrder(result.data);
+  const result = await request<{ data: BackendPurchaseOrder[]; message?: string }>(`/rfqs/${rfqId}/generate-po`, { method: "POST" });
+  return { purchaseOrders: result.data.map(mapPurchaseOrder), message: result.message };
 }
 
 export async function apiUpdatePurchaseOrder(id: string | number, payload: PurchaseOrderUpdatePayload) {
