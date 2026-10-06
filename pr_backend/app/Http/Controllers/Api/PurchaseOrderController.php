@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
 use App\Models\Rfq;
 use App\Models\User;
+use App\Services\CreatePurchaseOrdersFromAoc;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -42,55 +43,28 @@ class PurchaseOrderController extends Controller
         return response()->json($page->through(fn (PurchaseOrder $po) => $this->format($po)));
     }
 
-    /** Generates a Draft PO once Supply has noted the lowest bidder on the BAC-approved AOC, copying that supplier's quote. */
-    public function generateFromRfq(Request $request, Rfq $rfq): JsonResponse
+    /** Backward-compatible recovery endpoint; normal operation creates all POs automatically at Supply noting. */
+    public function generateFromRfq(Request $request, Rfq $rfq, CreatePurchaseOrdersFromAoc $creator): JsonResponse
     {
         $this->guardModule('po');
 
         $aoc = $rfq->abstractOfCanvas;
-        abort_unless($aoc !== null && $aoc->status === 'Lowest Bidder Noted', 422, 'A Purchase Order can only be generated once the BAC has approved the Abstract of Canvas and Supply has noted the lowest bidder.');
+        abort_unless($aoc !== null && $aoc->status === 'Lowest Bidder Noted', 422, 'Purchase Orders are created after BAC approval and Supply confirmation of the item awards.');
         abort_if($rfq->purchaseRequest?->status === 'Cancelled', 422, 'This Purchase Request was cancelled.');
-        abort_if($rfq->purchaseOrders()->exists(), 422, 'A Purchase Order has already been generated from this RFQ.');
+        $alreadyCreated = $rfq->purchaseOrders()->exists();
+        $orders = $creator->create($aoc, $request->user()->id);
+        foreach ($orders as $po) {
+            if (! $alreadyCreated) {
+                $this->audit($request, 'PO', 'Generated PO', $po->po_no);
+            }
+        }
 
-        $winner = $aoc->winningSupplier()->with('quoteItems.rfqItem')->first();
-        abort_if($winner === null, 422, 'No winning supplier is recorded on this Abstract of Canvas.');
-
-        $rfq->loadMissing('purchaseRequest');
-
-        $po = DB::transaction(function () use ($rfq, $winner, $request): PurchaseOrder {
-            $po = PurchaseOrder::create([
-                'po_no' => $this->nextPoNo(),
-                'purchase_request_id' => $rfq->purchase_request_id,
-                'rfq_id' => $rfq->id,
-                'supplier_name' => $winner->supplier_name,
-                'supplier_address' => $winner->supplier_address,
-                'supplier_contact_no' => $winner->supplier_contact_no,
-                'supplier_tin' => $winner->supplier_tin,
-                'supplier_email' => $winner->supplier_email,
-                'place_of_delivery' => $rfq->place_of_delivery,
-                'mode_of_procurement' => $rfq->purchaseRequest?->mode_of_procurement,
-                'total_amount' => $winner->quoteItems->sum(fn ($qi) => (float) $qi->total_price),
-                'status' => 'Draft',
-                'stage' => 'Draft',
-                'created_by' => $request->user()->id,
-            ]);
-
-            $po->items()->createMany($winner->quoteItems->values()->map(fn ($qi, int $index): array => [
-                'rfq_item_id' => $qi->rfq_item_id,
-                'item_no' => $qi->rfqItem?->item_no ?: $index + 1,
-                'description' => $qi->rfqItem?->description,
-                'uom' => $qi->rfqItem?->uom,
-                'quantity' => $qi->rfqItem?->quantity ?? 0,
-                'unit_cost' => $qi->unit_price ?? 0,
-                'total_cost' => $qi->total_price ?? 0,
-            ])->all());
-
-            return $po;
-        });
-
-        $this->audit($request, 'PO', 'Generated PO', $po->po_no);
-
-        return response()->json(['data' => $this->format($po->fresh())], 201);
+        return response()->json([
+            'message' => $alreadyCreated ? 'Purchase Orders were already created automatically.' : 'Purchase Orders created.',
+            // `data` keeps the former single-PO client compatible when an RFQ has one awardee.
+            'data' => $orders->count() === 1 ? $this->format($orders->first()->fresh()) : null,
+            'purchase_orders' => $orders->map(fn ($po) => $this->format($po->fresh()))->values(),
+        ], $alreadyCreated ? 200 : 201);
     }
 
     public function show(PurchaseOrder $purchaseOrder): JsonResponse
@@ -397,14 +371,4 @@ class PurchaseOrderController extends Controller
         ];
     }
 
-    private function nextPoNo(): string
-    {
-        $year = now()->year;
-        $lastNo = PurchaseOrder::where('po_no', 'like', "PO-{$year}-%")
-            ->orderByRaw('CAST(SUBSTRING(po_no FROM \'[0-9]+$\') AS INTEGER) DESC')
-            ->value('po_no');
-        $lastSeq = $lastNo ? (int) preg_replace('/\D/', '', substr((string) $lastNo, strlen("PO-{$year}-"))) : 0;
-
-        return sprintf('PO-%d-%04d', $year, $lastSeq + 1);
-    }
 }

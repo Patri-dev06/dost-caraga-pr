@@ -3,11 +3,12 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Ban, CheckCircle2, ClipboardCheck, Loader2, Printer, Star, ThumbsDown, ThumbsUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
-import { AocDocument } from "@/components/app/aoc-document";
+import { AocDocumentOfficial } from "@/components/app/aoc-document-official";
 import {
   apiGetAoc,
   apiSubmitAocForBacReview,
@@ -16,7 +17,7 @@ import {
   apiBacSatisfactionAoc,
   apiNoteLowestBidder,
   apiRateVenues,
-  apiGenerateFromRfq,
+  apiUpdateAocAwards,
   type AbstractOfCanvas,
 } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
@@ -24,7 +25,7 @@ import { useCanAccess, useCurrentUser } from "@/lib/current-user";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/aoc/$aocId")({
-  head: () => ({ meta: [{ title: "Abstract of Canvas — DOST Caraga" }] }),
+  head: () => ({ meta: [{ title: "Abstract of Canvass — DOST Caraga" }] }),
   component: AocDetailPage,
 });
 
@@ -47,12 +48,25 @@ function AocDetailPage() {
   const [twgResponse, setTwgResponse] = useState("");
   const [notSatisfiedReason, setNotSatisfiedReason] = useState("");
   const [scores, setScores] = useState<Record<string, Record<string, number>>>({});
+  const [offerReviews, setOfferReviews] = useState<Record<string, Record<string, { complies: boolean; remarks: string }>>>({});
+  const [awardWinners, setAwardWinners] = useState<Record<string, string>>({});
 
   async function reload() {
     try {
-      setAoc(await apiGetAoc(aocId));
+      const data = await apiGetAoc(aocId);
+      setAoc(data);
+      setAwardWinners(Object.fromEntries(data.awards.map((award) => [award.rfqItemId, award.winningRfqSupplierId ?? ""])));
+      setOfferReviews(Object.fromEntries(data.items.map((item) => [
+        item.id,
+        Object.fromEntries(data.suppliers.flatMap((supplier) => {
+          const quote = supplier.quoteItems.find((candidate) => candidate.rfqItemId === item.id);
+          return quote?.offerStatus === "Quoted"
+            ? [[supplier.id, { complies: quote.aocComplies !== false, remarks: quote.aocRemarks || quote.twgRemarks }]]
+            : [];
+        })),
+      ])));
     } catch {
-      toast.error("Could not load Abstract of Canvas.");
+      toast.error("Could not load Abstract of Canvass.");
       navigate({ to: "/" });
     } finally {
       setLoading(false);
@@ -90,11 +104,13 @@ function AocDetailPage() {
   const venue = aoc.venueRating;
   const isEquipment = aoc.procurementCategory === "Equipment";
   const venues = venue ? aoc.suppliers.filter((s) => venue.venueIds.includes(s.id)) : [];
+  const canPrint = aoc.status !== "Cancelled" && aoc.awards.length === aoc.items.length
+    && aoc.awards.every((award) => award.winningRfqSupplierId !== null);
 
   return (
     <>
-    {/* The printed, wet-signed Abstract of Canvas; the page below is for the screen only. */}
-    <AocDocument aoc={aoc} className="hidden print:block" />
+    {/* The official, wet-signed Abstract of Canvass; the page below is for the screen only. */}
+    <AocDocumentOfficial aoc={aoc} className="hidden print:block" />
     <div className="mx-auto w-full max-w-5xl space-y-5 px-3 py-4 print:hidden sm:space-y-6 sm:px-6 sm:py-8 lg:px-8">
       {isStaff && (
         <Button variant="ghost" size="sm" asChild className="gap-1.5 text-muted-foreground">
@@ -106,12 +122,12 @@ function AocDetailPage() {
 
       <PageHeader
         eyebrow={`RFQ ${aoc.rfqNo} · PR ${aoc.prNo}`}
-        title="Abstract of Canvas"
+        title="Abstract of Canvass"
         subtitle={`${aoc.procurementCategory === "Venue" ? "List of Venue" : aoc.procurementCategory} procurement${aoc.preparedByName ? ` · Prepared by ${aoc.preparedByName}${aoc.preparedByPosition ? `, ${aoc.preparedByPosition}` : ""}` : ""}`}
         actions={
           <>
             <StatusBadge status={aoc.status} />
-            <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()} title="Print the Abstract of Canvas for the BAC's signatures">
+            <Button variant="outline" size="sm" className="gap-1.5 border-border" disabled={!canPrint} onClick={() => window.print()} title={canPrint ? "Print the Abstract of Canvass for the BAC's signatures" : "Complete all item awards before printing"}>
               <Printer className="h-4 w-4" /> Print AOC
             </Button>
           </>
@@ -150,7 +166,7 @@ function AocDetailPage() {
                     {s.supplierName}
                     {s.isWinner && (
                       <span className="ml-2 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-success">
-                        {aoc.procurementCategory === "Venue" ? "Top-rated / Winner" : "Lowest / Winner"}
+                        {aoc.procurementCategory === "Venue" ? "Top-rated / Winner" : "Awarded item(s)"}
                       </span>
                     )}
                   </TableCell>
@@ -176,6 +192,121 @@ function AocDetailPage() {
           </Table>
         </div>
       </Card>
+
+      {!venue && (
+        <Card className="space-y-4 border border-border bg-card p-4">
+          <div>
+            <h2 className="text-sm font-semibold text-navy">Item-by-item awards</h2>
+            <p className="text-xs text-muted-foreground">
+              Each item is awarded independently. NONE means the supplier did not offer that item; non-compliant offers remain visible but cannot win.
+            </p>
+          </div>
+          <div className="space-y-4">
+            {aoc.items.map((item) => {
+              const quotedSuppliers = aoc.suppliers.filter((supplier) => supplier.quoteItems.some((quote) => quote.rfqItemId === item.id && quote.offerStatus === "Quoted"));
+              const compliantSuppliers = quotedSuppliers.filter((supplier) => offerReviews[item.id]?.[supplier.id]?.complies !== false);
+              return (
+                <section key={item.id} className="space-y-3 border-t border-border pt-4 first:border-t-0 first:pt-0" aria-labelledby={`award-item-${item.id}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3 id={`award-item-${item.id}`} className="text-sm font-semibold text-navy">Item {item.itemNo}: {item.description}</h3>
+                      <p className="text-xs text-muted-foreground">PR unit cost: ₱{fmtAmount(item.unitAbc)}</p>
+                    </div>
+                    <label className="min-w-56 text-xs font-medium text-foreground">
+                      Awarded supplier
+                      <select
+                        value={awardWinners[item.id] ?? ""}
+                        disabled={aoc.status !== "Draft" || busy}
+                        onChange={(event) => setAwardWinners((current) => ({ ...current, [item.id]: event.target.value }))}
+                        className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <option value="">Automatically choose lowest compliant quote</option>
+                        {compliantSuppliers.map((supplier) => {
+                          const quote = supplier.quoteItems.find((candidate) => candidate.rfqItemId === item.id);
+                          return <option key={supplier.id} value={supplier.id}>{supplier.supplierName} — ₱{fmtAmount(quote?.unitPrice ?? 0)}</option>;
+                        })}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="grid gap-2 lg:grid-cols-3">
+                    {aoc.suppliers.filter((supplier) => supplier.quoteItems.some((quote) => quote.rfqItemId === item.id)).map((supplier) => {
+                      const quote = supplier.quoteItems.find((candidate) => candidate.rfqItemId === item.id)!;
+                      const review = offerReviews[item.id]?.[supplier.id] ?? { complies: true, remarks: "" };
+                      const isNone = quote.offerStatus === "No Bid";
+                      return (
+                        <div key={supplier.id} className="space-y-2 rounded-md border border-border p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-xs font-semibold text-navy">{supplier.supplierName}</p>
+                            <p className="shrink-0 text-xs font-semibold tabular-nums">{isNone ? "NONE" : `₱${fmtAmount(quote.unitPrice ?? 0)}`}</p>
+                          </div>
+                          {!isNone && (
+                            <>
+                              <div className="flex gap-1" role="group" aria-label={`${supplier.supplierName}, item ${item.itemNo} compliance`}>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={review.complies ? "default" : "outline"}
+                                  className="h-7 flex-1 border-border text-xs"
+                                  disabled={aoc.status !== "Draft" || busy || isEquipment}
+                                  onClick={() => setOfferReviews((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? {}), [supplier.id]: { ...review, complies: true } } }))}
+                                >Compliant</Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={!review.complies ? "destructive" : "outline"}
+                                  className="h-7 flex-1 border-border text-xs"
+                                  disabled={aoc.status !== "Draft" || busy || isEquipment}
+                                  onClick={() => {
+                                    setOfferReviews((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? {}), [supplier.id]: { ...review, complies: false } } }));
+                                    if (awardWinners[item.id] === supplier.id) setAwardWinners((current) => ({ ...current, [item.id]: "" }));
+                                  }}
+                                >Non-compliant</Button>
+                              </div>
+                              {!review.complies && (
+                                <Input
+                                  value={review.remarks}
+                                  disabled={aoc.status !== "Draft" || busy || isEquipment}
+                                  onChange={(event) => setOfferReviews((current) => ({ ...current, [item.id]: { ...(current[item.id] ?? {}), [supplier.id]: { ...review, remarks: event.target.value } } }))}
+                                  placeholder="Reason for non-compliance"
+                                  aria-label={`${supplier.supplierName}, item ${item.itemNo} non-compliance reason`}
+                                  className="h-8 border-border text-xs"
+                                />
+                              )}
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+          {aoc.status === "Draft" && isStaff && (
+            <Button
+              disabled={busy}
+              onClick={() => {
+                const missingReason = aoc.items.some((item) => Object.values(offerReviews[item.id] ?? {}).some((review) => !review.complies && !review.remarks.trim()));
+                if (missingReason) {
+                  toast.error("Explain every non-compliant quotation before saving.");
+                  return;
+                }
+                run(() => apiUpdateAocAwards(aoc.id, aoc.items.map((item) => ({
+                  rfq_item_id: item.id,
+                  winning_rfq_supplier_id: awardWinners[item.id] || null,
+                  offers: Object.entries(offerReviews[item.id] ?? {}).map(([supplierId, review]) => ({
+                    rfq_supplier_id: supplierId,
+                    complies: review.complies,
+                    remarks: review.remarks || undefined,
+                  })),
+                }))), "Item awards saved.");
+              }}
+            >
+              Save item awards
+            </Button>
+          )}
+        </Card>
+      )}
 
       {/* Venue: Individual rating of list of venue -> Summary of rating */}
       {venue && (
@@ -302,7 +433,7 @@ function AocDetailPage() {
       )}
 
       {aoc.status === "Pending BAC Review" && !isBacReviewer && (
-        <WaitingCard title="Waiting for BAC review" body="Only the designated BAC Chairman or Vice-Chairman can approve or return this Abstract of Canvas. They have been notified." />
+        <WaitingCard title="Waiting for BAC review" body="Only the designated BAC Chairman or Vice-Chairman can approve or return this Abstract of Canvass. They have been notified." />
       )}
 
       {aoc.status === "Pending BAC Review" && isBacReviewer && (
@@ -324,7 +455,7 @@ function AocDetailPage() {
             >
               <ThumbsDown className="h-4 w-4" /> Fail — return with remarks
             </Button>
-            <Button className="gap-1.5" disabled={busy} onClick={() => run(() => apiBacReviewAoc(aoc.id, true), "Approved and returned to Supply to note the lowest bidder.")}>
+            <Button className="gap-1.5" disabled={busy} onClick={() => run(() => apiBacReviewAoc(aoc.id, true), "Approved and returned to Supply to confirm the item awards.")}>
               <ThumbsUp className="h-4 w-4" /> Pass
             </Button>
           </div>
@@ -341,7 +472,7 @@ function AocDetailPage() {
             </Button>
           </Card>
         ) : (
-          <WaitingCard title="Waiting for the TWG" body="The BAC returned this Abstract of Canvas with remarks. The designated TWG Lead must address them." />
+          <WaitingCard title="Waiting for the TWG" body="The BAC returned this Abstract of Canvass with remarks. The designated TWG Lead must address them." />
         ))}
 
       {aoc.status === "Pending BAC Satisfaction" &&
@@ -378,43 +509,32 @@ function AocDetailPage() {
       {aoc.status === "For Supply Noting" &&
         (isSupplyOfficer ? (
           <Card className="space-y-3 border border-border bg-card p-4">
-            <h2 className="text-sm font-semibold text-navy">Note the lowest bidder</h2>
+            <h2 className="text-sm font-semibold text-navy">Confirm the item awards</h2>
             <p className="text-sm text-foreground">
-              The BAC approved this Abstract of Canvas. Confirm <span className="font-semibold">{aoc.winningSupplierName}</span> as the {aoc.procurementCategory === "Venue" ? "top-rated venue" : "lowest bidder"} to allow the Purchase Order.
+              The BAC approved this Abstract of Canvass. Confirm the awards to <span className="font-semibold">{aoc.winningSupplierNames.join(", ")}</span>. The system will immediately create one Draft Purchase Order for each awarded supplier.
             </p>
-            <Button className="gap-1.5" disabled={busy} onClick={() => run(() => apiNoteLowestBidder(aoc.id), "Lowest bidder noted. The Purchase Order can now be created.")}>
-              <ClipboardCheck className="h-4 w-4" /> Note &amp; sign
+            <Button className="gap-1.5" disabled={busy} onClick={() => run(() => apiNoteLowestBidder(aoc.id), "Item awards confirmed. Draft Purchase Orders were created automatically.")}>
+              <ClipboardCheck className="h-4 w-4" /> Confirm awards &amp; create POs
             </Button>
           </Card>
         ) : (
-          <WaitingCard title="Returned to Supply" body="The BAC approved it. The designated Supply Officer must note the lowest bidder before the Purchase Order is created." />
+          <WaitingCard title="Returned to Supply" body="The BAC approved it. The designated Supply Officer must confirm the item awards; Draft Purchase Orders are then created automatically." />
         ))}
 
       {aoc.status === "Lowest Bidder Noted" && (
-        <Card className="flex flex-wrap items-center justify-between gap-3 border border-success/30 bg-success/5 p-4">
+        <Card className="space-y-3 border border-success/30 bg-success/5 p-4">
           <p className="text-sm text-foreground">
             <CheckCircle2 className="mr-1 inline h-4 w-4 text-success" />
-            {aoc.supplyNotedName} noted <span className="font-semibold">{aoc.winningSupplierName}</span> as the winning bidder.
+            {aoc.supplyNotedName} confirmed the item awards. {aoc.purchaseOrders.length} Draft Purchase Order{aoc.purchaseOrders.length === 1 ? " was" : "s were"} created automatically.
           </p>
-          {!aoc.hasPurchaseOrder && canAccess("po") && (
-            <Button
-              className="gap-1.5"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const po = await apiGenerateFromRfq(aoc.rfqId);
-                  toast.success("Purchase Order created.");
-                  navigate({ to: "/po/$poId", params: { poId: po.id } });
-                } catch (error) {
-                  toast.error(error instanceof Error ? error.message : "Unable to create the Purchase Order.");
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Create Purchase Order
-            </Button>
+          {canAccess("po") && aoc.purchaseOrders.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {aoc.purchaseOrders.map((po) => (
+                <Button key={po.id} asChild variant="outline" size="sm" className="border-success/30 bg-card">
+                  <Link to="/po/$poId" params={{ poId: po.id }}>{po.poNo} · {po.supplierName}</Link>
+                </Button>
+              ))}
+            </div>
           )}
         </Card>
       )}

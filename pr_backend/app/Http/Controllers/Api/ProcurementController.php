@@ -2951,7 +2951,7 @@ class ProcurementController extends Controller
     private const MONITORING_RELATIONS = [
         'office', 'fundSource', 'requester', 'items', 'monitoringEntry', 'supportingDocuments:id,purchase_request_id,type',
         'approvalActions.user',
-        'rfqs.suppliers', 'rfqs.abstractOfCanvas.winningSupplier', 'rfqs.abstractOfCanvas.approvalActions.user',
+        'rfqs.suppliers', 'rfqs.abstractOfCanvas.itemAwards.winningSupplier', 'rfqs.abstractOfCanvas.approvalActions.user',
         'rfqs.purchaseOrders.approvalActions.user',
     ];
 
@@ -3069,7 +3069,7 @@ class ProcurementController extends Controller
     {
         $rfq = $pr->rfqs->sortByDesc('id')->first();
         $aoc = $rfq?->abstractOfCanvas;
-        $po = $rfq?->purchaseOrders->sortByDesc('id')->first();
+        $pos = $rfq?->purchaseOrders->where('status', '!=', 'Cancelled')->sortBy('id')->values() ?? collect();
 
         $prApproved = $pr->approvalActions->firstWhere('action', 'Approved');
         $aocApproved = $aoc?->approvalActions->firstWhere('action', 'Approved');
@@ -3105,19 +3105,21 @@ class ProcurementController extends Controller
             'aoc_in_with_signature' => $aocApproved?->created_at?->toDateString(),
             'bac_member_who_signed' => $aocApproved?->user?->name,
             'aoc_remarks' => $aoc?->bac_remarks,
-            'awarded_supplier' => $aoc?->winningSupplier?->supplier_name,
-            'po_no' => $po?->po_no,
-            'amount_awarded' => $po?->total_amount,
-            'po_out_to_budget' => $po?->submitted_at?->toDateString(),
-            'po_approved_at' => $po?->approved_by_signed_at?->toISOString(),
+            'awarded_supplier' => $aoc?->itemAwards->pluck('winningSupplier.supplier_name')->filter()->unique()->implode('; ') ?: null,
+            'po_no' => $pos->pluck('po_no')->filter()->implode('; ') ?: null,
+            'amount_awarded' => $pos->isEmpty() ? null : $pos->sum(fn ($order) => (float) $order->total_amount),
+            'po_out_to_budget' => $pos->isNotEmpty() && $pos->every(fn ($order) => $order->submitted_at !== null)
+                ? $pos->pluck('submitted_at')->max()?->toDateString() : null,
+            'po_approved_at' => $pos->isNotEmpty() && $pos->every(fn ($order) => $order->approved_by_signed_at !== null)
+                ? $pos->pluck('approved_by_signed_at')->max()?->toISOString() : null,
             // The supplier's answer, recorded by the Supply team: its conforme, or why it waived delivery.
-            'po_conformed_at' => $po?->delivery_accepted_at?->toISOString(),
-            'po_remarks' => match (true) {
-                $po === null => null,
-                $po->status === 'Delivery Waived' => 'Supplier waived delivery: '.$po->delivery_waived_reason,
-                $po->status === 'Forwarded to Supplier' => 'Forwarded to supplier '.$po->forwarded_to_supplier_at?->timezone('Asia/Manila')->format('M j, Y').'; awaiting its conforme',
+            'po_conformed_at' => $pos->isNotEmpty() && $pos->every(fn ($order) => $order->delivery_accepted_at !== null)
+                ? $pos->pluck('delivery_accepted_at')->max()?->toISOString() : null,
+            'po_remarks' => $pos->map(fn ($order) => match (true) {
+                $order->status === 'Delivery Waived' => ($pos->count() > 1 ? $order->po_no.': ' : '').'Supplier waived delivery: '.$order->delivery_waived_reason,
+                $order->status === 'Forwarded to Supplier' => ($pos->count() > 1 ? $order->po_no.': ' : '').'Forwarded to supplier '.$order->forwarded_to_supplier_at?->timezone('Asia/Manila')->format('M j, Y').'; awaiting its conforme',
                 default => null,
-            },
+            })->filter()->implode('; ') ?: null,
             'pr_approved_at' => $prApproved?->created_at?->toDateString(),
             // "SD Attached": the Supplementary Documents attached when the PR was submitted.
             'sd_attached' => PrSupportingDocuments::summary($pr->supportingDocuments),

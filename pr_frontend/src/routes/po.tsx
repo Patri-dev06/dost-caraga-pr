@@ -1,14 +1,13 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
-import { AlertTriangle, FileCheck2, FileText, PackagePlus } from "lucide-react";
+import { AlertTriangle, FileCheck2, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { ListPagination } from "@/components/app/list-pagination";
-import { apiGenerateFromRfq, apiGetPurchaseOrdersPage, apiGetRfqsPage, type Rfq } from "@/lib/api";
+import { apiGetPurchaseOrdersPage } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
-import { toast } from "sonner";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 const PER_PAGE = 20;
 
@@ -16,7 +15,7 @@ export const Route = createFileRoute("/po")({
   head: () => ({
     meta: [
       { title: "Purchase Orders — DOST Caraga" },
-      { name: "description", content: "Generate Purchase Orders from BAC-approved Abstracts of Canvas and track their approval." },
+      { name: "description", content: "Review automatically generated Purchase Orders and track their approval." },
     ],
   }),
   component: PurchaseOrderListPage,
@@ -26,39 +25,16 @@ function PurchaseOrderListPage() {
   // /po/$poId is a child of this route: the list only renders at /po itself (same as /rfq).
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isList = pathname === "/po";
-  const queryClient = useQueryClient();
-  const [rfqPage, setRfqPage] = useState(1);
   const [poPage, setPoPage] = useState(1);
 
-  const { data: rfqPageData, isLoading: loadingRfqs, error: rfqsError } = useQuery({
-    queryKey: ["rfqs", rfqPage],
-    queryFn: () => apiGetRfqsPage(rfqPage, PER_PAGE),
-    enabled: isList,
-  });
-  const rfqs = rfqPageData?.items ?? [];
-
-  const { data: poPageData, isLoading: loadingPos } = useQuery({
+  const { data: poPageData, isLoading: loadingPos, error: posError } = useQuery({
     queryKey: ["purchase-orders", poPage],
     queryFn: () => apiGetPurchaseOrdersPage(poPage, PER_PAGE),
     enabled: isList,
   });
   const purchaseOrders = poPageData?.items ?? [];
 
-  // "Awaiting action" and "eligible for a PO" are read off just this page — newest-first sorting
-  // means actionable items are almost always near the top, well before pagination would hide them.
-  // Flowchart: a PO is created once Supply has noted the lowest bidder on the BAC-approved AOC.
-  const eligibleRfqs = rfqs.filter((rfq) => rfq.abstractOfCanvasStatus === "Lowest Bidder Noted" && !rfq.hasPurchaseOrder);
   const pendingPos = purchaseOrders.filter((po) => po.status.startsWith("Pending"));
-
-  const generateMutation = useMutation({
-    mutationFn: (rfqId: string) => apiGenerateFromRfq(rfqId),
-    onSuccess: async () => {
-      toast.success("Purchase Order generated.");
-      await queryClient.invalidateQueries({ queryKey: ["purchase-orders"] });
-      await queryClient.invalidateQueries({ queryKey: ["rfqs"] });
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to generate Purchase Order."),
-  });
 
   if (!isList) return <Outlet />;
 
@@ -69,20 +45,20 @@ function PurchaseOrderListPage() {
       <PageHeader
         eyebrow="Procurement"
         title="Purchase Orders"
-        subtitle="Generate a Purchase Order once the BAC approves an Abstract of Canvas and Supply notes the lowest bidder."
+        subtitle="Draft Purchase Orders are created automatically when Supply confirms the AOC item awards."
       />
 
-      {rfqsError && (
+      {posError && (
         <div className="flex items-center gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4">
           <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
           <div>
             <p className="text-sm font-semibold text-warning-foreground">Server Unavailable</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">Could not load RFQs from server.</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Could not load Purchase Orders from the server.</p>
           </div>
         </div>
       )}
 
-      {loading ? (
+      {loadingPos ? (
         <div className="rounded-xl border border-border bg-card p-10 text-center">
           <p className="text-sm text-muted-foreground">Loading…</p>
         </div>
@@ -135,55 +111,17 @@ function PurchaseOrderListPage() {
             </div>
           )}
 
-          {eligibleRfqs.length > 0 ? (
-            <div className="space-y-3">
-              <h2 className="text-sm font-semibold text-navy">Generate PO — lowest bidder noted</h2>
-              <p className="text-xs text-muted-foreground">
-                Select the winning supplier's RFQ to generate its Purchase Order.
-              </p>
-              <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
-                {eligibleRfqs.map((rfq) => (
-                  <EligibleRfqCard
-                    key={rfq.id}
-                    rfq={rfq}
-                    generating={generateMutation.isPending}
-                    onGenerate={() => generateMutation.mutate(rfq.id)}
-                  />
-                ))}
-              </div>
-              {rfqPageData && <ListPagination page={rfqPage} lastPage={rfqPageData.lastPage} total={rfqPageData.total} onPageChange={setRfqPage} />}
-            </div>
-          ) : !rfqsError ? (
+          {purchaseOrders.length === 0 && !posError ? (
             <div className="rounded-xl border border-border bg-card p-10 text-center">
               <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" strokeWidth={1.5} />
-              <p className="text-sm font-semibold text-navy">No RFQs with a noted lowest bidder awaiting a PO</p>
+              <p className="text-sm font-semibold text-navy">No Purchase Orders yet</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Complete an RFQ's canvass and get its Abstract of Canvas approved by BAC, then generate its Purchase Order here.
+                Purchase Orders will appear here automatically after Supply confirms an AOC's item awards.
               </p>
             </div>
           ) : null}
         </>
       )}
-    </div>
-  );
-}
-
-function EligibleRfqCard({ rfq, generating, onGenerate }: { rfq: Rfq; generating: boolean; onGenerate: () => void }) {
-  return (
-    <div className="flex flex-wrap items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40">
-      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-navy">{rfq.rfqNo}</p>
-        <p className="text-xs text-muted-foreground">
-          PR: {rfq.prNo} · {rfq.items.length} item{rfq.items.length !== 1 ? "s" : ""}
-        </p>
-      </div>
-      <Button asChild variant="outline" size="sm" className="gap-1.5">
-        <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId ?? "" }}>View AOC</Link>
-      </Button>
-      <Button size="sm" className="gap-1.5" onClick={onGenerate} disabled={generating}>
-        <PackagePlus className="h-4 w-4" /> Generate PO
-      </Button>
     </div>
   );
 }

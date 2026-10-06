@@ -40,7 +40,7 @@ trait ManagesCanvass
      * Records a supplier's quotation, typed in by the Supply team from the signed quotation the
      * supplier handed back. The signed quotation itself must be attached.
      *
-     * @param  array<int, array{rfq_item_id: int|string, unit_price: float|int|string}>  $items
+     * @param  array<int, array{rfq_item_id: int|string, offer_status: string, unit_price?: float|int|string|null}>  $items
      */
     private function storeQuote(RfqSupplier $rfqSupplier, array $items, UploadedFile $signedQuotation, string $via): void
     {
@@ -49,15 +49,25 @@ trait ManagesCanvass
         $given = collect($items)->pluck('rfq_item_id')->map(fn ($id) => (int) $id);
         abort_unless($given->diff($rfqItemIds)->isEmpty(), 422, 'Every quoted item must belong to this RFQ.');
         abort_unless(collect($rfqItemIds)->diff($given)->isEmpty(), 422, 'Quote a unit price for every item on the RFQ.');
+        abort_unless($given->duplicates()->isEmpty(), 422, 'Each RFQ item may appear only once in a supplier quotation.');
 
         $path = $signedQuotation->store($this->quotationFolder.'/'.$rfq->id, 'local');
 
         DB::transaction(function () use ($items, $rfqSupplier, $signedQuotation, $path, $via): void {
             foreach ($items as $item) {
                 $rfqItem = RfqItem::find($item['rfq_item_id']);
+                $quoted = $item['offer_status'] === 'Quoted';
+                $unitPrice = $quoted ? (float) $item['unit_price'] : null;
                 RfqQuoteItem::updateOrCreate(
                     ['rfq_supplier_id' => $rfqSupplier->id, 'rfq_item_id' => $rfqItem->id],
-                    ['unit_price' => $item['unit_price'], 'total_price' => (float) $item['unit_price'] * (float) $rfqItem->quantity],
+                    [
+                        'offer_status' => $item['offer_status'],
+                        'unit_price' => $unitPrice,
+                        'total_price' => $quoted ? $unitPrice * (float) $rfqItem->quantity : null,
+                        // Goods default to compliant; Equipment is decided by the TWG later.
+                        'aoc_complies' => $quoted && $rfqSupplier->rfq->procurement_category !== 'Equipment' ? true : null,
+                        'aoc_remarks' => null,
+                    ],
                 );
             }
             $rfqSupplier->forceFill([

@@ -70,6 +70,40 @@ class AbstractOfCanvasTest extends TestCase
             ->assertJsonPath('data.procurement_category', 'Goods');
     }
 
+    public function test_item_compliance_drives_the_automatic_award_and_an_override_is_explained(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token);
+        [$rfqId, $itemId] = $this->createQuotedRfq($token, $prId, 'Goods');
+        $suppliers = collect($this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data.suppliers'));
+        $aocId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()->json('data.id');
+
+        $offers = $suppliers->values()->map(fn (array $supplier, int $index): array => [
+            'rfq_supplier_id' => $supplier['id'],
+            'complies' => $index !== 0,
+            'remarks' => $index === 0 ? 'Required accreditation was not submitted.' : null,
+        ])->all();
+        $automatic = $this->withToken($token)->putJson("/api/v1/aoc/{$aocId}/awards", [
+            'items' => [[
+                'rfq_item_id' => $itemId,
+                'winning_rfq_supplier_id' => null,
+                'offers' => $offers,
+            ]],
+        ])->assertOk();
+        $this->assertSame($suppliers[1]['supplier_name'], $automatic->json('data.awards.0.winning_supplier_name'));
+        $this->assertSame('Required accreditation was not submitted.', $automatic->json('data.suppliers.0.quote_items.0.aoc_remarks'));
+
+        $override = $this->withToken($token)->putJson("/api/v1/aoc/{$aocId}/awards", [
+            'items' => [[
+                'rfq_item_id' => $itemId,
+                'winning_rfq_supplier_id' => $suppliers[2]['id'],
+                'offers' => $offers,
+            ]],
+        ])->assertOk();
+        $this->assertSame($suppliers[2]['supplier_name'], $override->json('data.awards.0.winning_supplier_name'));
+        $this->assertSame('Supply selected another compliant quotation.', $override->json('data.awards.0.selection_reason'));
+    }
+
     public function test_equipment_aoc_waits_for_the_twg_notes_and_checks(): void
     {
         $token = $this->loginAsAdmin();

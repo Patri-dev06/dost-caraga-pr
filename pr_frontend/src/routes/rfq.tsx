@@ -89,7 +89,7 @@ function RfqListPage() {
                     <div className="flex flex-wrap items-center justify-end gap-1.5">
                       <StatusBadge status={rfq.status} />
                       {rfq.abstractOfCanvasStatus && rfq.abstractOfCanvasStatus !== rfq.status && (
-                        <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId ?? "" }} title="Abstract of Canvas status">
+                        <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId ?? "" }} title="Abstract of Canvass status">
                           <StatusBadge status={rfq.abstractOfCanvasStatus} />
                         </Link>
                       )}

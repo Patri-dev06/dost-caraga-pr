@@ -31,7 +31,7 @@ class PurchaseOrderApiTest extends TestCase
         return $login->json('token');
     }
 
-    private function createApprovedPr(string $token): int
+    private function createApprovedPr(string $token, ?array $items = null): int
     {
         $create = $this->withToken($token)->postJson('/api/v1/purchase-requests', [
             'office_code' => 'RO',
@@ -40,7 +40,7 @@ class PurchaseOrderApiTest extends TestCase
             'mode_of_procurement' => 'Shopping',
             'purpose' => 'Create a PR for a PO test.',
             'submit' => true,
-            'items' => [
+            'items' => $items ?? [
                 ['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 1, 'unit_cost' => 250],
             ],
         ])->assertCreated();
@@ -52,7 +52,7 @@ class PurchaseOrderApiTest extends TestCase
         return $prId;
     }
 
-    /** Full RFQ lifecycle through BAC approval and Supply noting the lowest bidder; returns the RFQ id. */
+    /** Full RFQ lifecycle through BAC approval and automatic PO creation; returns the RFQ id. */
     private function createApprovedAoc(string $token, int $prId): int
     {
         [$rfqId] = $this->quotedRfq($token, $prId);
@@ -61,14 +61,17 @@ class PurchaseOrderApiTest extends TestCase
         return $rfqId;
     }
 
-    public function test_po_can_be_generated_from_a_bac_approved_aoc(): void
+    public function test_po_is_generated_automatically_when_supply_confirms_the_item_awards(): void
     {
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createApprovedAoc($token, $prId);
 
+        $this->assertDatabaseHas('purchase_orders', ['rfq_id' => $rfqId, 'supplier_name' => 'ACME Trading']);
+
+        // The legacy endpoint is now an idempotent recovery/read path for older clients.
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")
-            ->assertCreated()
+            ->assertOk()
             ->assertJsonPath('data.rfq_id', $rfqId)
             ->assertJsonPath('data.purchase_request_id', $prId)
             ->assertJsonPath('data.status', 'Draft')
@@ -77,7 +80,6 @@ class PurchaseOrderApiTest extends TestCase
             ->assertJsonPath('data.total_amount', '240.00')
             ->assertJsonStructure(['data' => ['po_no']]);
 
-        $this->assertDatabaseHas('purchase_orders', ['rfq_id' => $rfqId, 'supplier_name' => 'ACME Trading']);
     }
 
     public function test_po_waits_for_supply_to_note_the_lowest_bidder(): void
@@ -94,8 +96,11 @@ class PurchaseOrderApiTest extends TestCase
 
         // Only the Supply Officer notes it (the BAC Chair cannot).
         $this->asBac()->postJson("/api/v1/aoc/{$aocId}/note-lowest-bidder")->assertStatus(403);
-        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/note-lowest-bidder")->assertOk()->assertJsonPath('data.supply_noted_name', 'Supply Unit Admin');
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated();
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/note-lowest-bidder")
+            ->assertOk()
+            ->assertJsonPath('data.supply_noted_name', 'Supply Unit Admin')
+            ->assertJsonCount(1, 'purchase_orders');
+        $this->assertDatabaseCount('purchase_orders', 1);
     }
 
     public function test_po_cannot_be_generated_before_aoc_is_bac_approved(): void
@@ -111,14 +116,72 @@ class PurchaseOrderApiTest extends TestCase
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertStatus(422);
     }
 
-    public function test_po_cannot_be_generated_twice_from_the_same_rfq(): void
+    public function test_automatic_po_creation_is_idempotent_for_the_same_rfq(): void
     {
         $token = $this->loginAsAdmin();
         $prId = $this->createApprovedPr($token);
         $rfqId = $this->createApprovedAoc($token, $prId);
 
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated();
-        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertStatus(422);
+        $firstId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertOk()->json('data.id');
+        $secondId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertOk()->json('data.id');
+        $this->assertSame($firstId, $secondId);
+        $this->assertSame(1, PurchaseOrder::where('rfq_id', $rfqId)->count());
+    }
+
+    public function test_each_item_is_awarded_to_its_lowest_compliant_supplier_and_creates_one_po_per_awardee(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token, [
+            ['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 2, 'unit_cost' => 150],
+            ['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 3, 'unit_cost' => 250],
+        ]);
+        $rfqId = $this->withToken($token)->postJson('/api/v1/rfqs', [
+            'purchase_request_id' => $prId,
+            'procurement_category' => 'Goods',
+            'canvasser' => 'Juan Dela Cruz',
+            'items' => [
+                ['description' => 'Bond paper', 'uom' => 'ream', 'quantity' => 2, 'unit_abc' => 150, 'total_abc' => 300],
+                ['description' => 'Ballpen', 'uom' => 'box', 'quantity' => 3, 'unit_abc' => 250, 'total_abc' => 750],
+            ],
+        ])->assertCreated()->json('data.id');
+
+        $this->addSuppliers($token, $rfqId);
+        $this->completeRfqSigning($rfqId);
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
+        $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
+        [$paperId, $penId] = collect($rfq['items'])->pluck('id')->all();
+        $suppliers = collect($rfq['suppliers'])->keyBy('supplier_name');
+
+        $this->recordQuote($token, $rfqId, $suppliers['ACME Trading']['id'], [
+            ['rfq_item_id' => $paperId, 'offer_status' => 'Quoted', 'unit_price' => 100],
+            ['rfq_item_id' => $penId, 'offer_status' => 'Quoted', 'unit_price' => 230],
+        ])->assertOk();
+        $this->recordQuote($token, $rfqId, $suppliers['Bayanihan Supplies']['id'], [
+            ['rfq_item_id' => $paperId, 'offer_status' => 'Quoted', 'unit_price' => 120],
+            ['rfq_item_id' => $penId, 'offer_status' => 'Quoted', 'unit_price' => 200],
+        ])->assertOk();
+        $this->recordQuote($token, $rfqId, $suppliers['Caraga Merchants']['id'], [
+            ['rfq_item_id' => $paperId, 'offer_status' => 'Quoted', 'unit_price' => 130],
+            ['rfq_item_id' => $penId, 'offer_status' => 'No Bid'],
+        ])->assertOk();
+
+        $aoc = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated();
+        $aocId = $aoc->json('data.id');
+        $this->assertSame(['ACME Trading', 'Bayanihan Supplies'], $aoc->json('data.winning_supplier_names'));
+        $aoc->assertJsonPath('data.awards.0.winning_supplier_name', 'ACME Trading')
+            ->assertJsonPath('data.awards.1.winning_supplier_name', 'Bayanihan Supplies');
+
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/submit-for-bac-review")->assertOk();
+        $this->asBac()->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])->assertOk();
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/note-lowest-bidder")
+            ->assertOk()->assertJsonCount(2, 'purchase_orders');
+
+        $orders = PurchaseOrder::with('items')->where('rfq_id', $rfqId)->orderBy('supplier_name')->get()->keyBy('supplier_name');
+        $this->assertCount(2, $orders);
+        $this->assertSame([$paperId], $orders['ACME Trading']->items->pluck('rfq_item_id')->all());
+        $this->assertSame('200.00', $orders['ACME Trading']->total_amount);
+        $this->assertSame([$penId], $orders['Bayanihan Supplies']->items->pluck('rfq_item_id')->all());
+        $this->assertSame('600.00', $orders['Bayanihan Supplies']->total_amount);
     }
 
     public function test_po_three_stage_chain_submit_obligate_account_and_final_approve(): void

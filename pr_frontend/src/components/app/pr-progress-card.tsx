@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 const PHASES: { key: string; label: string }[] = [
   { key: "PR", label: "Purchase Request" },
   { key: "RFQ", label: "Request for Quotation" },
-  { key: "AOC", label: "Abstract of Canvas" },
+  { key: "AOC", label: "Abstract of Canvass" },
   { key: "PO", label: "Purchase Order" },
   { key: "Delivery", label: "Delivery & Issuance" },
   { key: "Payment", label: "Payment" },

@@ -15,7 +15,7 @@ type Section = { key: string; label: string; icon: LucideIcon; rows: Row[]; empt
 /**
  * "Needs Your Action" — capped previews (never the whole queue) of everything waiting on the
  * signed-in user somewhere along the flowchart: PR approvals, RFQ signatures, TWG checks, BAC
- * decisions, Supply noting the lowest bidder, replacement suppliers, and venue ratings.
+ * decisions, Supply confirming item awards, replacement suppliers, and venue ratings.
  */
 function NeedsYourActionCard() {
   const canAccess = useCanAccess();
@@ -100,7 +100,7 @@ function NeedsYourActionCard() {
         supplyRows.push({ key: `rfq-${r.id}`, title: r.rfqNo, note: `Choose ${r.openSupplierSlots} replacement supplier${r.openSupplierSlots > 1 ? "s" : ""}`, status: r.status, to: "/rfq/$rfqId", id: r.id });
       }
     }
-    for (const a of supplyAocs) supplyRows.push({ key: `aoc-${a.id}`, title: a.rfqNo, note: "Note the lowest bidder", status: a.status, to: "/aoc/$aocId", id: a.id });
+    for (const a of supplyAocs) supplyRows.push({ key: `aoc-${a.id}`, title: a.rfqNo, note: "Confirm the item awards", status: a.status, to: "/aoc/$aocId", id: a.id });
     sections.push({ key: "supply", label: "Supply Officer", icon: PackageCheck, empty: "Nothing awaiting the Supply Officer.", viewAll: { to: "/rfq" }, rows: supplyRows.slice(0, PREVIEW_LIMIT * 2) });
   }
   if (isTwg) {

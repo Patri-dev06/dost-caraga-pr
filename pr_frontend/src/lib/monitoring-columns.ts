@@ -39,10 +39,10 @@ export type MonitoringFieldType = "date" | "datetime" | "number" | "text";
 export type MonitoringSection = "Purchase Request" | "Purchase Order" | "Delivery" | "Inspection & Acceptance" | "Issuance" | "Payment";
 
 /** Every column's place in the flow — the entry panel groups the whole row by these. */
-export type MonitoringColumnSection = MonitoringSection | "RFQ" | "Abstract of Canvas";
+export type MonitoringColumnSection = MonitoringSection | "RFQ" | "Abstract of Canvass";
 
 export const MONITORING_COLUMN_SECTIONS: MonitoringColumnSection[] = [
-  "Purchase Request", "RFQ", "Abstract of Canvas", "Purchase Order", "Delivery", "Inspection & Acceptance", "Issuance", "Payment",
+  "Purchase Request", "RFQ", "Abstract of Canvass", "Purchase Order", "Delivery", "Inspection & Acceptance", "Issuance", "Payment",
 ];
 
 /** A column the Supply team fills in by hand. */
@@ -104,11 +104,11 @@ export const MONITORING_COLUMNS: MonitoringColumn[] = [
   col("RFQ", "IN with Quotation", (r) => fmtDate(r.inWithQuotation)),
   col("RFQ", "Suppliers", (r) => r.suppliers ?? "", true),
   col("RFQ", "Remarks (if any)", (r) => r.rfqRemarks ?? "", true),
-  col("Abstract of Canvas", "AOC Out", (r) => fmtDate(r.aocOut)),
-  col("Abstract of Canvas", "AOC IN with signature", (r) => fmtDate(r.aocInWithSignature)),
-  col("Abstract of Canvas", "BAC Member who signed", (r) => r.bacMemberWhoSigned ?? ""),
-  col("Abstract of Canvas", "Remarks (if any)", (r) => r.aocRemarks ?? ""),
-  col("Abstract of Canvas", "Supplier", (r) => r.awardedSupplier ?? ""),
+  col("Abstract of Canvass", "AOC Out", (r) => fmtDate(r.aocOut)),
+  col("Abstract of Canvass", "AOC IN with signature", (r) => fmtDate(r.aocInWithSignature)),
+  col("Abstract of Canvass", "BAC Member who signed", (r) => r.bacMemberWhoSigned ?? ""),
+  col("Abstract of Canvass", "Remarks (if any)", (r) => r.aocRemarks ?? ""),
+  col("Abstract of Canvass", "Supplier", (r) => r.awardedSupplier ?? ""),
   col("Purchase Order", "PO #", (r) => r.poNo ?? ""),
   col("Purchase Order", "Amount Awarded", (r) => fmtAmount(r.amountAwarded)),
   col("Purchase Order", "PO Out to BUDGET (MA'AM MATET- ACCTNG- ORD)", (r) => fmtDate(r.poOutToBudget)),

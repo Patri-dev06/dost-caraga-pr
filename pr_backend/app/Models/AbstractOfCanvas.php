@@ -18,6 +18,7 @@ class AbstractOfCanvas extends Model
         'bac_remarks',
         'twg_response',
         'venue_rating_summary',
+        'signatory_snapshot',
         'supply_noted_by',
         'supply_noted_name',
         'supply_noted_at',
@@ -31,6 +32,7 @@ class AbstractOfCanvas extends Model
         return [
             'submitted_at' => 'datetime',
             'venue_rating_summary' => 'array',
+            'signatory_snapshot' => 'array',
             'supply_noted_at' => 'datetime',
             'bac_approved_at' => 'datetime',
         ];
@@ -49,6 +51,12 @@ class AbstractOfCanvas extends Model
     public function venueRatings(): HasMany
     {
         return $this->hasMany(VenueRating::class);
+    }
+
+    /** One independently evaluated and awarded row for every item on the RFQ. */
+    public function itemAwards(): HasMany
+    {
+        return $this->hasMany(AbstractOfCanvasItem::class);
     }
 
     public function creator(): BelongsTo

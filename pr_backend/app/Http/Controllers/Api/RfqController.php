@@ -399,10 +399,21 @@ class RfqController extends Controller
 
         $data = $request->validate([
             'items' => ['required', 'array', 'min:1'],
-            'items.*.rfq_item_id' => ['required', 'exists:rfq_items,id'],
-            'items.*.unit_price' => ['required', 'numeric', 'min:0'],
+            'items.*.rfq_item_id' => ['required', 'integer', 'distinct', 'exists:rfq_items,id'],
+            'items.*.offer_status' => ['nullable', Rule::in(['Quoted', 'No Bid'])],
+            'items.*.unit_price' => ['nullable', 'numeric', 'min:0'],
             'quotation' => self::QUOTATION_RULES,
-        ], ['quotation.required' => 'Attach the supplier\'s signed quotation (PDF or photo).']);
+        ], [
+            'quotation.required' => 'Attach the supplier\'s signed quotation (PDF or photo).',
+        ]);
+
+        $data['items'] = collect($data['items'])->map(function (array $item): array {
+            $item['offer_status'] = $item['offer_status'] ?? 'Quoted';
+            abort_if($item['offer_status'] === 'Quoted' && ! array_key_exists('unit_price', $item), 422,
+                'Enter a unit price or mark the item as NONE.');
+
+            return $item;
+        })->all();
 
         $rfqSupplier->setRelation('rfq', $rfq);
         $this->storeQuote($rfqSupplier, $data['items'], $request->file('quotation'), 'Staff');
@@ -491,8 +502,9 @@ class RfqController extends Controller
     }
 
     /**
-     * Records whether each quoted equipment item complies with the specifications. A supplier fails if
-     * any item does not. Once every supplier that replied is checked: if all failed, they drop out and
+     * Records whether each quoted equipment item complies with the specifications. A supplier remains
+     * eligible for the lines it can supply and fails only when none of its quoted lines comply. Once every
+     * supplier that replied is checked: if all failed, they drop out and
      * Supply chooses n new suppliers ("Did all supplier fail? Yes"); otherwise the AOC can be made
      * from the ones that passed.
      */
@@ -505,21 +517,30 @@ class RfqController extends Controller
         abort_unless($rfqSupplier->status === 'Replied', 422, 'Only a supplier that sent a quotation can be checked.');
 
         $data = $request->validate([
-            'items' => ['required', 'array', 'min:1'],
+            'items' => ['required', 'array'],
             'items.*.rfq_item_id' => ['required', 'integer'],
             'items.*.complies' => ['required', 'boolean'],
             'items.*.remarks' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $quoteItems = $rfqSupplier->quoteItems()->get()->keyBy(fn (RfqQuoteItem $qi) => (int) $qi->rfq_item_id);
+        $quoteItems = $rfqSupplier->quoteItems()->where('offer_status', 'Quoted')->get()
+            ->keyBy(fn (RfqQuoteItem $qi) => (int) $qi->rfq_item_id);
         $given = collect($data['items'])->keyBy(fn (array $row) => (int) $row['rfq_item_id']);
         abort_unless($given->keys()->sort()->values()->all() === $quoteItems->keys()->sort()->values()->all(),
             422, 'Check every quoted equipment item for this supplier.');
+        abort_if($given->contains(fn (array $row) => ! (bool) $row['complies'] && trim((string) ($row['remarks'] ?? '')) === ''),
+            422, 'Explain why every non-compliant equipment offer failed the specifications.');
 
-        $passed = $given->every(fn (array $row) => (bool) $row['complies']);
+        // An all-NONE response has no quoted lines and therefore no eligible equipment offer.
+        $passed = $given->contains(fn (array $row) => (bool) $row['complies']);
         DB::transaction(function () use ($given, $quoteItems, $rfqSupplier, $passed): void {
             foreach ($given as $rfqItemId => $row) {
-                $quoteItems[$rfqItemId]->forceFill(['twg_complies' => (bool) $row['complies'], 'twg_remarks' => $row['remarks'] ?? null])->save();
+                $quoteItems[$rfqItemId]->forceFill([
+                    'twg_complies' => (bool) $row['complies'],
+                    'twg_remarks' => $row['remarks'] ?? null,
+                    'aoc_complies' => (bool) $row['complies'],
+                    'aoc_remarks' => $row['remarks'] ?? null,
+                ])->save();
             }
             $rfqSupplier->forceFill(['twg_result' => $passed ? 'Passed' : 'Failed', 'twg_evaluated_at' => now()])->save();
         });
@@ -725,6 +746,9 @@ class RfqController extends Controller
                 'rfq_item_id' => $qi->rfq_item_id,
                 'unit_price' => $qi->unit_price,
                 'total_price' => $qi->total_price,
+                'offer_status' => $qi->offer_status,
+                'aoc_complies' => $qi->aoc_complies,
+                'aoc_remarks' => $qi->aoc_remarks,
                 'twg_complies' => $qi->twg_complies,
                 'twg_remarks' => $qi->twg_remarks,
             ]),

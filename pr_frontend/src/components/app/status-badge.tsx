@@ -32,7 +32,7 @@ const styles: Record<string, string> = {
   "TimedOut": "bg-warning/15 text-warning-foreground border-warning/40",
   "Replaced": "bg-muted text-muted-foreground border-border",
   "Failed TWG": "bg-destructive/10 text-destructive border-destructive/30",
-  // Abstract of Canvas
+  // Abstract of Canvass
   "For Venue Rating": "bg-secondary text-navy border-soft-blue",
   "Pending BAC Satisfaction": "bg-warning/15 text-warning-foreground border-warning/40",
   "For Supply Noting": "bg-primary/10 text-primary border-primary/30",
@@ -48,6 +48,7 @@ const styles: Record<string, string> = {
 
 export function StatusBadge({ status, className }: { status: Status; className?: string }) {
   const s = styles[status] ?? "bg-muted text-muted-foreground border-border";
+  const label = status === "Lowest Bidder Noted" ? "Item Awards Confirmed" : status;
   return (
     <span
       className={cn(
@@ -57,7 +58,7 @@ export function StatusBadge({ status, className }: { status: Status; className?:
       )}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-      {status}
+      {label}
     </span>
   );
 }

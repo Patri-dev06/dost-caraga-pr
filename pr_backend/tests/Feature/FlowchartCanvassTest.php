@@ -262,7 +262,7 @@ class FlowchartCanvassTest extends TestCase
         [$rfqId, $itemId, $ids] = $this->quotedRfq($token, $this->approvedPr($token), 'Equipment');
 
         foreach ($ids as $id) {
-            $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/{$id}/twg-check", ['items' => [['rfq_item_id' => $itemId, 'complies' => false]]])->assertOk();
+            $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers/{$id}/twg-check", ['items' => [['rfq_item_id' => $itemId, 'complies' => false, 'remarks' => 'Does not meet the required specification.']]])->assertOk();
         }
 
         $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
@@ -331,7 +331,7 @@ class FlowchartCanvassTest extends TestCase
         $prId = $this->approvedPr($token);
         [$rfqId] = $this->quotedRfq($token, $prId);
         $this->notedAoc($token, $rfqId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated()->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertOk()->json('data.id');
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/obligate")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/account")->assertOk();

@@ -147,6 +147,7 @@ function RfqDetailPage() {
   const [savingDetails, setSavingDetails] = useState(false);
   const [quoteFor, setQuoteFor] = useState<string | null>(null);
   const [quoteDraft, setQuoteDraft] = useState<Record<string, string>>({});
+  const [quoteNoBid, setQuoteNoBid] = useState<Record<string, boolean>>({});
   const [quoteFile, setQuoteFile] = useState<File | null>(null);
   const [replacements, setReplacements] = useState<Array<{ payload: RfqSupplierPayload; label: string }>>([]);
   const [twgNotes, setTwgNotes] = useState("");
@@ -656,6 +657,7 @@ function RfqDetailPage() {
                           onClick={() => {
                             setQuoteFor(quoteFor === s.id ? null : s.id);
                             setQuoteDraft({});
+                            setQuoteNoBid({});
                             setQuoteFile(null);
                           }}
                         >
@@ -680,12 +682,31 @@ function RfqDetailPage() {
 
                   {quoteFor === s.id && s.status === "Sent" && (
                     <div className="space-y-2 rounded-md bg-secondary/40 p-3">
-                      <p className="text-xs text-muted-foreground">Enter the unit price for every item and attach the supplier's signed quotation (PDF or photo, up to 10 MB).</p>
+                      <p className="text-xs text-muted-foreground">Enter each quoted unit price, or mark the item as NONE when this supplier did not offer it. Attach the signed quotation (PDF or photo, up to 10 MB).</p>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {rfq.items.map((item) => (
                           <label key={item.id} className="space-y-1 text-xs">
                             <span className="block truncate text-muted-foreground">{item.itemNo}. {item.description} ({item.qty} {item.unit})</span>
-                            <Input inputMode="decimal" placeholder="Unit price ₱" value={quoteDraft[item.id] ?? ""} onChange={(e) => setQuoteDraft((d) => ({ ...d, [item.id]: e.target.value }))} className="h-8 border-border" />
+                            <span className="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+                              <Input
+                                inputMode="decimal"
+                                placeholder="Unit price ₱"
+                                value={quoteDraft[item.id] ?? ""}
+                                disabled={quoteNoBid[item.id]}
+                                onChange={(e) => setQuoteDraft((d) => ({ ...d, [item.id]: e.target.value }))}
+                                className="h-8 border-border"
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={quoteNoBid[item.id] ? "default" : "outline"}
+                                className="h-8 border-border px-2.5 text-xs"
+                                aria-pressed={Boolean(quoteNoBid[item.id])}
+                                onClick={() => setQuoteNoBid((current) => ({ ...current, [item.id]: !current[item.id] }))}
+                              >
+                                NONE
+                              </Button>
+                            </span>
                           </label>
                         ))}
                       </div>
@@ -695,8 +716,8 @@ function RfqDetailPage() {
                         className="gap-1.5"
                         disabled={busy}
                         onClick={async () => {
-                          if (rfq.items.some((item) => !(quoteDraft[item.id] ?? "").trim())) {
-                            toast.error("Enter a unit price for every item.");
+                          if (rfq.items.some((item) => !quoteNoBid[item.id] && !(quoteDraft[item.id] ?? "").trim())) {
+                            toast.error("Enter a unit price or mark NONE for every item.");
                             return;
                           }
                           if (!quoteFile) {
@@ -704,7 +725,11 @@ function RfqDetailPage() {
                             return;
                           }
                           const ok = await run(
-                            () => apiRecordRfqSupplierQuote(rfq.id, s.id, rfq.items.map((item) => ({ rfq_item_id: item.id, unit_price: parseAmount(quoteDraft[item.id] ?? "") })), quoteFile),
+                            () => apiRecordRfqSupplierQuote(rfq.id, s.id, rfq.items.map((item) => ({
+                              rfq_item_id: item.id,
+                              offer_status: quoteNoBid[item.id] ? "No Bid" as const : "Quoted" as const,
+                              unit_price: quoteNoBid[item.id] ? null : parseAmount(quoteDraft[item.id] ?? ""),
+                            })), quoteFile),
                             "Quotation recorded.",
                           );
                           if (ok) setQuoteFor(null);
@@ -796,13 +821,14 @@ function RfqDetailPage() {
           </div>
           {replied.map((s) => {
             const draft = twgDraftFor(s);
+            const quotedItems = rfq.items.filter((item) => s.quoteItems.some((quote) => quote.rfqItemId === item.id && quote.offerStatus === "Quoted"));
             return (
               <div key={s.id} className="space-y-2 rounded-lg border border-border p-3">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-navy">{s.supplierName}</p>
                   {s.twgResult ? <StatusBadge status={s.twgResult === "Passed" ? "Passed" : "Failed"} /> : <span className="text-xs text-muted-foreground">Not checked yet</span>}
                 </div>
-                {rfq.items.map((item) => {
+                {quotedItems.map((item) => {
                   const row = draft[item.id] ?? { complies: null, remarks: "" };
                   const set = (patch: Partial<{ complies: boolean | null; remarks: string }>) =>
                     setTwgDrafts((cur) => ({ ...cur, [s.id]: { ...(cur[s.id] ?? {}), [item.id]: { ...row, ...patch } } }));
@@ -827,13 +853,17 @@ function RfqDetailPage() {
                     className="gap-1.5"
                     disabled={busy}
                     onClick={async () => {
-                      if (rfq.items.some((item) => draft[item.id]?.complies == null)) {
+                      if (quotedItems.some((item) => draft[item.id]?.complies == null)) {
                         toast.error("Mark every item as complying or not.");
+                        return;
+                      }
+                      if (quotedItems.some((item) => draft[item.id]?.complies === false && !draft[item.id]?.remarks.trim())) {
+                        toast.error("Explain why every non-compliant item failed the specifications.");
                         return;
                       }
                       setBusy(true);
                       try {
-                        const result = await apiTwgCheckSupplier(rfq.id, s.id, rfq.items.map((item) => ({ rfq_item_id: item.id, complies: Boolean(draft[item.id]?.complies), remarks: draft[item.id]?.remarks || undefined })));
+                        const result = await apiTwgCheckSupplier(rfq.id, s.id, quotedItems.map((item) => ({ rfq_item_id: item.id, complies: Boolean(draft[item.id]?.complies), remarks: draft[item.id]?.remarks || undefined })));
                         setTwgDrafts((cur) => ({ ...cur, [s.id]: {} }));
                         toast.success(result.message);
                         await reload();
@@ -853,15 +883,15 @@ function RfqDetailPage() {
         </Card>
       )}
 
-      {/* Abstract of Canvas */}
+      {/* Abstract of Canvass */}
       {(rfq.abstractOfCanvasId || rfq.status === "Canvassing" || rfq.status === "TWG Evaluation") && (
         <Card className="space-y-3 border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-navy">Abstract of Canvas</h2>
+          <h2 className="text-sm font-semibold text-navy">Abstract of Canvass</h2>
           {rfq.abstractOfCanvasId ? (
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={rfq.abstractOfCanvasStatus ?? ""} />
               <Button asChild size="sm" className="gap-1.5">
-                <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId }}>View Abstract of Canvas</Link>
+                <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId }}>View Abstract of Canvass</Link>
               </Button>
             </div>
           ) : aocReady ? (
@@ -873,8 +903,8 @@ function RfqDetailPage() {
                     ? "Built from the suppliers that passed the TWG check; the lowest of them wins."
                     : "The lowest quotation wins."}
               </p>
-              <Button size="sm" className="gap-1.5" disabled={busy} onClick={() => run(() => apiGenerateAoc(rfq.id), "Abstract of Canvas generated.")}>
-                Generate Abstract of Canvas
+              <Button size="sm" className="gap-1.5" disabled={busy} onClick={() => run(() => apiGenerateAoc(rfq.id), "Abstract of Canvass generated.")}>
+                Generate Abstract of Canvass
               </Button>
             </>
           ) : (

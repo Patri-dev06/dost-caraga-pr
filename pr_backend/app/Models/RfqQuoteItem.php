@@ -12,6 +12,9 @@ class RfqQuoteItem extends Model
         'rfq_item_id',
         'unit_price',
         'total_price',
+        'offer_status',
+        'aoc_complies',
+        'aoc_remarks',
         'twg_complies',
         'twg_remarks',
     ];
@@ -21,6 +24,7 @@ class RfqQuoteItem extends Model
         return [
             'unit_price' => 'decimal:2',
             'total_price' => 'decimal:2',
+            'aoc_complies' => 'boolean',
             'twg_complies' => 'boolean',
         ];
     }

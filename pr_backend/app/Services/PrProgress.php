@@ -28,10 +28,12 @@ final class PrProgress
 
         $rfq = $pr->rfqs->where('status', '!=', 'Cancelled')->sortByDesc('id')->first();
         $aoc = $rfq?->abstractOfCanvas;
-        $po = $rfq?->purchaseOrders->where('status', '!=', 'Cancelled')->sortByDesc('id')->first();
+        $pos = $rfq?->purchaseOrders->where('status', '!=', 'Cancelled')->sortBy('id')->values() ?? collect();
         $manual = $pr->monitoringEntry?->values ?? [];
         $action = fn (string $name) => $pr->approvalActions->where('action', $name)->sortByDesc('id')->first();
         $iso = fn (?CarbonInterface $at) => $at?->toISOString();
+        $allPosHave = fn (string $field): bool => $pos->isNotEmpty() && $pos->every(fn ($po) => $po->{$field} !== null);
+        $latestPoDate = fn (string $field): ?CarbonInterface => $pos->pluck($field)->filter()->max();
 
         $active = $rfq?->suppliers->whereNotIn('status', ['TimedOut', 'Replaced', 'Failed TWG']) ?? collect();
         $replied = $active->where('status', 'Replied')->count();
@@ -51,14 +53,14 @@ final class PrProgress
             ['rfq_sent', 'RFQ', 'RFQ delivered to 3 suppliers', 'Supply Unit', $sentAt !== null, $iso($sentAt), $rfq ? $active->count().' supplier(s) canvassed' : null],
             ['quotations', 'RFQ', 'Signed quotations received', 'Suppliers', $aoc !== null || ($active->count() >= 3 && $replied >= $active->count()),
                 null, $rfq && $sentAt ? "{$replied} of ".max(3, $active->count()).' received' : null],
-            ['aoc_generated', 'AOC', 'Abstract of Canvas prepared', 'Supply Unit', $aoc !== null, $iso($aoc?->created_at), null],
+            ['aoc_generated', 'AOC', 'Abstract of Canvass prepared', 'Supply Unit', $aoc !== null, $iso($aoc?->created_at), null],
             ['bac_review', 'AOC', 'BAC review passed', 'BAC', $aoc?->bac_approved_at !== null || in_array($aoc?->status, ['For Supply Noting', 'Lowest Bidder Noted'], true), $iso($aoc?->bac_approved_at), null],
-            ['bidder_noted', 'AOC', 'Lowest bidder noted', 'Supply Officer', $aoc?->status === 'Lowest Bidder Noted', $iso($aoc?->supply_noted_at), $aoc?->supply_noted_name],
-            ['po_generated', 'PO', 'Purchase Order generated', 'Supply Unit', $po !== null, $iso($po?->created_at), $po ? trim($po->po_no.' · '.$po->supplier_name, ' ·') : null],
-            ['po_obligated', 'PO', 'Obligated by Budget', 'Budget Officer', $po?->budget_officer_signed_at !== null, $iso($po?->budget_officer_signed_at), null],
-            ['po_accounting', 'PO', 'Signed by Accounting', 'Accounting Officer', $po?->accounting_officer_signed_at !== null, $iso($po?->accounting_officer_signed_at), null],
-            ['po_approved', 'PO', 'PO approved and released to the supplier', 'Regional Director', $po?->approved_by_signed_at !== null, $iso($po?->approved_by_signed_at), $po?->approved_by_name],
-            ['conforme', 'PO', 'Supplier agreed to deliver', 'Supplier (recorded by Supply)', $po?->delivery_accepted_at !== null, $iso($po?->delivery_accepted_at), null],
+            ['bidder_noted', 'AOC', 'Item awards confirmed', 'Supply Officer', $aoc?->status === 'Lowest Bidder Noted', $iso($aoc?->supply_noted_at), $aoc?->supply_noted_name],
+            ['po_generated', 'PO', 'Purchase Order(s) generated', 'Supply Unit', $pos->isNotEmpty(), $iso($latestPoDate('created_at')), $pos->map(fn ($po) => trim($po->po_no.' · '.$po->supplier_name, ' ·'))->implode('; ') ?: null],
+            ['po_obligated', 'PO', 'All POs obligated by Budget', 'Budget Officer', $allPosHave('budget_officer_signed_at'), $iso($latestPoDate('budget_officer_signed_at')), null],
+            ['po_accounting', 'PO', 'All POs signed by Accounting', 'Accounting Officer', $allPosHave('accounting_officer_signed_at'), $iso($latestPoDate('accounting_officer_signed_at')), null],
+            ['po_approved', 'PO', 'All POs approved and released', 'Regional Director', $allPosHave('approved_by_signed_at'), $iso($latestPoDate('approved_by_signed_at')), $pos->pluck('approved_by_name')->filter()->unique()->implode(', ') ?: null],
+            ['conforme', 'PO', 'All suppliers agreed to deliver', 'Suppliers (recorded by Supply)', $allPosHave('delivery_accepted_at'), $iso($latestPoDate('delivery_accepted_at')), null],
             ['delivered', 'Delivery', 'Delivered in full', 'Supplier', ! empty($manual['delivered_full_at']), $manual['delivered_full_at'] ?? null, null],
             ['inspected', 'Delivery', 'Inspected and accepted (IAR)', 'Inspection Committee', ! empty($manual['iar_no']) || ! empty($manual['acceptance']), $manual['inspection_in_at'] ?? null, $manual['iar_no'] ?? null],
             ['issued', 'Delivery', 'Issued to you', 'Supply Unit', ! empty($manual['issued_to_end_user_at']), $manual['issued_to_end_user_at'] ?? null, $manual['issuance_document'] ?? null],

@@ -54,7 +54,7 @@ class DashboardSummaryTest extends TestCase
         $prId = $this->approvedPr($token);
         [$rfqId] = $this->quotedRfq($token, $prId);
         $this->notedAoc($token, $rfqId);
-        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertCreated()->json('data.id');
+        $poId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/generate-po")->assertOk()->json('data.id');
         $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/obligate")->assertOk();
         $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/account")->assertOk();
@@ -87,7 +87,7 @@ class DashboardSummaryTest extends TestCase
 
         $atAoc = $this->approvedPr($token);
         [$rfqId] = $this->quotedRfq($token, $atAoc);
-        $this->notedAoc($token, $rfqId);
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated();
 
         [$withSupplier] = $this->forwardedPo($token);
         [$delivered, $deliveredPo] = $this->forwardedPo($token);

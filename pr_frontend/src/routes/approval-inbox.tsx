@@ -84,7 +84,7 @@ function Inbox() {
       <PageHeader
         eyebrow="Inbox"
         title="Approval Inbox"
-        subtitle="Purchase Requests and Abstracts of Canvas awaiting your action."
+        subtitle="Purchase Requests and Abstracts of Canvass awaiting your action."
       />
 
       <Tabs value={tab} onValueChange={(v) => setPicked(v as "prs" | "bac")} className="space-y-6">

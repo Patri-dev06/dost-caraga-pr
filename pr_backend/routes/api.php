@@ -139,6 +139,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/aoc', [AbstractOfCanvasController::class, 'index']);
         Route::get('/aoc/my-venue-ratings', [AbstractOfCanvasController::class, 'myVenueRatings']);
         Route::get('/aoc/{aoc}', [AbstractOfCanvasController::class, 'show']);
+        Route::put('/aoc/{aoc}/awards', [AbstractOfCanvasController::class, 'updateAwards']);
         Route::post('/aoc/{aoc}/venue-ratings', [AbstractOfCanvasController::class, 'rateVenues']);
         Route::post('/aoc/{aoc}/submit-for-bac-review', [AbstractOfCanvasController::class, 'submitForBacReview']);
         Route::post('/aoc/{aoc}/bac-review', [AbstractOfCanvasController::class, 'bacReview']);
