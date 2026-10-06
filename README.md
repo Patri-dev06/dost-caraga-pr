@@ -40,7 +40,7 @@ A web-based procurement system designed to streamline the purchase request creat
 ### Prerequisites
 - PHP 8.3+
 - Composer
-- Node.js 20+
+- Node.js 22.12+ (the locked TanStack Start version requires this minimum)
 - PostgreSQL
 
 ### Setup
@@ -71,6 +71,29 @@ Demo login: `admin@dost.gov.ph` / `password123`
 - APP-CSE and APP-Non-CSE validation
 - Budget balance tracking
 - Approval workflow routing
+
+The current code also includes supplier management, Requests for Quotation (RFQ),
+Abstracts of Canvas (AOC), Purchase Orders (PO), delivery monitoring, reports,
+audit logs, queued email notifications, and scheduled RFQ expiry.
+
+## CI and server deployment
+
+GitHub Actions runs frontend lint, TypeScript checking, a production build, and
+the backend tests against an isolated PostgreSQL database on pushes and pull requests.
+The workflow does not deploy to a server.
+
+For one-time local SSH key access to the existing server, run
+`bash scripts/setup-server-access.sh` in your Mac terminal. The script creates a
+dedicated key under `~/.ssh`, adds only its public key to the server account, and
+loads it into your existing SSH agent. It does not deploy or restart the app.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the system overview, production requirements,
+and the proposed deployment setup through Tailscale. To inspect an existing Linux
+server without changing its configuration:
+
+```bash
+ssh talinoserver2-ts 'bash -s' < scripts/inspect-server.sh
+```
 
 ## License
 
