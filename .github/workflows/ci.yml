@@ -32,14 +32,22 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: pr_frontend/package-lock.json
-      - name: Install locked dependencies
-        run: npm ci
+      - name: Install locked dependencies with the pinned npm release
+        run: npx --yes npm@11.10.0 ci --no-audit --no-fund
+      - name: Audit production dependencies for high-severity vulnerabilities
+        run: npx --yes npm@11.10.0 audit --omit=dev --audit-level=high
       - name: Lint
         run: npm run lint
       - name: Check TypeScript
         run: npm run typecheck
       - name: Build production client and server
         run: npm run build
+      - name: Smoke-test the production server
+        run: |
+          PORT=4173 HOST=127.0.0.1 npm run start > /tmp/dost-caraga-pr-frontend.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-all-errors http://127.0.0.1:4173/login >/dev/null
 
   backend:
     name: Backend tests (PostgreSQL ${{ matrix.postgres }})

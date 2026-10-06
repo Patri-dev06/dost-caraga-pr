@@ -1,0 +1,18 @@
+[Unit]
+Description=DOST Caraga Procurement scheduler
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=talinoserver2
+Group=talinoserver2
+WorkingDirectory=/home/talinoserver2/apps/dost-caraga-pr/current/pr_backend
+Environment=APP_ENV=production
+ExecStart=/usr/bin/php artisan schedule:work
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

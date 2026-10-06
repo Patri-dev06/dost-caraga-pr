@@ -1,0 +1,4 @@
+talinoserver2 ALL=(root) NOPASSWD: /usr/bin/systemctl restart dost-caraga-pr-backend.service
+talinoserver2 ALL=(root) NOPASSWD: /usr/bin/systemctl restart dost-caraga-pr-frontend.service
+talinoserver2 ALL=(root) NOPASSWD: /usr/bin/systemctl restart dost-caraga-pr-scheduler.service
+talinoserver2 ALL=(root) NOPASSWD: /usr/bin/systemctl restart dost-caraga-pr-queue.service

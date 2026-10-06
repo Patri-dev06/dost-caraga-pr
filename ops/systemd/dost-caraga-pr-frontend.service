@@ -1,0 +1,20 @@
+[Unit]
+Description=DOST Caraga Procurement frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=talinoserver2
+Group=talinoserver2
+WorkingDirectory=/home/talinoserver2/apps/dost-caraga-pr/current/pr_frontend
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=5175
+ExecStart=/usr/local/bin/npm run start
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=DOST Caraga Procurement queue worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=talinoserver2
+Group=talinoserver2
+WorkingDirectory=/home/talinoserver2/apps/dost-caraga-pr/current/pr_backend
+Environment=APP_ENV=production
+ExecStart=/usr/bin/php artisan queue:work --sleep=3 --tries=3 --timeout=120 --max-time=3600
+Restart=always
+RestartSec=5
+TimeoutStopSec=130
+
+[Install]
+WantedBy=multi-user.target

@@ -9,82 +9,37 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as ValidationRouteImport } from './routes/validation'
-import { Route as UsersRouteImport } from './routes/users'
-import { Route as SuppliersRouteImport } from './routes/suppliers'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as RfqRouteImport } from './routes/rfq'
-import { Route as ReportsRouteImport } from './routes/reports'
-import { Route as PurchaseRequestsRouteImport } from './routes/purchase-requests'
-import { Route as PoRouteImport } from './routes/po'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as AuditLogsRouteImport } from './routes/audit-logs'
-import { Route as ApprovalInboxRouteImport } from './routes/approval-inbox'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as RfqNewRouteImport } from './routes/rfq.new'
-import { Route as RfqRfqIdRouteImport } from './routes/rfq.$rfqId'
-import { Route as ReferencesPpmpRouteImport } from './routes/references.ppmp'
-import { Route as ReferencesBudgetRouteImport } from './routes/references.budget'
-import { Route as ReferencesAppNonCseRouteImport } from './routes/references.app-non-cse'
-import { Route as ReferencesAppCseRouteImport } from './routes/references.app-cse'
-import { Route as PurchaseRequestsNewRouteImport } from './routes/purchase-requests.new'
-import { Route as PurchaseRequestsMineRouteImport } from './routes/purchase-requests.mine'
-import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requests.$prId'
-import { Route as PoPoIdRouteImport } from './routes/po.$poId'
-import { Route as PlanningPpmpRouteImport } from './routes/planning.ppmp'
-import { Route as PlanningLibRouteImport } from './routes/planning.lib'
+import { Route as ApprovalInboxRouteImport } from './routes/approval-inbox'
+import { Route as AuditLogsRouteImport } from './routes/audit-logs'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as PoRouteImport } from './routes/po'
+import { Route as PurchaseRequestsRouteImport } from './routes/purchase-requests'
+import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as RfqRouteImport } from './routes/rfq'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SuppliersRouteImport } from './routes/suppliers'
+import { Route as UsersRouteImport } from './routes/users'
+import { Route as ValidationRouteImport } from './routes/validation'
 import { Route as AocAocIdRouteImport } from './routes/aoc.$aocId'
-import { Route as PlanningPpmpNewRouteImport } from './routes/planning.ppmp.new'
+import { Route as PlanningLibRouteImport } from './routes/planning.lib'
+import { Route as PlanningPpmpRouteImport } from './routes/planning.ppmp'
+import { Route as PoPoIdRouteImport } from './routes/po.$poId'
+import { Route as PurchaseRequestsPrIdRouteImport } from './routes/purchase-requests.$prId'
+import { Route as PurchaseRequestsMineRouteImport } from './routes/purchase-requests.mine'
+import { Route as PurchaseRequestsNewRouteImport } from './routes/purchase-requests.new'
+import { Route as ReferencesAppCseRouteImport } from './routes/references.app-cse'
+import { Route as ReferencesAppNonCseRouteImport } from './routes/references.app-non-cse'
+import { Route as ReferencesBudgetRouteImport } from './routes/references.budget'
+import { Route as ReferencesPpmpRouteImport } from './routes/references.ppmp'
+import { Route as RfqRfqIdRouteImport } from './routes/rfq.$rfqId'
+import { Route as RfqNewRouteImport } from './routes/rfq.new'
 import { Route as PlanningLibNewRouteImport } from './routes/planning.lib.new'
+import { Route as PlanningPpmpNewRouteImport } from './routes/planning.ppmp.new'
 
-const ValidationRoute = ValidationRouteImport.update({
-  id: '/validation',
-  path: '/validation',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UsersRoute = UsersRouteImport.update({
-  id: '/users',
-  path: '/users',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SuppliersRoute = SuppliersRouteImport.update({
-  id: '/suppliers',
-  path: '/suppliers',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RfqRoute = RfqRouteImport.update({
-  id: '/rfq',
-  path: '/rfq',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ReportsRoute = ReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PurchaseRequestsRoute = PurchaseRequestsRouteImport.update({
-  id: '/purchase-requests',
-  path: '/purchase-requests',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PoRoute = PoRouteImport.update({
-  id: '/po',
-  path: '/po',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuditLogsRoute = AuditLogsRouteImport.update({
-  id: '/audit-logs',
-  path: '/audit-logs',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApprovalInboxRoute = ApprovalInboxRouteImport.update({
@@ -92,69 +47,54 @@ const ApprovalInboxRoute = ApprovalInboxRouteImport.update({
   path: '/approval-inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AuditLogsRoute = AuditLogsRouteImport.update({
+  id: '/audit-logs',
+  path: '/audit-logs',
   getParentRoute: () => rootRouteImport,
 } as any)
-const RfqNewRoute = RfqNewRouteImport.update({
-  id: '/new',
-  path: '/new',
-  getParentRoute: () => RfqRoute,
-} as any)
-const RfqRfqIdRoute = RfqRfqIdRouteImport.update({
-  id: '/$rfqId',
-  path: '/$rfqId',
-  getParentRoute: () => RfqRoute,
-} as any)
-const ReferencesPpmpRoute = ReferencesPpmpRouteImport.update({
-  id: '/references/ppmp',
-  path: '/references/ppmp',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ReferencesBudgetRoute = ReferencesBudgetRouteImport.update({
-  id: '/references/budget',
-  path: '/references/budget',
+const PoRoute = PoRouteImport.update({
+  id: '/po',
+  path: '/po',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ReferencesAppNonCseRoute = ReferencesAppNonCseRouteImport.update({
-  id: '/references/app-non-cse',
-  path: '/references/app-non-cse',
+const PurchaseRequestsRoute = PurchaseRequestsRouteImport.update({
+  id: '/purchase-requests',
+  path: '/purchase-requests',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ReferencesAppCseRoute = ReferencesAppCseRouteImport.update({
-  id: '/references/app-cse',
-  path: '/references/app-cse',
+const ReportsRoute = ReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PurchaseRequestsNewRoute = PurchaseRequestsNewRouteImport.update({
-  id: '/new',
-  path: '/new',
-  getParentRoute: () => PurchaseRequestsRoute,
-} as any)
-const PurchaseRequestsMineRoute = PurchaseRequestsMineRouteImport.update({
-  id: '/mine',
-  path: '/mine',
-  getParentRoute: () => PurchaseRequestsRoute,
-} as any)
-const PurchaseRequestsPrIdRoute = PurchaseRequestsPrIdRouteImport.update({
-  id: '/$prId',
-  path: '/$prId',
-  getParentRoute: () => PurchaseRequestsRoute,
-} as any)
-const PoPoIdRoute = PoPoIdRouteImport.update({
-  id: '/$poId',
-  path: '/$poId',
-  getParentRoute: () => PoRoute,
-} as any)
-const PlanningPpmpRoute = PlanningPpmpRouteImport.update({
-  id: '/planning/ppmp',
-  path: '/planning/ppmp',
+const RfqRoute = RfqRouteImport.update({
+  id: '/rfq',
+  path: '/rfq',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PlanningLibRoute = PlanningLibRouteImport.update({
-  id: '/planning/lib',
-  path: '/planning/lib',
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuppliersRoute = SuppliersRouteImport.update({
+  id: '/suppliers',
+  path: '/suppliers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsersRoute = UsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ValidationRoute = ValidationRouteImport.update({
+  id: '/validation',
+  path: '/validation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AocAocIdRoute = AocAocIdRouteImport.update({
@@ -162,15 +102,75 @@ const AocAocIdRoute = AocAocIdRouteImport.update({
   path: '/aoc/$aocId',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PlanningPpmpNewRoute = PlanningPpmpNewRouteImport.update({
+const PlanningLibRoute = PlanningLibRouteImport.update({
+  id: '/planning/lib',
+  path: '/planning/lib',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PlanningPpmpRoute = PlanningPpmpRouteImport.update({
+  id: '/planning/ppmp',
+  path: '/planning/ppmp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PoPoIdRoute = PoPoIdRouteImport.update({
+  id: '/$poId',
+  path: '/$poId',
+  getParentRoute: () => PoRoute,
+} as any)
+const PurchaseRequestsPrIdRoute = PurchaseRequestsPrIdRouteImport.update({
+  id: '/$prId',
+  path: '/$prId',
+  getParentRoute: () => PurchaseRequestsRoute,
+} as any)
+const PurchaseRequestsMineRoute = PurchaseRequestsMineRouteImport.update({
+  id: '/mine',
+  path: '/mine',
+  getParentRoute: () => PurchaseRequestsRoute,
+} as any)
+const PurchaseRequestsNewRoute = PurchaseRequestsNewRouteImport.update({
   id: '/new',
   path: '/new',
-  getParentRoute: () => PlanningPpmpRoute,
+  getParentRoute: () => PurchaseRequestsRoute,
+} as any)
+const ReferencesAppCseRoute = ReferencesAppCseRouteImport.update({
+  id: '/references/app-cse',
+  path: '/references/app-cse',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReferencesAppNonCseRoute = ReferencesAppNonCseRouteImport.update({
+  id: '/references/app-non-cse',
+  path: '/references/app-non-cse',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReferencesBudgetRoute = ReferencesBudgetRouteImport.update({
+  id: '/references/budget',
+  path: '/references/budget',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReferencesPpmpRoute = ReferencesPpmpRouteImport.update({
+  id: '/references/ppmp',
+  path: '/references/ppmp',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RfqRfqIdRoute = RfqRfqIdRouteImport.update({
+  id: '/$rfqId',
+  path: '/$rfqId',
+  getParentRoute: () => RfqRoute,
+} as any)
+const RfqNewRoute = RfqNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => RfqRoute,
 } as any)
 const PlanningLibNewRoute = PlanningLibNewRouteImport.update({
   id: '/new',
   path: '/new',
   getParentRoute: () => PlanningLibRoute,
+} as any)
+const PlanningPpmpNewRoute = PlanningPpmpNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => PlanningPpmpRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -375,74 +375,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/validation': {
-      id: '/validation'
-      path: '/validation'
-      fullPath: '/validation'
-      preLoaderRoute: typeof ValidationRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/users': {
-      id: '/users'
-      path: '/users'
-      fullPath: '/users'
-      preLoaderRoute: typeof UsersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/suppliers': {
-      id: '/suppliers'
-      path: '/suppliers'
-      fullPath: '/suppliers'
-      preLoaderRoute: typeof SuppliersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/rfq': {
-      id: '/rfq'
-      path: '/rfq'
-      fullPath: '/rfq'
-      preLoaderRoute: typeof RfqRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reports': {
-      id: '/reports'
-      path: '/reports'
-      fullPath: '/reports'
-      preLoaderRoute: typeof ReportsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/purchase-requests': {
-      id: '/purchase-requests'
-      path: '/purchase-requests'
-      fullPath: '/purchase-requests'
-      preLoaderRoute: typeof PurchaseRequestsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/po': {
-      id: '/po'
-      path: '/po'
-      fullPath: '/po'
-      preLoaderRoute: typeof PoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/audit-logs': {
-      id: '/audit-logs'
-      path: '/audit-logs'
-      fullPath: '/audit-logs'
-      preLoaderRoute: typeof AuditLogsRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/approval-inbox': {
@@ -452,95 +389,74 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApprovalInboxRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/audit-logs': {
+      id: '/audit-logs'
+      path: '/audit-logs'
+      fullPath: '/audit-logs'
+      preLoaderRoute: typeof AuditLogsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/rfq/new': {
-      id: '/rfq/new'
-      path: '/new'
-      fullPath: '/rfq/new'
-      preLoaderRoute: typeof RfqNewRouteImport
-      parentRoute: typeof RfqRoute
-    }
-    '/rfq/$rfqId': {
-      id: '/rfq/$rfqId'
-      path: '/$rfqId'
-      fullPath: '/rfq/$rfqId'
-      preLoaderRoute: typeof RfqRfqIdRouteImport
-      parentRoute: typeof RfqRoute
-    }
-    '/references/ppmp': {
-      id: '/references/ppmp'
-      path: '/references/ppmp'
-      fullPath: '/references/ppmp'
-      preLoaderRoute: typeof ReferencesPpmpRouteImport
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/references/budget': {
-      id: '/references/budget'
-      path: '/references/budget'
-      fullPath: '/references/budget'
-      preLoaderRoute: typeof ReferencesBudgetRouteImport
+    '/po': {
+      id: '/po'
+      path: '/po'
+      fullPath: '/po'
+      preLoaderRoute: typeof PoRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/references/app-non-cse': {
-      id: '/references/app-non-cse'
-      path: '/references/app-non-cse'
-      fullPath: '/references/app-non-cse'
-      preLoaderRoute: typeof ReferencesAppNonCseRouteImport
+    '/purchase-requests': {
+      id: '/purchase-requests'
+      path: '/purchase-requests'
+      fullPath: '/purchase-requests'
+      preLoaderRoute: typeof PurchaseRequestsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/references/app-cse': {
-      id: '/references/app-cse'
-      path: '/references/app-cse'
-      fullPath: '/references/app-cse'
-      preLoaderRoute: typeof ReferencesAppCseRouteImport
+    '/reports': {
+      id: '/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof ReportsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/purchase-requests/new': {
-      id: '/purchase-requests/new'
-      path: '/new'
-      fullPath: '/purchase-requests/new'
-      preLoaderRoute: typeof PurchaseRequestsNewRouteImport
-      parentRoute: typeof PurchaseRequestsRoute
-    }
-    '/purchase-requests/mine': {
-      id: '/purchase-requests/mine'
-      path: '/mine'
-      fullPath: '/purchase-requests/mine'
-      preLoaderRoute: typeof PurchaseRequestsMineRouteImport
-      parentRoute: typeof PurchaseRequestsRoute
-    }
-    '/purchase-requests/$prId': {
-      id: '/purchase-requests/$prId'
-      path: '/$prId'
-      fullPath: '/purchase-requests/$prId'
-      preLoaderRoute: typeof PurchaseRequestsPrIdRouteImport
-      parentRoute: typeof PurchaseRequestsRoute
-    }
-    '/po/$poId': {
-      id: '/po/$poId'
-      path: '/$poId'
-      fullPath: '/po/$poId'
-      preLoaderRoute: typeof PoPoIdRouteImport
-      parentRoute: typeof PoRoute
-    }
-    '/planning/ppmp': {
-      id: '/planning/ppmp'
-      path: '/planning/ppmp'
-      fullPath: '/planning/ppmp'
-      preLoaderRoute: typeof PlanningPpmpRouteImport
+    '/rfq': {
+      id: '/rfq'
+      path: '/rfq'
+      fullPath: '/rfq'
+      preLoaderRoute: typeof RfqRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/planning/lib': {
-      id: '/planning/lib'
-      path: '/planning/lib'
-      fullPath: '/planning/lib'
-      preLoaderRoute: typeof PlanningLibRouteImport
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/suppliers': {
+      id: '/suppliers'
+      path: '/suppliers'
+      fullPath: '/suppliers'
+      preLoaderRoute: typeof SuppliersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/users': {
+      id: '/users'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof UsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/validation': {
+      id: '/validation'
+      path: '/validation'
+      fullPath: '/validation'
+      preLoaderRoute: typeof ValidationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/aoc/$aocId': {
@@ -550,12 +466,89 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AocAocIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/planning/ppmp/new': {
-      id: '/planning/ppmp/new'
+    '/planning/lib': {
+      id: '/planning/lib'
+      path: '/planning/lib'
+      fullPath: '/planning/lib'
+      preLoaderRoute: typeof PlanningLibRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/planning/ppmp': {
+      id: '/planning/ppmp'
+      path: '/planning/ppmp'
+      fullPath: '/planning/ppmp'
+      preLoaderRoute: typeof PlanningPpmpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/po/$poId': {
+      id: '/po/$poId'
+      path: '/$poId'
+      fullPath: '/po/$poId'
+      preLoaderRoute: typeof PoPoIdRouteImport
+      parentRoute: typeof PoRoute
+    }
+    '/purchase-requests/$prId': {
+      id: '/purchase-requests/$prId'
+      path: '/$prId'
+      fullPath: '/purchase-requests/$prId'
+      preLoaderRoute: typeof PurchaseRequestsPrIdRouteImport
+      parentRoute: typeof PurchaseRequestsRoute
+    }
+    '/purchase-requests/mine': {
+      id: '/purchase-requests/mine'
+      path: '/mine'
+      fullPath: '/purchase-requests/mine'
+      preLoaderRoute: typeof PurchaseRequestsMineRouteImport
+      parentRoute: typeof PurchaseRequestsRoute
+    }
+    '/purchase-requests/new': {
+      id: '/purchase-requests/new'
       path: '/new'
-      fullPath: '/planning/ppmp/new'
-      preLoaderRoute: typeof PlanningPpmpNewRouteImport
-      parentRoute: typeof PlanningPpmpRoute
+      fullPath: '/purchase-requests/new'
+      preLoaderRoute: typeof PurchaseRequestsNewRouteImport
+      parentRoute: typeof PurchaseRequestsRoute
+    }
+    '/references/app-cse': {
+      id: '/references/app-cse'
+      path: '/references/app-cse'
+      fullPath: '/references/app-cse'
+      preLoaderRoute: typeof ReferencesAppCseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/references/app-non-cse': {
+      id: '/references/app-non-cse'
+      path: '/references/app-non-cse'
+      fullPath: '/references/app-non-cse'
+      preLoaderRoute: typeof ReferencesAppNonCseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/references/budget': {
+      id: '/references/budget'
+      path: '/references/budget'
+      fullPath: '/references/budget'
+      preLoaderRoute: typeof ReferencesBudgetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/references/ppmp': {
+      id: '/references/ppmp'
+      path: '/references/ppmp'
+      fullPath: '/references/ppmp'
+      preLoaderRoute: typeof ReferencesPpmpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rfq/$rfqId': {
+      id: '/rfq/$rfqId'
+      path: '/$rfqId'
+      fullPath: '/rfq/$rfqId'
+      preLoaderRoute: typeof RfqRfqIdRouteImport
+      parentRoute: typeof RfqRoute
+    }
+    '/rfq/new': {
+      id: '/rfq/new'
+      path: '/new'
+      fullPath: '/rfq/new'
+      preLoaderRoute: typeof RfqNewRouteImport
+      parentRoute: typeof RfqRoute
     }
     '/planning/lib/new': {
       id: '/planning/lib/new'
@@ -563,6 +556,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/planning/lib/new'
       preLoaderRoute: typeof PlanningLibNewRouteImport
       parentRoute: typeof PlanningLibRoute
+    }
+    '/planning/ppmp/new': {
+      id: '/planning/ppmp/new'
+      path: '/new'
+      fullPath: '/planning/ppmp/new'
+      preLoaderRoute: typeof PlanningPpmpNewRouteImport
+      parentRoute: typeof PlanningPpmpRoute
     }
   }
 }

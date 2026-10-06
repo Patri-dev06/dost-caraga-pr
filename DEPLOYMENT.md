@@ -1,4 +1,8 @@
-# DOST Caraga procurement system: CI/CD and server deployment
+# Archived deployment review (pre-implementation)
+
+> This document records the original server review and is retained for context.
+> CI/CD is now implemented. Use [PRODUCTION_DEPLOYMENT.md](PRODUCTION_DEPLOYMENT.md)
+> for the current setup, activation, deployment, and recovery instructions.
 
 Repository review: October 6, 2026. The user supplied a successful server inventory.
 Direct automated access still needs SSH key authentication.
