@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CalendarRange, ShoppingCart, BarChart3, ShieldCheck,
   FileText, ShieldCheck as ValidateIcon, Inbox, BookOpen, ClipboardList,
   Boxes, Wallet, Users, ScrollText, Settings, HelpCircle, Headset, ChevronRight,
-  PackageCheck, Send, Store,
+  PackageCheck, Send, Store, Scale,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -36,6 +36,7 @@ const NAV: Item[] = [
       { title: "Purchase Requests", url: "/purchase-requests", icon: FileText, module: "pr" },
       { title: "My Submissions", url: "/purchase-requests/mine", icon: Send, module: "pr" },
       { title: "RFQ", url: "/rfq", icon: ClipboardList, badge: "NEW", module: "rfq" },
+      { title: "Abstract of Canvass", url: "/aoc", icon: Scale, badge: "NEW", module: "rfq" },
       { title: "Suppliers", url: "/suppliers", icon: Store, badge: "NEW", module: "rfq" },
       { title: "Purchase Orders", url: "/po", icon: PackageCheck, badge: "NEW", module: "po" },
       { title: "Validation", url: "/validation", icon: ValidateIcon, module: "validation" },

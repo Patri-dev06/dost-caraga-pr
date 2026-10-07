@@ -34,7 +34,10 @@ export function AocDocumentOfficial({ aoc, className }: { aoc: AbstractOfCanvas;
     <div className={cn("aoc-document bg-white text-[10px] leading-tight text-black", className)} style={{ fontFamily: SERIF }}>
       <style>{`
         @media print {
-          @page { size: A4 landscape; margin: 9mm 8mm 12mm; @bottom-center { content: "Page " counter(page) " of " counter(pages); font: 9px ${SERIF}; } }
+          /* Landscape on whatever paper is chosen, with a thin margin: forcing A4 and a wide top margin
+             made Safari (printing on Letter) push the form down. A thin page margin (not padding)
+             keeps every page of a long AOC clear of the paper edge. */
+          @page { size: landscape; margin: 6mm; }
           .aoc-document { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
           .aoc-document thead { display: table-header-group; }
           .aoc-document tfoot { display: table-row-group; }
