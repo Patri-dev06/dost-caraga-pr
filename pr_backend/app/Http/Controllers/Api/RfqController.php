@@ -118,10 +118,6 @@ class RfqController extends Controller
 
         $this->audit($request, 'RFQ', 'Created RFQ', $rfq->rfq_no);
 
-        // Flowchart: "Generate RFQ -> Forward to Supply Officer for counter Digital Sign".
-        $this->notify($this->designatedSupplyOfficer(), 'rfq_signing', 'RFQ awaiting your counter-signature',
-            "{$rfq->rfq_no} was generated and is awaiting your counter-signature.", "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
-
         return response()->json(['data' => $this->format($rfq->fresh())], 201);
     }
 
@@ -216,55 +212,23 @@ class RfqController extends Controller
         return response()->json(['data' => $this->format($rfq->fresh())]);
     }
 
-    /** The canvass list can change only before the Supply Officer signs; the signatures cover it. */
+    /** The canvass list can change only until the signed RFQ is uploaded; the paper signatures cover it. */
     private const SUPPLIERS_OPEN = ['Draft', 'Pending Supply Officer Countersign'];
 
-    // --- Flowchart: Generate RFQ -> Supply Officer counter-sign -> BAC Chair/Vice-Chair sign ---
+    // --- Generate RFQ -> choose 3 suppliers -> print, wet-sign (Supply Officer + BAC) -> upload the scan ---
 
-    public function signAsSupplyOfficer(Request $request, Rfq $rfq): JsonResponse
-    {
-        $this->guardModule('rfq');
-        // "Pending Supply Officer Countersign" only holds RFQs signed by the BAC under the old order.
-        abort_unless(in_array($rfq->status, ['Draft', 'Pending Supply Officer Countersign'], true), 422, 'This RFQ is not awaiting the Supply Officer counter-signature.');
-
-        $user = $request->user();
-        $designated = $this->designatedSupplyOfficer();
-        abort_unless($user?->tier === 'superadmin' || ($designated !== null && $designated->id === $user?->id), 403, 'You are not the designated Supply Officer signatory.');
-        // The signatures cover the canvass list, so the 3 suppliers are identified first.
-        abort_unless($rfq->suppliers()->where('status', 'Pending')->count() === 3, 422, 'Choose the 3 suppliers to canvass before signing. The canvass list is fixed once signed.');
-        $this->requireSignature($user);
-
-        $next = $rfq->bac_signed_at ? 'Ready to Send' : 'Pending BAC Signature';
-        $rfq->forceFill([
-            'status' => $next,
-            'stage' => $next,
-            'supply_officer_signed_by' => $user->id,
-            'supply_officer_signed_name' => $user->name,
-            'supply_officer_signed_at' => now(),
-        ])->save();
-        $this->recordAction($request, $rfq, 'Supply Officer', 'Signed', $request->input('remarks'));
-
-        if ($next === 'Pending BAC Signature') {
-            foreach ($this->bacSignatories() as $bac) {
-                $this->notify($bac, 'rfq_signing', 'RFQ awaiting BAC signature',
-                    "{$rfq->rfq_no} was counter-signed by the Supply Officer and is awaiting the BAC Chairman's or Vice-Chairman's signature.",
-                    "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
-            }
-        }
-
-        return response()->json(['message' => 'RFQ counter-signed by the Supply Officer.', 'data' => $this->format($rfq->fresh())]);
-    }
-
-    /** One signature from either the BAC Chairman or the BAC Vice-Chairman completes this step. */
     /**
-     * The BAC signature, the RFQ's last. Signatures are wet: it goes through with the scan of the
-     * signed RFQ attached — uploaded by the BAC Chairman/Vice-Chairman, or by the Supply team for
-     * whichever of them signed it on paper (`signed_by`: chair or vice).
+     * Records the wet-signed RFQ. Nothing is signed in the system: Supply prints the RFQ, the Supply
+     * Officer and the BAC Chairman or Vice-Chairman sign it on paper, and the scan is uploaded here —
+     * by the BAC Chairman/Vice-Chairman, or by the Supply team for whichever of them signed
+     * (`signed_by`: chair or vice). The 3 suppliers are chosen first: the signed paper covers them.
      */
     public function signAsBac(Request $request, Rfq $rfq): JsonResponse
     {
         $this->guardModule('rfq');
-        abort_unless($rfq->status === 'Pending BAC Signature', 422, 'This RFQ is not awaiting the BAC signature.');
+        // "Pending ..." statuses only hold RFQs from when the Supply Officer signed in the system.
+        abort_unless(in_array($rfq->status, ['Draft', 'Pending Supply Officer Countersign', 'Pending BAC Signature'], true), 422, 'This RFQ is not awaiting its signed copy.');
+        abort_unless($rfq->suppliers()->where('status', 'Pending')->count() === 3, 422, 'Choose the 3 suppliers to canvass before uploading the signed RFQ. The canvass list is fixed once it is uploaded.');
 
         $user = $request->user();
         $role = match (true) {
@@ -287,9 +251,14 @@ class RfqController extends Controller
         $this->requireSignature($user);
         $scan = $this->signedCopyFile($request);
 
+        // The same paper carries the Supply Officer's wet signature.
+        $supplyOfficer = $rfq->supply_officer_signed_at ? null : $this->designatedSupplyOfficer();
         $rfq->forceFill([
             'status' => 'Ready to Send',
             'stage' => 'Ready to Send',
+            'supply_officer_signed_by' => $supplyOfficer?->id ?? $rfq->supply_officer_signed_by,
+            'supply_officer_signed_name' => $supplyOfficer?->name ?? $rfq->supply_officer_signed_name,
+            'supply_officer_signed_at' => $supplyOfficer ? now() : $rfq->supply_officer_signed_at,
             'bac_signed_by' => $signer->id,
             'bac_signed_name' => $signer->name,
             'bac_signed_role' => $role,
@@ -300,10 +269,10 @@ class RfqController extends Controller
 
         foreach ($this->canvassWatchers($rfq) as $watcher) {
             $this->notify($watcher, 'rfq_ready', 'RFQ ready to send',
-                "{$rfq->rfq_no} is fully signed. Choose 3 suppliers from the directory and send it.", "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
+                "{$rfq->rfq_no}'s signed copy is uploaded. Send it to the 3 suppliers.", "/rfq/{$rfq->id}", ['rfqId' => $rfq->id]);
         }
 
-        return response()->json(['message' => "RFQ signed by the {$role}.", 'data' => $this->format($rfq->fresh())]);
+        return response()->json(['message' => 'Signed RFQ uploaded. It is ready to send.', 'data' => $this->format($rfq->fresh())]);
     }
 
     // --- Flowchart: Filter Supplier based on category -> Choose 3 supplier -> Send RFQ ---
@@ -312,11 +281,11 @@ class RfqController extends Controller
     {
         $this->guardModule('rfq');
         $chosen = $rfq->suppliers()->where('status', 'Pending')->count();
-        // Normally the list is fixed at the Supply Officer's signature. An RFQ signed before that rule
+        // Normally the list is fixed when the signed RFQ is uploaded. An RFQ signed before that rule
         // (with fewer than 3 chosen) may still fill its list up to 3 so it can be sent; nothing is swapped.
         $completingOlderRfq = in_array($rfq->status, ['Pending BAC Signature', 'Ready to Send'], true) && $chosen < 3;
         abort_unless(in_array($rfq->status, self::SUPPLIERS_OPEN, true) || $completingOlderRfq, 422,
-            'The canvass list is fixed once the Supply Officer signs. Suppliers are chosen before signing.');
+            'The canvass list is fixed once the signed RFQ is uploaded. Suppliers are chosen before that.');
         abort_if($chosen >= 3, 422, 'This RFQ already has 3 suppliers.');
 
         $supplier = $this->directorySupplier($request->all(), $rfq);
@@ -333,7 +302,7 @@ class RfqController extends Controller
         abort_unless($rfqSupplier->rfq_id === $rfq->id, 404);
         abort_unless($rfqSupplier->status === 'Pending', 422, 'Only a supplier the RFQ has not been sent to can be removed.');
         abort_unless(in_array($rfq->status, self::SUPPLIERS_OPEN, true), 422,
-            'The canvass list is fixed once the Supply Officer signs. Suppliers are chosen before signing.');
+            'The canvass list is fixed once the signed RFQ is uploaded. Suppliers are chosen before that.');
 
         $rfqSupplier->delete();
         $this->audit($request, 'RFQ', 'Removed canvass supplier', $rfq->rfq_no);
@@ -385,7 +354,7 @@ class RfqController extends Controller
     public function send(Request $request, Rfq $rfq): JsonResponse
     {
         $this->guardModule('rfq');
-        abort_unless($rfq->status === 'Ready to Send', 422, 'This RFQ must be counter-signed by the Supply Officer and signed by the BAC Chairman or Vice-Chairman before it can be sent.');
+        abort_unless($rfq->status === 'Ready to Send', 422, 'Upload the signed RFQ (Supply Officer and BAC Chairman or Vice-Chairman) before sending it.');
 
         $pending = $rfq->suppliers()->where('status', 'Pending')->get();
         abort_unless($pending->count() === 3, 422, 'Choose exactly 3 suppliers before sending.');

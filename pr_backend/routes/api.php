@@ -110,8 +110,7 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/rfqs/{rfq}', [RfqController::class, 'show']);
         Route::put('/rfqs/{rfq}', [RfqController::class, 'update']);
 
-        // Flowchart signing order: Supply Officer counter-sign, then the BAC Chair OR Vice-Chair.
-        Route::post('/rfqs/{rfq}/sign/supply-officer', [RfqController::class, 'signAsSupplyOfficer']);
+        // Signatures are wet: the RFQ signed on paper (Supply Officer + BAC Chair or Vice-Chair) is uploaded here.
         Route::post('/rfqs/{rfq}/sign/bac', [RfqController::class, 'signAsBac']);
 
         // Supplier directory ("Filter Supplier based on category").

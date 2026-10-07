@@ -7,8 +7,8 @@ use Illuminate\Testing\TestResponse;
 
 /**
  * Walks an RFQ through the flowchart's green and orange lanes as the seeded, designated accounts:
- * Supply Officer counter-sign -> BAC Chair/Vice-Chair sign -> 3 suppliers -> send -> signed quotes
- * -> AOC -> BAC review -> Supply notes the lowest bidder.
+ * 3 suppliers -> signed RFQ uploaded (wet signatures) -> send -> signed quotes -> AOC -> BAC review
+ * -> Supply notes the lowest bidder.
  */
 trait SignsRfq
 {
@@ -33,7 +33,7 @@ trait SignsRfq
         return $this->withToken($token);
     }
 
-    /** Signs one RFQ step ('supply-officer' or 'bac') as the account designated for it ('bac-vice-chair' signs the BAC step as the Vice-Chair). */
+    /** Records the signed RFQ as the BAC account ('bac'/'bac-chair', or 'bac-vice-chair' as the Vice-Chair). */
     private function signRfq(int $rfqId, string $step): TestResponse
     {
         $path = in_array($step, ['bac', 'bac-chair', 'bac-vice-chair'], true) ? 'bac' : $step;
@@ -41,10 +41,9 @@ trait SignsRfq
         return $this->asEmail(self::RFQ_SIGNATORY_EMAILS[$step])->postJson("/api/v1/rfqs/{$rfqId}/sign/{$path}");
     }
 
-    /** Flowchart order: Supply Officer counter-sign, then one BAC signature. */
+    /** Signatures are wet: uploading the signed RFQ (Supply Officer + one BAC signatory on paper) completes it. */
     private function completeRfqSigning(int $rfqId): void
     {
-        $this->signRfq($rfqId, 'supply-officer')->assertOk()->assertJsonPath('data.status', 'Pending BAC Signature');
         $this->signRfq($rfqId, 'bac')->assertOk()->assertJsonPath('data.status', 'Ready to Send');
     }
 

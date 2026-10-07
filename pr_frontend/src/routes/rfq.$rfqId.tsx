@@ -138,9 +138,9 @@ function RfqDetailPage() {
   const navigate = useNavigate();
   const { user } = useCurrentUser();
   const isSuperadmin = user?.tier === "superadmin";
-  const canSignAsSupply = Boolean(user?.isSupplyOfficer || isSuperadmin);
   const canSignAsBac = Boolean(user?.isBacChair || user?.isBacViceChair || isSuperadmin);
-  // Signatures are wet: the BAC step goes through with the signed RFQ's scan, which the Supply team may upload for the BAC.
+  // Signatures are wet: nothing is signed here. The RFQ signed on paper (Supply Officer + BAC) is
+  // uploaded — by the BAC Chairman/Vice-Chairman, or by the Supply team for them.
   const canRecordBacSignature = canSignAsBac || isSupplyTeam(user);
   const [signingBac, setSigningBac] = useState(false);
   const isTwgLead = Boolean(user?.isTwgLead || isSuperadmin);
@@ -273,7 +273,7 @@ function RfqDetailPage() {
 
   const preSend = PRE_SEND.includes(rfq.status);
   const pendingSuppliers = rfq.suppliers.filter((s) => s.status === "Pending");
-  // The canvass list is chosen before the Supply Officer signs, and fixed from then on.
+  // The canvass list is chosen before the signed RFQ is uploaded, and fixed from then on.
   const suppliersOpen = rfq.status === "Draft" || rfq.status === "Pending Supply Officer Countersign";
   // An RFQ signed before that rule, with fewer than 3 chosen, may still fill its list (no swapping).
   const canAddSupplier = suppliersOpen || ((rfq.status === "Pending BAC Signature" || rfq.status === "Ready to Send") && pendingSuppliers.length < 3);
@@ -368,33 +368,21 @@ function RfqDetailPage() {
         </Card>
       )}
 
-      {/* Flowchart: Generate RFQ -> Supply Officer counter-sign -> BAC Chair / Vice-Chair sign */}
+      {/* Signatures are wet: print, sign on paper (Supply Officer + BAC Chairman or Vice-Chairman), upload the scan. */}
       <Card className="border border-border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold text-navy">RFQ Signatures</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <SignStep
-            label="1 · Supply Officer (counter-sign)"
-            signedName={rfq.supplyOfficerSignedName}
-            signedAt={rfq.supplyOfficerSignedAt}
-            current={rfq.status === "Draft" || rfq.status === "Pending Supply Officer Countersign"}
-            canSign={canSignAsSupply}
-            waitingFor="the designated Supply Officer"
-            blockedReason={pendingSuppliers.length < 3 ? `Choose the 3 suppliers in Supplier Canvass first (${pendingSuppliers.length}/3). The signatures cover the canvass list.` : undefined}
-            busy={busy}
-            onSign={() => run(() => apiSignRfq(rfq.id, "supply-officer"), "Counter-signed as Supply Officer.")}
-          />
-          <SignStep
-            label="2 · BAC Chairman or Vice-Chairman"
-            signedName={rfq.bacSignedName ? `${rfq.bacSignedName}${rfq.bacSignedRole ? ` (${rfq.bacSignedRole})` : ""}` : ""}
-            signedAt={rfq.bacSignedAt}
-            current={rfq.status === "Pending BAC Signature"}
-            canSign={canRecordBacSignature}
-            signLabel="Upload signed copy"
-            waitingFor="the BAC Chairman or Vice-Chairman (either one)"
-            busy={busy}
-            onSign={() => setSigningBac(true)}
-          />
-        </div>
+        <h2 className="mb-3 text-sm font-semibold text-navy">Signed RFQ</h2>
+        <SignStep
+          label="Signed copy (Supply Officer and BAC Chairman or Vice-Chairman)"
+          signedName={rfq.bacSignedName ? `${rfq.bacSignedName}${rfq.bacSignedRole ? ` (${rfq.bacSignedRole})` : ""}${rfq.supplyOfficerSignedName ? ` and ${rfq.supplyOfficerSignedName} (Supply Officer)` : ""}` : ""}
+          signedAt={rfq.bacSignedAt}
+          current={rfq.status === "Draft" || rfq.status === "Pending Supply Officer Countersign" || rfq.status === "Pending BAC Signature"}
+          canSign={canRecordBacSignature}
+          signLabel="Upload signed copy"
+          waitingFor="the signed RFQ to be uploaded"
+          blockedReason={pendingSuppliers.length < 3 ? `Choose the 3 suppliers in Supplier Canvass first (${pendingSuppliers.length}/3). Then print the RFQ, have it signed on paper, and upload the scan.` : undefined}
+          busy={busy}
+          onSign={() => setSigningBac(true)}
+        />
         {rfq.signedCopies.length > 0 && (
           <div className="mt-3">
             <SignedCopiesList copies={rfq.signedCopies} />
@@ -405,7 +393,7 @@ function RfqDetailPage() {
         open={signingBac}
         onOpenChange={setSigningBac}
         title={`Signed RFQ ${rfq.rfqNo}`}
-        description="Upload the scanned RFQ with the wet signatures of the Supply Officer and the BAC Chairman or Vice-Chairman. It is kept with the RFQ, and the RFQ becomes ready to send."
+        description="Upload the scanned RFQ signed on paper by the Supply Officer and the BAC Chairman or Vice-Chairman. It is kept with the RFQ, the 3 suppliers are fixed, and the RFQ becomes ready to send."
         confirmLabel="Upload and mark signed"
         onBehalfOf={canSignAsBac ? null : "BAC Chairman or Vice-Chairman"}
         askSignedBy={!canSignAsBac}
@@ -416,7 +404,7 @@ function RfqDetailPage() {
         }}
       />
 
-      {/* Draft details — editable until the Supply Officer counter-signs */}
+      {/* Draft details — editable until the signed RFQ is uploaded */}
       {rfq.status === "Draft" && editDoc ? (
         <>
           <Card className="space-y-4 border border-border bg-card p-4">
@@ -586,7 +574,7 @@ function RfqDetailPage() {
           {preSend && (
             <div className="space-y-2">
               <p className="label-eyebrow">Chosen suppliers ({pendingSuppliers.length}/3)</p>
-              {pendingSuppliers.length === 0 && <p className="text-xs text-muted-foreground">Choose 3 {rfq.supplierCategory} suppliers from the directory, before the Supply Officer signs.</p>}
+              {pendingSuppliers.length === 0 && <p className="text-xs text-muted-foreground">Choose 3 {rfq.supplierCategory} suppliers from the directory, before uploading the signed RFQ.</p>}
               {pendingSuppliers.map((s) => (
                 <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm">
                   <div className="min-w-0 flex-1">
@@ -605,7 +593,7 @@ function RfqDetailPage() {
               ))}
               {!canAddSupplier && (
                 <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Lock className="h-3 w-3" /> The canvass list was fixed when the Supply Officer signed. Details can still be corrected with the pencil.
+                  <Lock className="h-3 w-3" /> The canvass list was fixed when the signed RFQ was uploaded. Details can still be corrected with the pencil.
                 </p>
               )}
               {canAddSupplier && pendingSuppliers.length < 3 && (
@@ -638,7 +626,7 @@ function RfqDetailPage() {
                 </Button>
               )}
               {rfq.status !== "Ready to Send" && pendingSuppliers.length === 3 && (
-                <p className="text-xs text-muted-foreground">The RFQ can be sent once the Supply Officer and the BAC have signed.</p>
+                <p className="text-xs text-muted-foreground">The RFQ can be sent once its signed copy is uploaded.</p>
               )}
             </div>
           )}

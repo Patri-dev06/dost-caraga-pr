@@ -86,7 +86,7 @@ function NeedsYourActionCard() {
       empty: "Nothing awaiting the BAC.",
       viewAll: { to: "/approval-inbox", search: { tab: "bac" } },
       rows: [
-        ...(bacRfqs?.items ?? []).map((r) => ({ key: `rfq-${r.id}`, title: r.rfqNo, note: "Sign the RFQ", status: r.status, to: "/rfq/$rfqId" as const, id: r.id })),
+        ...(bacRfqs?.items ?? []).map((r) => ({ key: `rfq-${r.id}`, title: r.rfqNo, note: "Upload the signed RFQ", status: r.status, to: "/rfq/$rfqId" as const, id: r.id })),
         ...bacAocs.map((a) => ({ key: `aoc-${a.id}`, title: a.rfqNo, note: a.status === "Pending BAC Satisfaction" ? "Satisfied with the TWG response?" : "Review the AOC", status: a.status, to: "/aoc/$aocId" as const, id: a.id })),
       ],
     });
@@ -95,7 +95,7 @@ function NeedsYourActionCard() {
     const supplyRows: Row[] = [];
     for (const r of supplyRfqs?.items ?? []) {
       if (r.status === "Draft" || r.status === "Pending Supply Officer Countersign") {
-        supplyRows.push({ key: `rfq-${r.id}`, title: r.rfqNo, note: "Counter-sign the RFQ", status: r.status, to: "/rfq/$rfqId", id: r.id });
+        supplyRows.push({ key: `rfq-${r.id}`, title: r.rfqNo, note: "Choose suppliers, then upload the signed RFQ", status: r.status, to: "/rfq/$rfqId", id: r.id });
       } else if (r.openSupplierSlots > 0 && !r.abstractOfCanvasId) {
         supplyRows.push({ key: `rfq-${r.id}`, title: r.rfqNo, note: `Choose ${r.openSupplierSlots} replacement supplier${r.openSupplierSlots > 1 ? "s" : ""}`, status: r.status, to: "/rfq/$rfqId", id: r.id });
       }

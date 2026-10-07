@@ -42,7 +42,7 @@ export type CurrentUser = {
   isRegionalDirector: boolean; // designated Regional Director for LIB final approval
   isBacChair: boolean; // designated BAC Chairman: reviews Abstracts of Canvas
   isBacViceChair: boolean; // designated BAC Vice-Chairman: reviews Abstracts of Canvas
-  isSupplyOfficer: boolean; // designated Supply Officer: counter-signs RFQs, notes the lowest bidder
+  isSupplyOfficer: boolean; // designated Supply Officer: signs RFQs on paper, notes the lowest bidder
   isTwgLead: boolean; // designated TWG Lead: evaluates equipment, answers BAC remarks, rates venues
   hasSignature: boolean; // an e-signature is uploaded (required to sign/approve while e-signatures are on)
   /** Uploaded e-signatures are in use. Off until PNPKI: signing needs no upload, and none are shown. */
@@ -1682,7 +1682,7 @@ export interface Rfq {
   requiredDocuments: string[];
   /** The FOB / VAT lines printed under the items. */
   notes: string;
-  /** Flowchart order: Supply Officer counter-signs first, then ONE of the BAC Chairman / Vice-Chairman. */
+  /** Recorded when the wet-signed RFQ is uploaded (Supply Officer + ONE of the BAC Chairman / Vice-Chairman). */
   supplyOfficerSignedName: string;
   supplyOfficerSignedAt: string;
   bacSignedName: string;
@@ -1957,12 +1957,11 @@ export async function apiUpdateRfq(id: string | number, payload: Partial<RfqCrea
   return mapRfq(result.data);
 }
 
-/** Flowchart signing order: the Supply Officer counter-signs, then the BAC Chairman OR Vice-Chairman. */
 /**
- * The BAC step needs the scan of the wet-signed RFQ; Supply uploading it for the BAC says who signed
- * it on paper (`signedBy`).
+ * Signatures are wet: uploads the scan of the RFQ signed on paper by the Supply Officer and the BAC
+ * Chairman or Vice-Chairman. Supply uploading it for the BAC says who signed it (`signedBy`).
  */
-export async function apiSignRfq(id: string | number, step: "supply-officer" | "bac", remarks?: string, scan?: { signedCopy: File | null; signedBy?: "chair" | "vice" }) {
+export async function apiSignRfq(id: string | number, step: "bac", remarks?: string, scan?: { signedCopy: File | null; signedBy?: "chair" | "vice" }) {
   const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${id}/sign/${step}`, {
     method: "POST",
     body: withSignedCopy({ remarks, signed_by: scan?.signedBy }, scan?.signedCopy),

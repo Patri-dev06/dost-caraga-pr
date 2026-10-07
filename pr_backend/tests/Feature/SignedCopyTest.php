@@ -141,7 +141,6 @@ class SignedCopyTest extends TestCase
             'items' => [['description' => 'Item', 'uom' => 'unit', 'quantity' => 1, 'unit_abc' => 300, 'total_abc' => 300]],
         ])->assertCreated()->json('data.id');
         $this->addSuppliers($this->token, $rfqId);
-        $this->signRfq($rfqId, 'supply-officer')->assertOk();
 
         $this->requireScans();
         $supply = $this->supplyToken();

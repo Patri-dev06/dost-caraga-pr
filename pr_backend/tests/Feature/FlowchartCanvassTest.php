@@ -114,29 +114,31 @@ class FlowchartCanvassTest extends TestCase
 
     // --- Signing order ---
 
-    public function test_signing_routes_supply_officer_first_then_notifies_both_bac_signatories(): void
+    public function test_the_wet_signed_rfq_is_uploaded_once_its_3_suppliers_are_chosen(): void
     {
         $token = $this->loginAsAdmin();
         $rfqId = $this->withToken($token)->postJson('/api/v1/rfqs', [
             'purchase_request_id' => $this->approvedPr($token),
             'items' => [['description' => 'Item', 'uom' => 'unit', 'quantity' => 1]],
         ])->json('data.id');
-        $this->assertDatabaseHas('user_notifications', ['type' => 'rfq_signing', 'user_id' => User::where('email', 'admin@dost.gov.ph')->value('id')]);
+        // Nothing is signed in the system, so nobody is asked to "counter-sign" a new RFQ.
+        $this->assertDatabaseMissing('user_notifications', ['type' => 'rfq_signing']);
 
-        // The suppliers are identified first: no signing on an empty canvass list.
-        $this->signRfq($rfqId, 'supply-officer')->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, 'Choose the 3 suppliers'));
+        // The suppliers are identified first: no signed copy on an empty canvass list.
+        $this->signRfq($rfqId, 'bac')->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, 'Choose the 3 suppliers'));
         $this->addSuppliers($token, $rfqId);
-        $this->signRfq($rfqId, 'supply-officer')->assertOk();
+        $this->signRfq($rfqId, 'bac')->assertOk()->assertJsonPath('data.status', 'Ready to Send')
+            // The same paper carries the Supply Officer's wet signature.
+            ->assertJsonPath('data.supply_officer_signed_name', 'Supply Unit Admin');
 
-        // Once signed, the canvass list is fixed.
+        // Once the signed copy is uploaded, the canvass list is fixed.
         $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/suppliers", ['supplier_name' => 'Late Addition'])->assertStatus(422);
         $pendingId = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data.suppliers.0.id');
         $this->withToken($token)->deleteJson("/api/v1/rfqs/{$rfqId}/suppliers/{$pendingId}")->assertStatus(422);
-        foreach (['jbautista.bac@dost.gov.ph', 'rsantiago.bac@dost.gov.ph'] as $email) {
-            $this->assertDatabaseHas('user_notifications', ['type' => 'rfq_signing', 'user_id' => User::where('email', $email)->value('id')]);
-        }
+        $this->assertDatabaseMissing('user_notifications', ['type' => 'rfq_signing']);
 
-        $this->signRfq($rfqId, 'bac-vice-chair')->assertOk()->assertJsonPath('data.bac_signed_role', 'BAC Vice-Chairman')->assertJsonPath('data.status', 'Ready to Send');
+        // One signed copy completes it: there is no second signing step.
+        $this->signRfq($rfqId, 'bac-vice-chair')->assertStatus(422);
     }
 
     // --- Canvass: Supply delivers the RFQ and records each signed quotation ---
