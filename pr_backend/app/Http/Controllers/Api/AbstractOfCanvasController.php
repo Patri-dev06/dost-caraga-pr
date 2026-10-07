@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Concerns\CancelsPurchaseRequests;
+use App\Http\Controllers\Concerns\HandlesSignedCopies;
 use App\Http\Controllers\Concerns\HasProcurementHelpers;
 use App\Http\Controllers\Controller;
 use App\Models\AbstractOfCanvas;
@@ -32,6 +33,7 @@ use Illuminate\Support\Facades\DB;
 class AbstractOfCanvasController extends Controller
 {
     use CancelsPurchaseRequests;
+    use HandlesSignedCopies;
     use HasProcurementHelpers;
 
     public function generate(Request $request, Rfq $rfq): JsonResponse
@@ -299,22 +301,35 @@ class AbstractOfCanvasController extends Controller
     }
 
     /** Flowchart: "BAC Review (Digital-sign) -> Fail?". */
+    /**
+     * The BAC's review. Returning it with remarks is the Chairman's or Vice-Chairman's call. Passing
+     * it means the BAC signed the AOC on paper: it goes through with the scan of the signed AOC
+     * attached — uploaded by the BAC Chairman/Vice-Chairman, or by the Supply team for the BAC.
+     */
     public function bacReview(Request $request, AbstractOfCanvas $aoc): JsonResponse
     {
-        $this->guardModule('approvals');
-        $this->abortUnlessBacMember($request->user());
-        abort_unless($aoc->status === 'Pending BAC Review', 422, 'This Abstract of Canvass is not awaiting BAC review.');
-        $this->requireSignature($request->user());
-
         $data = $request->validate([
             'pass' => ['required', 'boolean'],
             'remarks' => ['required_if:pass,false', 'nullable', 'string'],
         ]);
+        $user = $request->user();
+        $designated = collect([$this->designatedBacChair(), $this->designatedBacViceChair()])->filter()->pluck('id');
+        $isBac = $user?->tier === 'superadmin' || ($user !== null && $designated->contains($user->id));
+
+        if ($isBac || ! $data['pass']) {
+            $this->guardModule('approvals');
+            $this->abortUnlessBacMember($user);
+        }
+        $onBehalf = $this->abortUnlessSignatoryOrSupply($user, $isBac, 'BAC Chairman or Vice-Chairman');
+        abort_unless($aoc->status === 'Pending BAC Review', 422, 'This Abstract of Canvass is not awaiting BAC review.');
+        $this->requireSignature($user);
 
         if ($data['pass']) {
+            $scan = $this->signedCopyFile($request);
             // "Fail? No" returns the approved AOC to Supply for final award confirmation.
             $aoc->forceFill(['status' => 'For Supply Noting', 'bac_remarks' => null, 'bac_approved_at' => now()])->save();
-            $this->recordAction($request, $aoc, 'BAC', 'Approved', $request->input('remarks'));
+            $this->storeSignedCopy($request, $aoc, 'aoc_bac_passed', 'Bids and Awards Committee', $scan, $onBehalf);
+            $this->recordAction($request, $aoc, 'BAC', 'Approved', $this->onBehalfNote($request, $onBehalf, 'BAC', $request->input('remarks')));
 
             foreach (array_filter([$this->designatedSupplyOfficer(), $aoc->creator]) as $recipient) {
                 $this->notify($recipient, 'aoc_approved', 'Abstract of Canvass approved — confirm item awards',
@@ -716,6 +731,7 @@ class AbstractOfCanvasController extends Controller
                     && ! $ratedBy->contains($user?->id),
                 'ratings' => $aoc->venueRatings->map(fn (VenueRating $r) => $r->only(['rfq_supplier_id', 'rater_id', 'rater_role', 'criterion', 'score', 'remarks'])),
             ],
+            'signed_copies' => $this->signedCopiesOf($aoc),
             'approval_trail' => $aoc->approvalActions,
             'purchase_orders' => $aoc->rfq?->purchaseOrders->sortBy('id')->values()->map(fn ($po) => [
                 'id' => $po->id,

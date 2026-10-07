@@ -23,6 +23,8 @@ import {
 import { fmtAmount } from "@/lib/lib-store";
 import { exportPurchaseOrderExcel } from "@/lib/po-excel";
 import { toast } from "sonner";
+import { SignedCopiesList, SignedCopyDialog } from "@/components/app/signed-copy";
+import { useCurrentUser } from "@/lib/current-user";
 
 const PO_CHAIN_STEPS = [
   { pendingStatus: "Pending Budget Obligation", label: "Budget Officer (obligation)", nameKey: "budgetOfficerName" as const, atKey: "budgetOfficerSignedAt" as const, sigKey: "budgetOfficerSignature" as const },
@@ -58,6 +60,10 @@ function PurchaseOrderDetailPage() {
   const [terms, setTerms] = useState("");
   const [items, setItems] = useState<EditableItem[]>([]);
   const [chainBusy, setChainBusy] = useState(false);
+  // The RD's signature, the last, goes through with the fully signed PO's scan (Supply may upload it for the RD).
+  const [finalApproving, setFinalApproving] = useState(false);
+  const { user } = useCurrentUser();
+  const isApprover = user?.tier === "superadmin" || Boolean(user?.isRegionalDirector);
 
   useEffect(() => {
     (async () => {
@@ -291,16 +297,12 @@ function PurchaseOrderDetailPage() {
                         className="h-7 gap-1 text-xs"
                         disabled={chainBusy}
                         onClick={() =>
-                          runChainAction(() =>
-                            step.pendingStatus === "Pending Budget Obligation"
-                              ? apiObligatePo(poId)
-                              : step.pendingStatus === "Pending Accounting"
-                                ? apiAccountPo(poId)
-                                : apiFinalApprovePo(poId),
-                          )
+                          step.pendingStatus === "Pending RD Approval"
+                            ? setFinalApproving(true)
+                            : runChainAction(() => (step.pendingStatus === "Pending Budget Obligation" ? apiObligatePo(poId) : apiAccountPo(poId)))
                         }
                       >
-                        Sign now
+                        {step.pendingStatus === "Pending RD Approval" ? "Upload signed copy" : "Sign now"}
                       </Button>
                       <Button size="sm" variant="outline" className="h-7 gap-1 border-destructive/40 text-xs text-destructive hover:bg-destructive/10" disabled={chainBusy} onClick={handleReject}>
                         <XCircle className="h-3 w-3" /> Reject
@@ -313,8 +315,27 @@ function PurchaseOrderDetailPage() {
               );
             })}
           </div>
+          {po.signedCopies.length > 0 && (
+            <div className="mt-3">
+              <SignedCopiesList copies={po.signedCopies} />
+            </div>
+          )}
         </Card>
       )}
+
+      <SignedCopyDialog
+        open={finalApproving}
+        onOpenChange={setFinalApproving}
+        title={`Approve ${po.poNo || "the Purchase Order"}`}
+        description="Upload the scanned Purchase Order with every wet signature: Budget, Accounting and the Regional Director. It is kept with the PO, and the PO is released to the Supply team to bring to the supplier."
+        confirmLabel="Upload and approve"
+        onBehalfOf={isApprover ? null : "Regional Director"}
+        onConfirm={async ({ file, remarks }) => {
+          const result = await apiFinalApprovePo(poId, remarks || undefined, file);
+          setPo(result.data);
+          toast.success(result.message);
+        }}
+      />
 
       {po.status === "Cancelled" && (
         <Card className="flex items-start gap-3 border border-destructive/30 bg-destructive/5 p-4 text-sm">

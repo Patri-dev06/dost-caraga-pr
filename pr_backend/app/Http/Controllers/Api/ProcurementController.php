@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\HandlesSignedCopies;
 use App\Http\Controllers\Concerns\HasProcurementHelpers;
 use App\Http\Controllers\Controller;
+use App\Models\AbstractOfCanvas;
 use App\Models\AppCseItem;
 use App\Models\AppNonCseItem;
 use App\Models\AuditLog;
@@ -20,7 +22,9 @@ use App\Models\Project;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseRequest;
 use App\Models\PurchaseRequestItem;
+use App\Models\Rfq;
 use App\Models\Role;
+use App\Models\SignedCopy;
 use App\Models\SystemPreference;
 use App\Models\User;
 use App\Models\UserNotification;
@@ -33,14 +37,17 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class ProcurementController extends Controller
 {
+    use HandlesSignedCopies;
     use HasProcurementHelpers;
 
     private const RESOURCE_MODELS = [
@@ -314,7 +321,14 @@ class ProcurementController extends Controller
         $this->guardModule('lib');
         $document = LibDocument::with('rows')->where('client_uid', $clientUid)->firstOrFail();
 
-        $user = $request->user();
+        $this->abortUnlessCanViewLib($request->user(), $document);
+
+        return response()->json(['data' => $this->formatLibDocument($document)]);
+    }
+
+    /** The owner, its signatories, a Budget Officer reviewing a PPMP charged to it, or a superadmin. */
+    private function abortUnlessCanViewLib(?User $user, LibDocument $document): void
+    {
         $isOwner = $document->owner_id !== null && $document->owner_id === $user?->id;
         $isSignatory = $user !== null && in_array($user->id, [
             $document->supervisor_id, $document->budget_officer_id, $document->approved_by_id,
@@ -324,8 +338,6 @@ class ProcurementController extends Controller
             403,
             'You do not have access to this document.',
         );
-
-        return response()->json(['data' => $this->formatLibDocument($document)]);
     }
 
     public function planningLibStore(Request $request, ?string $clientUid = null): JsonResponse
@@ -577,6 +589,8 @@ class ProcurementController extends Controller
             'approve' => 'Pending Regional Director Approval',
         ][$action];
         abort_unless($document->status === $expected, 422, 'This LIB is not awaiting this action.');
+        // Signatures are wet: the RD's approval, the last, goes through with the signed LIB's scan.
+        $scan = $action === 'approve' ? $this->signedCopyFile($request) : null;
 
         if ($action === 'recommend') {
             $nextOfficer = $this->designatedBudgetOfficer();
@@ -612,9 +626,11 @@ class ProcurementController extends Controller
                 'approved_name' => $user?->name,
                 'approved_position' => $user?->position,
                 'approved_at' => now(),
-                'approval_signature' => 'Approved electronically by '.($user?->name ?? 'Regional Director').' on '.now()->toDayDateTimeString(),
+                // Signed on paper; the scan is kept as the LIB's signed copy.
+                'approval_signature' => 'Approved by '.($user?->name ?? 'Regional Director').' on '.now()->toDayDateTimeString().' (signed copy on file)',
                 'review_comment' => $data['comment'] ?? $document->review_comment,
             ])->save();
+            $this->storeSignedCopy($request, $document, 'lib_approved', $this->signatoryName($user, 'Regional Director'), $scan, false);
             if ($document->owner) {
                 $this->notify($document->owner, 'lib_approved', 'LIB approved',
                     ($document->project_title ?: 'Your LIB').' has been approved by '.($user?->name ?? 'the Regional Director').'.',
@@ -951,6 +967,8 @@ class ProcurementController extends Controller
             // Approving (certifying) stamps the officer's signature — require one.
             $this->requireSignature($user);
         }
+        // Signatures are wet: certifying goes through with the scan of the signed PPMP attached.
+        $scan = $action === 'approve' ? $this->signedCopyFile($request) : null;
 
         $document = DB::transaction(function () use ($document, $data, $user, $action): PpmpDocument {
             foreach (($data['itemComments'] ?? []) as $itemUid => $comment) {
@@ -968,8 +986,8 @@ class ProcurementController extends Controller
                     'approved_by_id' => $user?->id,
                     'approved_by_name' => $user?->name,
                     'approved_at' => now(),
-                    // PNPKI digital signature to be wired in later; record a placeholder now.
-                    'approval_signature' => 'Certified electronically by '.($user?->name ?? 'Budget Officer').' on '.now()->toDayDateTimeString(),
+                    // Signed on paper for now (PNPKI digital signatures come later); the scan is the PPMP's signed copy.
+                    'approval_signature' => 'Certified by '.($user?->name ?? 'Budget Officer').' on '.now()->toDayDateTimeString().' (signed copy on file)',
                 ]);
             } else {
                 $document->fill([
@@ -998,6 +1016,9 @@ class ProcurementController extends Controller
 
             return $document->fresh('items');
         });
+        if ($action === 'approve') {
+            $this->storeSignedCopy($request, $document, 'ppmp_approved', $this->signatoryName($user, 'Budget Officer'), $scan, false);
+        }
 
         if ($document->owner_id) {
             $isApprove = $action === 'approve';
@@ -1296,6 +1317,7 @@ class ProcurementController extends Controller
     public function ppmpIndex(Project $project): JsonResponse
     {
         $this->guardModule('references');
+
         return response()->json([
             'data' => PpmpItem::with(['item', 'document'])
                 ->whereBelongsTo($project)
@@ -1597,6 +1619,7 @@ class ProcurementController extends Controller
     private function dateOrNull(?string $value): ?string
     {
         $value = trim((string) $value);
+
         return $value === '' ? null : $value;
     }
 
@@ -1606,6 +1629,8 @@ class ProcurementController extends Controller
 
         return [
             'id' => $document->client_uid,
+            // Scans of the wet-signed LIB.
+            'signedCopies' => $this->signedCopiesOf($document),
             'fiscalYear' => $document->fiscal_year,
             'programTitle' => $document->program_title ?? '',
             'projectTitle' => $document->project_title ?? '',
@@ -1661,6 +1686,8 @@ class ProcurementController extends Controller
 
         return [
             'id' => $document->client_uid,
+            // Scans of the wet-signed PPMP.
+            'signedCopies' => $this->signedCopiesOf($document),
             'libId' => $document->libDocument?->client_uid,
             'ppmpNo' => $document->ppmp_no ?? '',
             'status' => $document->status,
@@ -2069,7 +2096,7 @@ class ProcurementController extends Controller
      * straight from the create form — attaching its Supplementary Documents (SD): the PPMP it is
      * charged to and the LIB behind it. Returns what was attached.
      */
-    private function completeSubmission(Request $request, PurchaseRequest $purchaseRequest): \Illuminate\Support\Collection
+    private function completeSubmission(Request $request, PurchaseRequest $purchaseRequest): Collection
     {
         // A draft saved before an office/LGIA mapping existed (or before a PPMP was charged) gets
         // one more chance to resolve its recommending officer here, at the moment it actually matters.
@@ -2165,6 +2192,61 @@ class ProcurementController extends Controller
                 'snapshot' => $sd->snapshot,
             ]),
         ]);
+    }
+
+    /**
+     * Every scanned signed copy along this PR's paper trail — the PR itself, its RFQs, Abstracts of
+     * Canvass and Purchase Orders — newest first, for its Supporting Documents.
+     */
+    public function purchaseRequestSignedCopies(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->guardModule('pr');
+        abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
+
+        $purchaseRequest->loadMissing('rfqs.abstractOfCanvas', 'rfqs.purchaseOrders');
+        $documents = collect([[$purchaseRequest, 'PR '.$purchaseRequest->pr_no]]);
+        foreach ($purchaseRequest->rfqs as $rfq) {
+            $documents->push([$rfq, 'RFQ '.$rfq->rfq_no]);
+            if ($rfq->abstractOfCanvas) {
+                $documents->push([$rfq->abstractOfCanvas, 'AOC for RFQ '.$rfq->rfq_no]);
+            }
+            foreach ($rfq->purchaseOrders as $po) {
+                $documents->push([$po, trim('PO '.$po->po_no.' · '.$po->supplier_name, ' ·')]);
+            }
+        }
+
+        $copies = $documents->flatMap(fn (array $entry) => collect($this->signedCopiesOf($entry[0]))
+            ->map(fn (array $copy): array => $copy + ['document' => $entry[1]]));
+
+        return response()->json(['data' => $copies->sortByDesc('id')->values()]);
+    }
+
+    /** Download one scanned signed copy — for whoever may see the document it signs. */
+    public function signedCopyDownload(Request $request, SignedCopy $signedCopy)
+    {
+        $user = $request->user();
+        $document = $signedCopy->documentable;
+        abort_if($document === null, 404);
+
+        $pr = match (true) {
+            $document instanceof PurchaseRequest => $document,
+            $document instanceof Rfq, $document instanceof PurchaseOrder => $document->purchaseRequest,
+            $document instanceof AbstractOfCanvas => $document->rfq?->purchaseRequest,
+            default => null,
+        };
+        if ($pr !== null) {
+            abort_unless($pr->isVisibleTo($user), 404);
+        } elseif ($document instanceof PpmpDocument) {
+            $this->abortUnlessCanViewPpmp($document);
+        } elseif ($document instanceof LibDocument) {
+            $this->abortUnlessCanViewLib($user, $document);
+        } else {
+            abort(404);
+        }
+
+        abort_unless(Storage::disk('local')->exists($signedCopy->path), 404, 'The scanned file is missing from storage.');
+
+        return Storage::disk('local')->download($signedCopy->path, $signedCopy->original_name);
     }
 
     /**
@@ -2328,16 +2410,28 @@ class ProcurementController extends Controller
         return response()->json(['message' => 'Purchase Request recommended.', 'data' => $this->format($purchaseRequest->fresh())]);
     }
 
+    /**
+     * The Regional Director's approval. Signatures are wet: it goes through with the scan of the PR
+     * signed by the Recommending officer and the RD attached — uploaded by the RD, or by the Supply
+     * team for them (recorded as such on the trail).
+     */
     public function approve(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
-        $this->guardModule('approvals');
-        $this->abortUnlessDesignatedApprover($request->user());
+        $user = $request->user();
+        $isApprover = $user?->tier === 'superadmin' || ($user !== null && $this->designatedRegionalDirector()?->id === $user->id);
+        if ($isApprover) {
+            $this->guardModule('approvals');
+        }
+        $onBehalf = $this->abortUnlessSignatoryOrSupply($user, $isApprover, 'Regional Director');
         abort_unless($purchaseRequest->status === 'For Approval', 422, $purchaseRequest->status === 'For Recommendation'
             ? 'This Purchase Request has not been recommended yet. The recommending officer signs it first.'
             : "Only a recommended Purchase Request can be approved (this one is {$purchaseRequest->status}).");
-        $this->requireSignature($request->user());
+        $this->requireSignature($user);
+        $scan = $this->signedCopyFile($request);
+
         $purchaseRequest->forceFill(['status' => 'Approved', 'stage' => 'Approved'])->save();
-        $this->recordAction($request, $purchaseRequest, 'Approver', 'Approved', $request->input('remarks'));
+        $this->storeSignedCopy($request, $purchaseRequest, 'pr_approved', $this->signatoryName($this->designatedRegionalDirector(), 'Regional Director'), $scan, $onBehalf);
+        $this->recordAction($request, $purchaseRequest, 'Approver', 'Approved', $this->onBehalfNote($request, $onBehalf, 'Regional Director', $request->input('remarks')));
         $this->notify($purchaseRequest->requester, 'pr_approved', 'Purchase Request approved',
             "{$purchaseRequest->pr_no} was approved. It can now proceed to RFQ.", "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id]);
 
@@ -3243,6 +3337,8 @@ class ProcurementController extends Controller
             'purpose' => $record->purpose,
             'items' => $record->items,
             'validation' => $record->validationResults,
+            // Scans of the wet-signed PR (signatures are on paper for now).
+            'signed_copies' => $this->signedCopiesOf($record),
             // The PR's real history, oldest first, with who acted.
             'approval_trail' => $record->approvalActions->sortBy('id')->values()->map(fn ($a): array => [
                 'id' => $a->id,

@@ -5,6 +5,8 @@ import { PersonPicker } from "@/components/app/person-picker";
 import { RfqDocument, type RfqPrintData } from "@/components/app/rfq-document";
 import { RfqDocumentsEditor } from "@/components/app/rfq-documents-editor";
 import { RfqSupplierEditDialog } from "@/components/app/rfq-supplier-edit-dialog";
+import { SignedCopiesList, SignedCopyDialog } from "@/components/app/signed-copy";
+import { isSupplyTeam } from "@/lib/signed-copies";
 import { exportRfqExcel } from "@/lib/rfq-excel";
 import { formatLongDate } from "@/lib/date-format";
 import { useSignatories } from "@/lib/signatories";
@@ -138,6 +140,9 @@ function RfqDetailPage() {
   const isSuperadmin = user?.tier === "superadmin";
   const canSignAsSupply = Boolean(user?.isSupplyOfficer || isSuperadmin);
   const canSignAsBac = Boolean(user?.isBacChair || user?.isBacViceChair || isSuperadmin);
+  // Signatures are wet: the BAC step goes through with the signed RFQ's scan, which the Supply team may upload for the BAC.
+  const canRecordBacSignature = canSignAsBac || isSupplyTeam(user);
+  const [signingBac, setSigningBac] = useState(false);
   const isTwgLead = Boolean(user?.isTwgLead || isSuperadmin);
 
   const [rfq, setRfq] = useState<Rfq | null>(null);
@@ -383,13 +388,33 @@ function RfqDetailPage() {
             signedName={rfq.bacSignedName ? `${rfq.bacSignedName}${rfq.bacSignedRole ? ` (${rfq.bacSignedRole})` : ""}` : ""}
             signedAt={rfq.bacSignedAt}
             current={rfq.status === "Pending BAC Signature"}
-            canSign={canSignAsBac}
+            canSign={canRecordBacSignature}
+            signLabel="Upload signed copy"
             waitingFor="the BAC Chairman or Vice-Chairman (either one)"
             busy={busy}
-            onSign={() => run(() => apiSignRfq(rfq.id, "bac"), "Signed for the BAC.")}
+            onSign={() => setSigningBac(true)}
           />
         </div>
+        {rfq.signedCopies.length > 0 && (
+          <div className="mt-3">
+            <SignedCopiesList copies={rfq.signedCopies} />
+          </div>
+        )}
       </Card>
+      <SignedCopyDialog
+        open={signingBac}
+        onOpenChange={setSigningBac}
+        title={`Signed RFQ ${rfq.rfqNo}`}
+        description="Upload the scanned RFQ with the wet signatures of the Supply Officer and the BAC Chairman or Vice-Chairman. It is kept with the RFQ, and the RFQ becomes ready to send."
+        confirmLabel="Upload and mark signed"
+        onBehalfOf={canSignAsBac ? null : "BAC Chairman or Vice-Chairman"}
+        askSignedBy={!canSignAsBac}
+        onConfirm={async ({ file, remarks, signedBy }) => {
+          await apiSignRfq(rfq.id, "bac", remarks || undefined, { signedCopy: file, signedBy });
+          toast.success("Signed RFQ uploaded. It is ready to send.");
+          await reload();
+        }}
+      />
 
       {/* Draft details — editable until the Supply Officer counter-signs */}
       {rfq.status === "Draft" && editDoc ? (
@@ -942,6 +967,7 @@ function SignStep({
   blockedReason,
   busy,
   onSign,
+  signLabel = "Sign now",
 }: {
   label: string;
   signedName: string;
@@ -953,6 +979,7 @@ function SignStep({
   blockedReason?: string;
   busy: boolean;
   onSign: () => void;
+  signLabel?: string;
 }) {
   const done = !!signedName;
   return (
@@ -970,12 +997,12 @@ function SignStep({
       ) : current ? (
         blockedReason ? (
           <>
-            <Button size="sm" className="mt-2 h-7 gap-1 text-xs" disabled>Sign now</Button>
+            <Button size="sm" className="mt-2 h-7 gap-1 text-xs" disabled>{signLabel}</Button>
             <p className="mt-1 text-warning-foreground">{blockedReason}</p>
           </>
         ) : canSign ? (
           <Button size="sm" className="mt-2 h-7 gap-1 text-xs" disabled={busy} onClick={onSign}>
-            Sign now
+            {signLabel}
           </Button>
         ) : (
           <p className="mt-1 text-muted-foreground">Waiting for {waitingFor}.</p>

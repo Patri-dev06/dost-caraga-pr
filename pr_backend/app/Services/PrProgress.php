@@ -41,6 +41,10 @@ final class PrProgress
         $sentAt = $rfq?->suppliers->pluck('sent_at')->filter()->min();
         $recommended = $action('Recommended');
         $approved = $action('Approved');
+        // Supply may upload the signed PR for the RD: say so rather than naming Supply as the approver.
+        $approvedBy = preg_match('/^Signed copy uploaded by .+? for the Regional Director\./', (string) $approved?->remarks, $m)
+            ? rtrim($m[0], '.')
+            : $approved?->user?->name;
 
         $steps = [
             ['submitted', 'PR', 'Submitted', 'You', $pr->submitted_at !== null && ! in_array($pr->status, ['Draft', 'Returned'], true),
@@ -48,7 +52,7 @@ final class PrProgress
                     ? 'Returned — fix what the checks flagged, then submit it again.'
                     : ($pr->supportingDocuments->isNotEmpty() ? 'With '.$pr->supportingDocuments->pluck('type')->implode(' and ').' attached' : 'Complete the form and submit it.')],
             ['recommended', 'PR', 'Recommended', $pr->recommendingOfficer?->name ?? 'Recommending officer', $recommended !== null, $iso($recommended?->created_at), $recommended?->user?->name],
-            ['approved', 'PR', 'Approved by the Regional Director', 'Regional Director', $approved !== null || $pr->status === 'Approved', $iso($approved?->created_at), $approved?->user?->name],
+            ['approved', 'PR', 'Approved by the Regional Director', 'Regional Director', $approved !== null || $pr->status === 'Approved', $iso($approved?->created_at), $approvedBy],
             ['rfq_generated', 'RFQ', 'RFQ generated', 'Supply Unit', $rfq !== null, $iso($rfq?->created_at), $rfq?->rfq_no],
             ['rfq_signed', 'RFQ', 'RFQ signed (Supply Officer, BAC)', 'Supply Officer / BAC Chairman', $rfq?->bac_signed_at !== null, $iso($rfq?->bac_signed_at), $rfq?->bac_signed_name],
             ['rfq_sent', 'RFQ', 'RFQ delivered to 3 suppliers', 'Supply Unit', $sentAt !== null, $iso($sentAt), $rfq ? $active->count().' supplier(s) canvassed' : null],

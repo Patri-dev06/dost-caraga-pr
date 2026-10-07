@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 import { currentLibBudgetTotal, getLib, listLibs, fmtAmount, parseAmount, type LibDoc } from "@/lib/lib-store";
 import { getPpmp, savePpmpNow, totalPpmpBudgetForLib, returnPpmpForRevision, approvePpmpAsBudgetOfficer, revisePpmp, discardPpmpRevision, LOCKED_PPMP_STATUSES, type PpmpForLib, type PpmpItemRow, type PpmpStatus } from "@/lib/ppmp-store";
 import { useCurrentUser } from "@/lib/current-user";
+import { SignedCopiesList, SignedCopyDialog } from "@/components/app/signed-copy";
+import type { SignedCopy } from "@/lib/api";
 
 // The date the preparer acted, as "YYYY-MM-DD" (local), matching how saved dates
 // come back from the backend.
@@ -831,6 +833,9 @@ function CreatePpmpPage() {
   const [selectedLib, setSelectedLib] = useState<LibDoc | null>(null);
   const [existingPpmpTotal, setExistingPpmpTotal] = useState(0);
   const [workflowStatus, setWorkflowStatus] = useState<PpmpStatus>("Draft");
+  // Scans of the wet-signed PPMP; certifying needs one (signatures are on paper for now).
+  const [signedCopies, setSignedCopies] = useState<SignedCopy[]>([]);
+  const [certifying, setCertifying] = useState(false);
   const [revisionCount, setRevisionCount] = useState(0);
   // Revision links: the approved version this revises, the revision that replaced it, the one in progress.
   const [revisionMeta, setRevisionMeta] = useState<Pick<PpmpForLib, "revisionOfId" | "revisionReason" | "supersededById" | "supersededByRevision" | "supersededAt" | "openRevision" | "changes">>({});
@@ -879,7 +884,7 @@ function CreatePpmpPage() {
   const [reviewComment, setReviewComment] = useState("");
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [returnReasonDraft, setReturnReasonDraft] = useState("");
-  const [reviewSaving, setReviewSaving] = useState<"return" | "approve" | null>(null);
+  const [reviewSaving, setReviewSaving] = useState<"return" | null>(null);
 
   const [doc, setDoc] = useState<PpmpDoc>({
     ppmpNo: "",
@@ -923,6 +928,7 @@ function CreatePpmpPage() {
 
     if (existingPpmp) {
       setWorkflowStatus(existingPpmp.status);
+      setSignedCopies(existingPpmp.signedCopies ?? []);
       setRevisionCount(existingPpmp.revisionCount);
       setRevisionMeta({
         revisionOfId: existingPpmp.revisionOfId,
@@ -1231,27 +1237,30 @@ function CreatePpmpPage() {
     [doc.rows],
   );
 
-  async function submitReview(action: "return" | "approve") {
+  const reviewPayload = () => ({
+    reviewComment: reviewComment.trim(),
+    itemComments: Object.fromEntries(Object.entries(itemComments).map(([id, text]) => [id, text.trim()]).filter(([, text]) => text)),
+  });
+
+  /** Certifying needs the scan of the PPMP with the wet signatures; errors keep the upload dialog open. */
+  async function certifyWithSignedCopy(file: File) {
     if (!editId) return;
-    if (action === "return" && !returnReasonDraft.trim()) {
+    await approvePpmpAsBudgetOfficer(editId, reviewPayload(), file);
+    toast.success("PPMP approved. The requester has been notified and can now create a Purchase Request.");
+    navigate({ to: "/planning/ppmp" });
+  }
+
+  async function returnForRevision() {
+    if (!editId) return;
+    if (!returnReasonDraft.trim()) {
       toast.error("Please provide a reason for returning this PPMP.");
       return;
     }
 
-    const cleanedComments = Object.fromEntries(
-      Object.entries(itemComments).map(([id, text]) => [id, text.trim()]).filter(([, text]) => text),
-    );
-
-    setReviewSaving(action);
+    setReviewSaving("return");
     try {
-      const payload = { reviewComment: reviewComment.trim(), itemComments: cleanedComments };
-      if (action === "approve") {
-        await approvePpmpAsBudgetOfficer(editId, payload);
-        toast.success("PPMP approved. The requester has been notified and can now create a Purchase Request.");
-      } else {
-        await returnPpmpForRevision(editId, { ...payload, returnReason: returnReasonDraft.trim() });
-        toast.success("PPMP returned. The requester has been notified with your comments.");
-      }
+      await returnPpmpForRevision(editId, { ...reviewPayload(), returnReason: returnReasonDraft.trim() });
+      toast.success("PPMP returned. The requester has been notified with your comments.");
       setReturnDialogOpen(false);
       navigate({ to: "/planning/ppmp" });
     } catch (error) {
@@ -1475,10 +1484,10 @@ function CreatePpmpPage() {
                 <Button
                   size="sm"
                   className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-600/90"
-                  onClick={() => submitReview("approve")}
+                  onClick={() => setCertifying(true)}
                   disabled={reviewSaving !== null}
                 >
-                  {reviewSaving === "approve" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                  <ShieldCheck className="h-4 w-4" />
                   Approve &amp; Certify
                 </Button>
               </>
@@ -1621,6 +1630,16 @@ function CreatePpmpPage() {
         </div>
       )}
 
+      <SignedCopyDialog
+        open={certifying}
+        onOpenChange={setCertifying}
+        title="Approve & certify the PPMP"
+        description="Upload the scanned PPMP with the wet signatures, including your certification of fund availability. It is kept with the PPMP. Your review comment and item comments are saved with it."
+        confirmLabel="Upload and certify"
+        withRemarks={false}
+        onConfirm={({ file }) => certifyWithSignedCopy(file)}
+      />
+
       {/* Budget Officer review / feedback panel */}
       {showBudgetOfficerComments && (
         <div className="no-print border-b border-border bg-secondary/30">
@@ -1644,6 +1663,11 @@ function CreatePpmpPage() {
                   </p>
                   {approvalMeta.signature && <p className="mt-0.5 text-xs text-muted-foreground">{approvalMeta.signature}</p>}
                   {reviewComment && <p className="mt-1 text-xs text-foreground">“{reviewComment}”</p>}
+                  {signedCopies.length > 0 && (
+                    <div className="mt-2">
+                      <SignedCopiesList copies={signedCopies} />
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -2345,7 +2369,7 @@ function CreatePpmpPage() {
             </Button>
             <Button
               className="gap-1.5 bg-amber-600 text-white hover:bg-amber-600/90"
-              onClick={() => submitReview("return")}
+              onClick={returnForRevision}
               disabled={reviewSaving !== null || !returnReasonDraft.trim()}
             >
               {reviewSaving === "return" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}

@@ -8,7 +8,9 @@ import {
   apiRevisePlanningPpmp,
   apiUpsertPlanningPpmp,
   getCurrentUser,
+  toSignedCopies,
   type PpmpReviewPayload,
+  type SignedCopy,
 } from "./api";
 
 export { fmtAmount, parseAmount };
@@ -57,6 +59,8 @@ export interface PpmpRevisionChanges {
 
 export interface PpmpForLib {
   id: string;
+  /** Scans of the wet-signed PPMP (uploaded when the Budget Officer certifies it). */
+  signedCopies?: SignedCopy[];
   libId: string;
   ppmpNo: string;
   status: PpmpStatus;
@@ -131,7 +135,7 @@ export function migratePpmp(doc: Record<string, unknown>): PpmpForLib {
         : "Regular";
   const chargeableTo = typeof doc.chargeableTo === "string" ? doc.chargeableTo : "";
 
-  return { ...(doc as unknown as PpmpForLib), status: validStatus, revisionCount, ppmpClass, chargeableTo };
+  return { ...(doc as unknown as PpmpForLib), status: validStatus, revisionCount, ppmpClass, chargeableTo, signedCopies: toSignedCopies(doc.signedCopies) };
 }
 
 /**
@@ -201,8 +205,8 @@ export async function returnPpmpForRevision(id: string, payload: PpmpReviewPaylo
 }
 
 /** Budget Officer approves (certifies) a submitted PPMP. */
-export async function approvePpmpAsBudgetOfficer(id: string, payload: PpmpReviewPayload): Promise<PpmpForLib> {
-  const doc = migratePpmp((await apiApprovePlanningPpmp<PpmpForLib>(id, payload)) as unknown as Record<string, unknown>);
+export async function approvePpmpAsBudgetOfficer(id: string, payload: PpmpReviewPayload, signedCopy?: File | null): Promise<PpmpForLib> {
+  const doc = migratePpmp((await apiApprovePlanningPpmp<PpmpForLib>(id, payload, signedCopy)) as unknown as Record<string, unknown>);
   mergePpmp(doc);
   // A certified revision replaces the version it revised.
   const previous = doc.revisionOfId ? read().find((p) => p.id === doc.revisionOfId) : undefined;

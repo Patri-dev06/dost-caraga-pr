@@ -22,6 +22,8 @@ import {
 } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
 import { useCanAccess, useCurrentUser } from "@/lib/current-user";
+import { SignedCopiesList, SignedCopyDialog } from "@/components/app/signed-copy";
+import { isSupplyTeam } from "@/lib/signed-copies";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/aoc/$aocId")({
@@ -40,6 +42,9 @@ function AocDetailPage() {
   const isSupplyOfficer = Boolean(user?.isSupplyOfficer || isSuperadmin);
   const isTwgLead = Boolean(user?.isTwgLead || isSuperadmin);
   const isStaff = canAccess("rfq") || canAccess("approvals");
+  // Signatures are wet: passing the AOC needs the scan of the copy the BAC signed, which the Supply team may upload for the BAC.
+  const canUploadForBac = !isBacReviewer && isSupplyTeam(user);
+  const [passing, setPassing] = useState(false);
 
   const [aoc, setAoc] = useState<AbstractOfCanvas | null>(null);
   const [loading, setLoading] = useState(true);
@@ -432,13 +437,26 @@ function AocDetailPage() {
         </Button>
       )}
 
-      {aoc.status === "Pending BAC Review" && !isBacReviewer && (
+      {aoc.status === "Pending BAC Review" && !isBacReviewer && !canUploadForBac && (
         <WaitingCard title="Waiting for BAC review" body="Only the designated BAC Chairman or Vice-Chairman can approve or return this Abstract of Canvass. They have been notified." />
+      )}
+
+      {aoc.status === "Pending BAC Review" && canUploadForBac && (
+        <Card className="space-y-2 border border-border bg-card p-4">
+          <h2 className="text-sm font-semibold text-navy">Waiting for the BAC's signatures</h2>
+          <p className="text-sm text-muted-foreground">
+            Print the AOC for the BAC to sign. Once the BAC has signed it and passed it, upload the scan here for them. Only the BAC Chairman or Vice-Chairman can return it with remarks.
+          </p>
+          <Button className="gap-1.5" disabled={busy} onClick={() => setPassing(true)}>
+            <ThumbsUp className="h-4 w-4" /> Upload signed AOC for the BAC
+          </Button>
+        </Card>
       )}
 
       {aoc.status === "Pending BAC Review" && isBacReviewer && (
         <Card className="space-y-3 border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-navy">BAC Review (digital sign)</h2>
+          <h2 className="text-sm font-semibold text-navy">BAC Review</h2>
+          <p className="text-xs text-muted-foreground">To pass it, upload the scan of the AOC with the BAC's wet signatures.</p>
           <Textarea rows={3} placeholder="Committee remarks (required if returning)…" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="border-border" />
           <div className="flex flex-wrap gap-2">
             <Button
@@ -455,10 +473,32 @@ function AocDetailPage() {
             >
               <ThumbsDown className="h-4 w-4" /> Fail — return with remarks
             </Button>
-            <Button className="gap-1.5" disabled={busy} onClick={() => run(() => apiBacReviewAoc(aoc.id, true), "Approved and returned to Supply to confirm the item awards.")}>
+            <Button className="gap-1.5" disabled={busy} onClick={() => setPassing(true)}>
               <ThumbsUp className="h-4 w-4" /> Pass
             </Button>
           </div>
+        </Card>
+      )}
+
+      <SignedCopyDialog
+        open={passing}
+        onOpenChange={setPassing}
+        title="Pass the Abstract of Canvass"
+        description="Upload the scanned AOC with the wet signatures of the BAC. It is kept with the AOC, and the AOC goes back to Supply to confirm the item awards."
+        confirmLabel="Upload and pass"
+        onBehalfOf={canUploadForBac ? "BAC" : null}
+        withRemarks={canUploadForBac}
+        onConfirm={async ({ file, remarks: note }) => {
+          await apiBacReviewAoc(aoc.id, true, (canUploadForBac ? note : remarks.trim()) || undefined, file);
+          toast.success("Approved and returned to Supply to confirm the item awards.");
+          await reload();
+        }}
+      />
+
+      {aoc.signedCopies.length > 0 && (
+        <Card className="border border-border bg-card p-4">
+          <h2 className="mb-2 text-sm font-semibold text-navy">Signed copy</h2>
+          <SignedCopiesList copies={aoc.signedCopies} />
         </Card>
       )}
 

@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { ListPagination } from "@/components/app/list-pagination";
+import { SignedCopyDialog } from "@/components/app/signed-copy";
 import { fmtPHP, prTotal, PurchaseRequest } from "@/lib/mock-data";
 import { toast } from "sonner";
 import { apiApprovalAction, apiGetApprovalsPage, apiGetAocs, apiGetAocsPage } from "@/lib/api";
@@ -37,6 +38,8 @@ const PER_PAGE = 20;
 function Inbox() {
   const [open, setOpen] = useState<PurchaseRequest | null>(null);
   const [remarks, setRemarks] = useState("");
+  // Approving needs the scan of the PR with its wet signatures (Recommending + RD).
+  const [approving, setApproving] = useState<PurchaseRequest | null>(null);
   const queryClient = useQueryClient();
   const { user } = useCurrentUser();
   const search = Route.useSearch();
@@ -60,15 +63,16 @@ function Inbox() {
   const queue = prPageData?.items ?? [];
   const actionMutation = useMutation({
     mutationFn: ({ id, action, reason }: { id: string; action: "recommend" | "approve" | "reject" | "return"; reason?: string }) => apiApprovalAction(id, action, reason),
-    onSuccess: async (result) => {
-      toast.success(result.message);
-      setOpen(null);
-      setRemarks("");
-      await queryClient.invalidateQueries({ queryKey: ["approvals"] });
-      await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
-    },
+    onSuccess: (result) => afterAction(result.message),
     onError: (error) => toast.error(error instanceof Error ? error.message : "Unable to complete approval action."),
   });
+  async function afterAction(message: string) {
+    toast.success(message);
+    setOpen(null);
+    setRemarks("");
+    await queryClient.invalidateQueries({ queryKey: ["approvals"] });
+    await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
+  }
   // Reject and Return both require a reason — everything else sends the free-text remarks as-is.
   const runAction = (action: "recommend" | "approve" | "reject" | "return") => {
     if ((action === "reject" || action === "return") && !remarks.trim()) {
@@ -76,6 +80,11 @@ function Inbox() {
       return;
     }
     if (!open) return;
+    if (action === "approve") {
+      setApproving(open);
+      setOpen(null);
+      return;
+    }
     actionMutation.mutate({ id: open.id, action, reason: remarks.trim() || undefined });
   };
 
@@ -210,6 +219,20 @@ function Inbox() {
           )}
         </DialogContent>
       </Dialog>
+
+      <SignedCopyDialog
+        open={approving !== null}
+        onOpenChange={(v) => !v && setApproving(null)}
+        title={`Approve ${approving?.prNo ?? "Purchase Request"}`}
+        description="Upload the scanned Purchase Request with the wet signatures of the Recommending officer and the Regional Director. It is kept with the PR."
+        confirmLabel="Upload and approve"
+        withRemarks={false}
+        onConfirm={async ({ file }) => {
+          if (!approving) return;
+          const result = await apiApprovalAction(approving.id, "approve", remarks.trim() || undefined, file);
+          await afterAction(result.message);
+        }}
+      />
     </div>
   );
 }

@@ -91,6 +91,8 @@ Route::prefix('v1')->group(function (): void {
         Route::post('/purchase-requests/{purchaseRequest}/re-pr', [ProcurementController::class, 'rePurchaseRequest']);
         Route::get('/purchase-requests/{purchaseRequest}/supporting-documents', [ProcurementController::class, 'purchaseRequestSupportingDocuments']);
         Route::get('/purchase-requests/{purchaseRequest}/progress', [ProcurementController::class, 'purchaseRequestProgress']);
+        Route::get('/purchase-requests/{purchaseRequest}/signed-copies', [ProcurementController::class, 'purchaseRequestSignedCopies']);
+        Route::get('/signed-copies/{signedCopy}', [ProcurementController::class, 'signedCopyDownload']);
         // Supply's hand-kept Monitoring Sheet columns (ORS/BURS, delivery, IAR, issuance, payment).
         Route::put('/purchase-requests/{purchaseRequest}/monitoring', [ProcurementController::class, 'updateMonitoringEntry']);
 

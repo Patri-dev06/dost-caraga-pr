@@ -12,6 +12,8 @@ import {
   apiSubmitPlanningLib,
   apiUpsertPlanningLib,
   getCurrentUser,
+  toSignedCopies,
+  type SignedCopy,
 } from "./api";
 
 export type LibStatus =
@@ -58,6 +60,8 @@ export interface LibSnapshot {
 
 export interface LibDoc {
   id: string;
+  /** Scans of the wet-signed LIB (uploaded when the Regional Director approves it). */
+  signedCopies?: SignedCopy[];
   fiscalYear: string;
   programTitle: string;
   projectTitle: string;
@@ -366,7 +370,7 @@ export function migrateDoc(doc: Record<string, unknown>): LibDoc {
     status: s.status as LibStatus,
     rows: ((s.rows as Record<string, unknown>[]) ?? []).map(migrateRow),
   }));
-  return { ...(doc as unknown as LibDoc), revision, rows, history };
+  return { ...(doc as unknown as LibDoc), revision, rows, history, signedCopies: toSignedCopies(doc.signedCopies) };
 }
 
 function read(): LibDoc[] {
@@ -495,8 +499,8 @@ export async function certifyLib(id: string, comment?: string): Promise<LibDoc> 
 }
 
 /** Regional Director gives final approval on a LIB. */
-export async function approveLib(id: string, comment?: string): Promise<LibDoc> {
-  const doc = migrateDoc((await apiApprovePlanningLib<LibDoc>(id, comment)) as unknown as Record<string, unknown>);
+export async function approveLib(id: string, comment?: string, signedCopy?: File | null): Promise<LibDoc> {
+  const doc = migrateDoc((await apiApprovePlanningLib<LibDoc>(id, comment, signedCopy)) as unknown as Record<string, unknown>);
   mergeLib(doc);
   return doc;
 }

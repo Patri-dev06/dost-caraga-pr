@@ -834,10 +834,11 @@ export async function apiGetApprovals(limit?: number, perPage = 100) {
   return result.data.map(mapPurchaseRequest);
 }
 
-export async function apiApprovalAction(id: string | number, action: "recommend" | "approve" | "reject" | "return", reason?: string) {
+/** `signedCopy`: the scan of the wet-signed PR, required to approve it. */
+export async function apiApprovalAction(id: string | number, action: "recommend" | "approve" | "reject" | "return", reason?: string, signedCopy?: File | null) {
   return request<ApiRecord<BackendPurchaseRequest> & { message: string }>(`/approvals/${id}/${action}`, {
     method: "POST",
-    body: action === "reject" || action === "return" ? { reason } : { remarks: reason },
+    body: action === "reject" || action === "return" ? { reason } : withSignedCopy({ remarks: reason }, signedCopy),
   });
 }
 
@@ -930,8 +931,8 @@ export async function apiReturnPlanningPpmp<T = unknown>(id: string, payload: Pp
 }
 
 /** Budget Officer approves (certifies) a submitted PPMP. */
-export async function apiApprovePlanningPpmp<T = unknown>(id: string, payload: PpmpReviewPayload): Promise<T> {
-  const result = await request<ApiRecord<T>>(`/planning-ppmps/${encodeURIComponent(id)}/approve`, { method: "POST", body: payload });
+export async function apiApprovePlanningPpmp<T = unknown>(id: string, payload: PpmpReviewPayload, signedCopy?: File | null): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-ppmps/${encodeURIComponent(id)}/approve`, { method: "POST", body: withSignedCopy({ ...payload }, signedCopy) });
   return result.data;
 }
 
@@ -1087,8 +1088,8 @@ export async function apiCertifyPlanningLib<T = unknown>(id: string, comment?: s
   return result.data;
 }
 
-export async function apiApprovePlanningLib<T = unknown>(id: string, comment?: string): Promise<T> {
-  const result = await request<ApiRecord<T>>(`/planning-libs/${encodeURIComponent(id)}/approve`, { method: "POST", body: { comment } });
+export async function apiApprovePlanningLib<T = unknown>(id: string, comment?: string, signedCopy?: File | null): Promise<T> {
+  const result = await request<ApiRecord<T>>(`/planning-libs/${encodeURIComponent(id)}/approve`, { method: "POST", body: withSignedCopy({ comment }, signedCopy) });
   return result.data;
 }
 
@@ -1241,8 +1242,89 @@ export function expireAuthSession() {
   window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
 }
 
+/** The scan of a wet-signed document, attached at the step its signatures complete. */
+export type SignedCopy = {
+  id: string;
+  step: string;
+  label: string;
+  /** Whose signature the scan carries, e.g. "Maria Santos (Regional Director)". */
+  signedFor: string | null;
+  /** Uploaded by the Supply team for the signatory. */
+  onBehalf: boolean;
+  originalName: string;
+  uploadedBy: string | null;
+  uploadedAt: string | null;
+  /** In a PR's list: which document it signs, e.g. "RFQ 2026-10-001". */
+  document?: string;
+};
+
+export function mapSignedCopy(c: Record<string, unknown>): SignedCopy {
+  return {
+    id: String(c.id),
+    step: String(c.step ?? ""),
+    label: String(c.label ?? "Signed copy"),
+    signedFor: (c.signed_for as string | null) ?? null,
+    onBehalf: Boolean(c.on_behalf),
+    originalName: String(c.original_name ?? "signed-copy"),
+    uploadedBy: (c.uploaded_by as string | null) ?? null,
+    uploadedAt: (c.uploaded_at as string | null) ?? null,
+    document: (c.document as string | undefined) ?? undefined,
+  };
+}
+
+/** A PPMP's or LIB's `signedCopies`, from the backend or already mapped (stores keep docs locally). */
+export function toSignedCopies(raw: unknown): SignedCopy[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((c: Record<string, unknown>) => ("originalName" in c ? (c as unknown as SignedCopy) : mapSignedCopy(c)));
+}
+
+/** Every scanned signed copy along a PR's paper trail (PR, RFQs, AOCs, POs), newest first. */
+export async function apiGetPrSignedCopies(prId: string): Promise<SignedCopy[]> {
+  const result = await request<{ data: Record<string, unknown>[] }>(`/purchase-requests/${prId}/signed-copies`);
+  return result.data.map(mapSignedCopy);
+}
+
+export async function apiDownloadSignedCopy(id: string, filename: string) {
+  const token = getToken();
+  if (!token) {
+    notifyAuthExpired();
+    throw new Error("Please sign in to continue.");
+  }
+  const response = await fetch(`${API_BASE_URL}/signed-copies/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error("Could not download the signed copy.");
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "signed-copy";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * A signing step's body: plain JSON, or — with the scanned signed copy chosen — multipart with the
+ * scan as `signed_copy`. Booleans go as 1/0 and one level of nested objects as `key[sub]`.
+ */
+function withSignedCopy(fields: Record<string, unknown>, signedCopy?: File | null): FormData | Record<string, unknown> {
+  if (!signedCopy) return fields;
+  const form = new FormData();
+  const append = (key: string, value: unknown) => {
+    if (value === undefined || value === null) return;
+    form.append(key, typeof value === "boolean" ? (value ? "1" : "0") : String(value));
+  };
+  for (const [key, value] of Object.entries(fields)) {
+    if (value && typeof value === "object") {
+      for (const [sub, inner] of Object.entries(value as Record<string, unknown>)) append(`${key}[${sub}]`, inner);
+    } else {
+      append(key, value);
+    }
+  }
+  form.append("signed_copy", signedCopy);
+  return form;
+}
+
 type BackendPurchaseRequest = {
   id: number;
+  signed_copies?: Record<string, unknown>[];
   pr_no: string;
   office: string | BackendNamedRecord | null;
   fund_source: string | (BackendNamedRecord & { fund_type?: "GAA" | "Trust" | "Special" }) | null;
@@ -1458,6 +1540,7 @@ function mapPurchaseRequest(pr: BackendPurchaseRequest): PurchaseRequest {
   return {
     id: String(pr.id),
     prNo: pr.pr_no,
+    signedCopies: (pr.signed_copies ?? []).map(mapSignedCopy),
     office: textFromRelation(pr.office, "Unassigned"),
     fundSource: textFromRelation(pr.fund_source, "Unassigned"),
     fundType,
@@ -1573,6 +1656,8 @@ export interface RfqSupplier {
 }
 
 export interface Rfq {
+  /** Scans of the wet-signed document. */
+  signedCopies: SignedCopy[];
   preparedByName: string;
   preparedByPosition: string;
   id: string;
@@ -1665,6 +1750,7 @@ type BackendRfqSupplier = {
 type BackendRfq = {
   prepared_by?: { name: string; position: string } | null;
   id: number;
+  signed_copies?: Record<string, unknown>[];
   rfq_no: string;
   purchase_request_id: number;
   pr_no: string | null;
@@ -1755,6 +1841,7 @@ function mapRfqSupplier(s: BackendRfqSupplier): RfqSupplier {
 
 function mapRfq(rfq: BackendRfq): Rfq {
   return {
+    signedCopies: (rfq.signed_copies ?? []).map(mapSignedCopy),
     preparedByName: rfq.prepared_by?.name ?? "",
     preparedByPosition: rfq.prepared_by?.position ?? "",
     id: String(rfq.id),
@@ -1871,10 +1958,14 @@ export async function apiUpdateRfq(id: string | number, payload: Partial<RfqCrea
 }
 
 /** Flowchart signing order: the Supply Officer counter-signs, then the BAC Chairman OR Vice-Chairman. */
-export async function apiSignRfq(id: string | number, step: "supply-officer" | "bac", remarks?: string) {
+/**
+ * The BAC step needs the scan of the wet-signed RFQ; Supply uploading it for the BAC says who signed
+ * it on paper (`signedBy`).
+ */
+export async function apiSignRfq(id: string | number, step: "supply-officer" | "bac", remarks?: string, scan?: { signedCopy: File | null; signedBy?: "chair" | "vice" }) {
   const result = await request<ApiRecord<BackendRfq> & { message: string }>(`/rfqs/${id}/sign/${step}`, {
     method: "POST",
-    body: { remarks },
+    body: withSignedCopy({ remarks, signed_by: scan?.signedBy }, scan?.signedCopy),
   });
   return { ...result, data: mapRfq(result.data) };
 }
@@ -2078,6 +2169,8 @@ export interface VenueRating {
 }
 
 export interface AbstractOfCanvas {
+  /** Scans of the wet-signed document. */
+  signedCopies: SignedCopy[];
   preparedByName: string;
   preparedByPosition: string;
   id: string;
@@ -2168,6 +2261,7 @@ type BackendVenueRating = {
 type BackendAbstractOfCanvas = {
   prepared_by?: { name: string; position: string } | null;
   id: number;
+  signed_copies?: Record<string, unknown>[];
   rfq_id: number;
   rfq_no: string | null;
   pr_no: string | null;
@@ -2214,6 +2308,7 @@ type BackendAbstractOfCanvas = {
 
 function mapAbstractOfCanvas(aoc: BackendAbstractOfCanvas): AbstractOfCanvas {
   return {
+    signedCopies: (aoc.signed_copies ?? []).map(mapSignedCopy),
     preparedByName: aoc.prepared_by?.name ?? "",
     preparedByPosition: aoc.prepared_by?.position ?? "",
     id: String(aoc.id),
@@ -2406,10 +2501,11 @@ export async function apiSubmitAocForBacReview(aocId: string | number) {
   return { ...result, data: mapAbstractOfCanvas(result.data) };
 }
 
-export async function apiBacReviewAoc(aocId: string | number, pass: boolean, remarks?: string) {
+/** Passing needs the scan of the AOC the BAC signed on paper. */
+export async function apiBacReviewAoc(aocId: string | number, pass: boolean, remarks?: string, signedCopy?: File | null) {
   const result = await request<ApiRecord<BackendAbstractOfCanvas> & { message: string }>(`/aoc/${aocId}/bac-review`, {
     method: "POST",
-    body: { pass, remarks },
+    body: withSignedCopy({ pass, remarks }, signedCopy),
   });
   return { ...result, data: mapAbstractOfCanvas(result.data) };
 }
@@ -2460,6 +2556,8 @@ export interface PurchaseOrderItem {
 }
 
 export interface PurchaseOrder {
+  /** Scans of the wet-signed document. */
+  signedCopies: SignedCopy[];
   preparedByName: string;
   preparedByPosition: string;
   id: string;
@@ -2515,6 +2613,7 @@ type BackendPurchaseOrderItem = {
 type BackendPurchaseOrder = {
   prepared_by?: { name: string; position: string } | null;
   id: number;
+  signed_copies?: Record<string, unknown>[];
   po_no: string;
   purchase_request_id: number;
   pr_no: string | null;
@@ -2567,6 +2666,7 @@ function mapPurchaseOrderItem(item: BackendPurchaseOrderItem): PurchaseOrderItem
 
 function mapPurchaseOrder(po: BackendPurchaseOrder): PurchaseOrder {
   return {
+    signedCopies: (po.signed_copies ?? []).map(mapSignedCopy),
     preparedByName: po.prepared_by?.name ?? "",
     preparedByPosition: po.prepared_by?.position ?? "",
     id: String(po.id),
@@ -2676,8 +2776,11 @@ export async function apiAccountPo(id: string | number, remarks?: string) {
 }
 
 /** RD final approval; the fully signed PO is then released to the Supply team to bring to the supplier. */
-export async function apiFinalApprovePo(id: string | number, remarks?: string) {
-  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/final-approve`, { method: "POST", body: { remarks } });
+export async function apiFinalApprovePo(id: string | number, remarks?: string, signedCopy?: File | null) {
+  const result = await request<ApiRecord<BackendPurchaseOrder> & { message: string }>(`/approvals/po/${id}/final-approve`, {
+    method: "POST",
+    body: withSignedCopy({ remarks }, signedCopy),
+  });
   return { message: result.message, data: mapPurchaseOrder(result.data) };
 }
 

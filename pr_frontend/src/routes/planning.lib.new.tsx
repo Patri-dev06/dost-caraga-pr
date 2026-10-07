@@ -38,6 +38,7 @@ import {
 } from "@/lib/lib-store";
 import { exportLibExcel } from "@/lib/lib-excel";
 import { useCurrentUser } from "@/lib/current-user";
+import { SignedCopiesList, SignedCopyDialog } from "@/components/app/signed-copy";
 
 export const Route = createFileRoute("/planning/lib/new")({
   validateSearch: (search: Record<string, unknown>): { edit?: string } => ({
@@ -384,6 +385,8 @@ function LibForm() {
   const [mode, setMode] = useState<"edit" | "revise" | "preview">("edit");
   const [doc, setDoc] = useState<LibDoc>(() => newLibDoc());
   const [action, setAction] = useState<LibStatus | "draft" | "revision" | null>(null);
+  // The RD approves with the scan of the wet-signed LIB (signatures are on paper for now).
+  const [approving, setApproving] = useState(false);
   const [reviseRound, setReviseRound] = useState<number | null>(null); // 0-based index of the reprogramming round being edited
   const [missingIds, setMissingIds] = useState<Set<string>>(new Set()); // rows flagged for a missing justification
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({}); // to scroll to a flagged row
@@ -766,7 +769,7 @@ function LibForm() {
                   </Button>
                 )}
                 {canApprove && (
-                  <Button size="sm" className="gap-1.5" onClick={() => runWorkflow("Approved", () => approveLib(doc.id), "Line Item Budget approved.", true)} disabled={action !== null || noSignature} title={signatureHint}>
+                  <Button size="sm" className="gap-1.5" onClick={() => setApproving(true)} disabled={action !== null || noSignature} title={signatureHint}>
                     <Send className="h-4 w-4" /> Approve
                   </Button>
                 )}
@@ -807,6 +810,25 @@ function LibForm() {
           Status: <span className="font-semibold text-foreground">{doc.status}</span>
         </div>
       )}
+
+      {(doc.signedCopies ?? []).length > 0 && (
+        <div className="no-print mx-auto mt-3 w-[820px] max-w-full">
+          <SignedCopiesList copies={doc.signedCopies ?? []} />
+        </div>
+      )}
+
+      <SignedCopyDialog
+        open={approving}
+        onOpenChange={setApproving}
+        title="Approve the Line-Item Budget"
+        description="Upload the scanned LIB with the wet signatures: Recommending Approval, the Budget Officer's certification and yours. It is kept with the LIB."
+        confirmLabel="Upload and approve"
+        onConfirm={async ({ file, remarks }) => {
+          const updated = await approveLib(doc.id, remarks || undefined, file);
+          setDoc(updated);
+          toast.success("Line Item Budget approved.");
+        }}
+      />
 
       {/* Document */}
       <div className="w-full overflow-x-auto px-3 py-6 sm:px-6 print:overflow-visible print:p-0">

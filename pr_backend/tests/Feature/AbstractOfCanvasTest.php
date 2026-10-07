@@ -213,12 +213,13 @@ class AbstractOfCanvasTest extends TestCase
         $aocId = $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/aoc")->assertCreated()->json('data.id');
         $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/submit-for-bac-review")->assertOk();
 
-        // Admin holds the approvals module and a signature but is not a BAC signatory.
-        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])->assertStatus(403);
+        // Admin (the Supply team) is not a BAC signatory: it may not return the AOC with remarks. (It may
+        // pass it for the BAC with the signed copy attached — see SignedCopyTest.)
+        $this->withToken($token)->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => false, 'remarks' => 'x'])->assertStatus(403);
 
         // A BAC *member* (not the Chair/Vice-Chair) is refused too.
         $memberToken = $this->postJson('/api/v1/auth/login', ['email' => 'lreyes.bac@dost.gov.ph', 'password' => 'password123'])->json('token');
-        $this->withToken($memberToken)->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => true])->assertStatus(403);
+        $this->withToken($memberToken)->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => false, 'remarks' => 'x'])->assertStatus(403);
 
         // The Vice-Chair may return it; only a BAC signatory may then decide whether the BAC is satisfied.
         $this->asBac('vice-chair')->postJson("/api/v1/aoc/{$aocId}/bac-review", ['pass' => false, 'remarks' => 'Re-check quotes.'])->assertOk();

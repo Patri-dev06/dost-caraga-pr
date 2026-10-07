@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate, useParams } from "@tanstack/react-router";
-import { ArrowLeft, Ban, FileSpreadsheet, Loader2, Pencil, Printer, RotateCcw } from "lucide-react";
+import { ArrowLeft, Ban, FileSignature, FileSpreadsheet, Loader2, Pencil, Printer, RotateCcw } from "lucide-react";
+import { useState } from "react";
 import { exportPurchaseRequestExcel, PR_FORM_DEFAULTS } from "@/lib/pr-excel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,8 +12,11 @@ import { AuditTimeline } from "@/components/app/audit-timeline";
 import { ValidationResultPanel } from "@/components/app/validation-result-panel";
 import { PrSupportingDocuments } from "@/components/app/pr-supporting-documents";
 import { PrProgressCard } from "@/components/app/pr-progress-card";
+import { PrSignedCopies, SignedCopyDialog } from "@/components/app/signed-copy";
+import { isSupplyTeam } from "@/lib/signed-copies";
+import { useCurrentUser } from "@/lib/current-user";
 import { fmtPHP, prTotal } from "@/lib/mock-data";
-import { apiGetPurchaseRequest, apiRePurchaseRequest, apiValidatePurchaseRequest } from "@/lib/api";
+import { apiApprovalAction, apiGetPurchaseRequest, apiRePurchaseRequest, apiValidatePurchaseRequest } from "@/lib/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -30,6 +34,8 @@ function PRDetail() {
   const { prId } = useParams({ from: "/purchase-requests/$prId" });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { user } = useCurrentUser();
+  const [approving, setApproving] = useState(false);
   // Without an id: re-files the whole cancelled PR. With a waived PO's id: only that supplier's items.
   const rePr = useMutation({
     mutationFn: (purchaseOrderId?: string) => apiRePurchaseRequest(prId, purchaseOrderId),
@@ -83,8 +89,31 @@ function PRDetail() {
     );
   }
 
+  // The RD approves with the scan of the wet-signed PR; the Supply team may upload it for the RD.
+  const isApprover = user?.tier === "superadmin" || Boolean(user?.isRegionalDirector);
+  const canRecordApproval = pr.status === "For Approval" && (isApprover || isSupplyTeam(user));
+
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+      <SignedCopyDialog
+        open={approving}
+        onOpenChange={setApproving}
+        title={`Approve ${pr.prNo}`}
+        description="Upload the scanned Purchase Request with the wet signatures of the Recommending officer and the Regional Director. It is kept with the PR."
+        confirmLabel="Upload and approve"
+        onBehalfOf={isApprover ? null : "Regional Director"}
+        onConfirm={async ({ file, remarks }) => {
+          const result = await apiApprovalAction(pr.id, "approve", remarks || undefined, file);
+          toast.success(result.message);
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["purchase-request", prId] }),
+            queryClient.invalidateQueries({ queryKey: ["pr-progress", prId] }),
+            queryClient.invalidateQueries({ queryKey: ["pr-signed-copies", prId] }),
+            queryClient.invalidateQueries({ queryKey: ["approvals"] }),
+            queryClient.invalidateQueries({ queryKey: ["purchase-requests"] }),
+          ]);
+        }}
+      />
       <Button asChild variant="ghost" size="sm" className="gap-1 -ml-2 text-muted-foreground hover:text-navy">
         <Link to="/purchase-requests"><ArrowLeft className="h-4 w-4" /> Back to Purchase Requests</Link>
       </Button>
@@ -96,6 +125,11 @@ function PRDetail() {
         actions={
           <>
             <StatusBadge status={pr.status} />
+            {canRecordApproval && (
+              <Button className="gap-2" onClick={() => setApproving(true)}>
+                <FileSignature className="h-4 w-4" /> {isApprover ? "Approve with signed copy" : "Upload signed PR for the RD"}
+              </Button>
+            )}
             {(pr.status === "Draft" || pr.status === "Returned") && (
               <Button asChild className="gap-2">
                 <Link to="/purchase-requests/new" search={{ edit: pr.id }}>
@@ -271,7 +305,10 @@ function PRDetail() {
         </TabsContent>
 
         <TabsContent value="attachments" className="mt-4">
-          <PrSupportingDocuments prId={pr.id} submitted={pr.status !== "Draft"} />
+          <div className="space-y-4">
+            <PrSignedCopies prId={pr.id} />
+            <PrSupportingDocuments prId={pr.id} submitted={pr.status !== "Draft"} />
+          </div>
         </TabsContent>
       </Tabs>
     </div>

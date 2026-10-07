@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\HandlesSignedCopies;
 use App\Http\Controllers\Concerns\HasProcurementHelpers;
 use App\Http\Controllers\Concerns\ManagesCanvass;
 use App\Http\Controllers\Controller;
@@ -10,15 +11,17 @@ use App\Models\Rfq;
 use App\Models\RfqQuoteItem;
 use App\Models\RfqSupplier;
 use App\Models\Supplier;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RfqController extends Controller
 {
+    use HandlesSignedCopies;
     use HasProcurementHelpers;
     use ManagesCanvass;
 
@@ -253,6 +256,11 @@ class RfqController extends Controller
     }
 
     /** One signature from either the BAC Chairman or the BAC Vice-Chairman completes this step. */
+    /**
+     * The BAC signature, the RFQ's last. Signatures are wet: it goes through with the scan of the
+     * signed RFQ attached — uploaded by the BAC Chairman/Vice-Chairman, or by the Supply team for
+     * whichever of them signed it on paper (`signed_by`: chair or vice).
+     */
     public function signAsBac(Request $request, Rfq $rfq): JsonResponse
     {
         $this->guardModule('rfq');
@@ -265,18 +273,30 @@ class RfqController extends Controller
             $user?->tier === 'superadmin' => 'BAC (Superadmin)',
             default => null,
         };
-        abort_if($role === null, 403, 'Only the designated BAC Chairman or Vice-Chairman may sign this RFQ.');
+        $onBehalf = $this->abortUnlessSignatoryOrSupply($user, $role !== null, 'BAC Chairman or Vice-Chairman');
+        $signer = $user;
+        if ($onBehalf) {
+            $which = $request->validate(['signed_by' => ['required', Rule::in(['chair', 'vice'])]], [
+                'signed_by.required' => 'Choose who signed the RFQ on paper: the BAC Chairman or the Vice-Chairman.',
+            ])['signed_by'];
+            [$signer, $role] = $which === 'vice'
+                ? [$this->designatedBacViceChair(), 'BAC Vice-Chairman']
+                : [$this->designatedBacChair(), 'BAC Chairman'];
+            abort_if($signer === null, 422, "No {$role} is designated in Settings yet.");
+        }
         $this->requireSignature($user);
+        $scan = $this->signedCopyFile($request);
 
         $rfq->forceFill([
             'status' => 'Ready to Send',
             'stage' => 'Ready to Send',
-            'bac_signed_by' => $user->id,
-            'bac_signed_name' => $user->name,
+            'bac_signed_by' => $signer->id,
+            'bac_signed_name' => $signer->name,
             'bac_signed_role' => $role,
             'bac_signed_at' => now(),
         ])->save();
-        $this->recordAction($request, $rfq, $role, 'Signed', $request->input('remarks'));
+        $this->storeSignedCopy($request, $rfq, 'rfq_signed', $this->signatoryName($signer, $role), $scan, $onBehalf);
+        $this->recordAction($request, $rfq, $role, 'Signed', $this->onBehalfNote($request, $onBehalf, $role, $request->input('remarks')));
 
         foreach ($this->canvassWatchers($rfq) as $watcher) {
             $this->notify($watcher, 'rfq_ready', 'RFQ ready to send',
@@ -638,7 +658,7 @@ class RfqController extends Controller
         ];
     }
 
-    /** @return array<int, \App\Models\User> */
+    /** @return array<int, User> */
     private function bacSignatories(): array
     {
         return collect([$this->designatedBacChair(), $this->designatedBacViceChair()])->filter()->unique('id')->values()->all();
@@ -737,6 +757,7 @@ class RfqController extends Controller
             'abstract_of_canvas_id' => $rfq->abstractOfCanvas?->id,
             'abstract_of_canvas_status' => $rfq->abstractOfCanvas?->status,
             'has_purchase_order' => $rfq->purchaseOrders()->exists(),
+            'signed_copies' => $this->signedCopiesOf($rfq),
             'approval_trail' => $rfq->approvalActions,
             'created_at' => $rfq->created_at?->toISOString(),
         ];

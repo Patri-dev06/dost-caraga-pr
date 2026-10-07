@@ -1,3 +1,5 @@
+import type { SignedCopy } from "./api";
+
 export type PRStatus =
   | "Draft"
   | "Pending Validation"
@@ -72,6 +74,8 @@ export interface PurchaseRequest {
   waivedOrders?: WaivedOrder[];
   /** The PR's real history (submitted, recommended, approved…), oldest first. */
   approvalTrail?: PrTrailEntry[];
+  /** Scans of the wet-signed PR. */
+  signedCopies?: SignedCopy[];
   /** The checks as last run on this PR (saved with it), per item where they apply. */
   savedValidation?: (ValidationCheck & { itemId?: string })[];
 }

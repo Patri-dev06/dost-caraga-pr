@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Concerns\CancelsPurchaseRequests;
+use App\Http\Controllers\Concerns\HandlesSignedCopies;
 use App\Http\Controllers\Concerns\HasProcurementHelpers;
 use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
@@ -21,6 +22,7 @@ use Illuminate\Support\Facades\DB;
 class PurchaseOrderController extends Controller
 {
     use CancelsPurchaseRequests;
+    use HandlesSignedCopies;
     use HasProcurementHelpers;
 
     public function index(Request $request): JsonResponse
@@ -158,34 +160,49 @@ class PurchaseOrderController extends Controller
         return $this->advancePo($request, $purchaseOrder, 'final_approve');
     }
 
+    /**
+     * The Budget, Accounting and RD signatures, in that order. The RD's is the last: signatures are
+     * wet, so it goes through with the scan of the fully signed PO attached — uploaded by the RD, or
+     * by the Supply team for the RD.
+     */
     private function advancePo(Request $request, PurchaseOrder $po, string $step): JsonResponse
     {
-        $this->guardModule('approvals');
-
         $steps = [
             'obligate' => ['from' => 'Pending Budget Obligation', 'to' => 'Pending Accounting', 'designated' => fn () => $this->designatedBudgetOfficer(), 'label' => 'Budget Officer', 'column' => 'budget_officer'],
             'account' => ['from' => 'Pending Accounting', 'to' => 'Pending RD Approval', 'designated' => fn () => $this->designatedAccountingOfficer(), 'label' => 'Accounting Officer', 'column' => 'accounting_officer'],
             'final_approve' => ['from' => 'Pending RD Approval', 'to' => 'Approved', 'designated' => fn () => $this->designatedRegionalDirector(), 'label' => 'Regional Director', 'column' => 'approved_by'],
         ][$step];
 
-        abort_unless($po->status === $steps['from'], 422, "This Purchase Order is not awaiting the {$steps['label']} action.");
-
         $user = $request->user();
         $designated = $steps['designated']();
         $ok = $user?->tier === 'superadmin' || ($designated !== null && $designated->id === $user?->id);
-        abort_unless($ok, 403, "You are not the designated {$steps['label']}.");
+        $isFinal = $step === 'final_approve';
+        $onBehalf = false;
+        if ($ok || ! $isFinal) {
+            $this->guardModule('approvals');
+            abort_unless($ok, 403, "You are not the designated {$steps['label']}.");
+        } else {
+            $onBehalf = $this->abortUnlessSignatoryOrSupply($user, false, $steps['label']);
+            abort_if($designated === null, 422, "No {$steps['label']} is designated in Settings yet.");
+        }
+        abort_unless($po->status === $steps['from'], 422, "This Purchase Order is not awaiting the {$steps['label']} action.");
         $this->requireSignature($user);
+        $scan = $isFinal ? $this->signedCopyFile($request) : null;
 
+        $signer = $onBehalf ? $designated : $user;
         $column = $steps['column'];
         $po->forceFill([
             'status' => $steps['to'],
             'stage' => $steps['to'],
-            "{$column}_id" => $user->id,
-            "{$column}_name" => $user->name,
+            "{$column}_id" => $signer->id,
+            "{$column}_name" => $signer->name,
             "{$column}_signed_at" => now(),
         ])->save();
 
-        $this->recordAction($request, $po, $steps['label'], 'Signed', $request->input('remarks'));
+        if ($isFinal) {
+            $this->storeSignedCopy($request, $po, 'po_approved', $this->signatoryName($designated, $steps['label']), $scan, $onBehalf);
+        }
+        $this->recordAction($request, $po, $steps['label'], 'Signed', $this->onBehalfNote($request, $onBehalf, $steps['label'], $request->input('remarks')));
 
         $nextDesignated = match ($steps['to']) {
             'Pending Accounting' => $this->designatedAccountingOfficer(),
@@ -386,9 +403,9 @@ class PurchaseOrderController extends Controller
             'stage' => $po->stage,
             'date_submitted' => $po->submitted_at?->toDateString(),
             'items' => $po->items,
+            'signed_copies' => $this->signedCopiesOf($po),
             'approval_trail' => $po->approvalActions,
             'created_at' => $po->created_at?->toISOString(),
         ];
     }
-
 }
