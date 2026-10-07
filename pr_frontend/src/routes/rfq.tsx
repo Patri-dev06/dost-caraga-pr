@@ -7,6 +7,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { ListPagination } from "@/components/app/list-pagination";
 import { apiGetPurchaseRequestsPage, apiGetRfqsPage } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
+import { rfqDisplayStatus } from "@/lib/rfq-format";
 import type { PurchaseRequest } from "@/lib/mock-data";
 import { useQuery } from "@tanstack/react-query";
 
@@ -83,11 +84,11 @@ function RfqListPage() {
                         {rfq.rfqNo}
                       </Link>
                       <p className="text-xs text-muted-foreground">
-                        PR: {rfq.prNo} · {rfq.items.length} items · ₱{fmtAmount(rfq.estimatedBudget)} · {rfq.stage}
+                        PR: {rfq.prNo} · {rfq.items.length} items · ₱{fmtAmount(rfq.estimatedBudget)} · {rfqDisplayStatus(rfq).stage}
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-1.5">
-                      <StatusBadge status={rfq.status} />
+                      <StatusBadge status={rfqDisplayStatus(rfq).status} />
                       {rfq.abstractOfCanvasStatus && rfq.abstractOfCanvasStatus !== rfq.status && (
                         <Link to="/aoc/$aocId" params={{ aocId: rfq.abstractOfCanvasId ?? "" }} title="Abstract of Canvass status">
                           <StatusBadge status={rfq.abstractOfCanvasStatus} />

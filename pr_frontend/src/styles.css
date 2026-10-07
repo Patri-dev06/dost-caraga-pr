@@ -198,6 +198,8 @@
 
   /* Non-printable UI: toolbars, action buttons, editing guides, etc. */
   .no-print { display: none !important; }
+  /* Pop-up notifications ("RFQ details updated", …) never belong on paper. */
+  [data-sonner-toaster] { display: none !important; }
 
   /* The printable document flows from the top and breaks cleanly across pages. */
   .pr-print-root {

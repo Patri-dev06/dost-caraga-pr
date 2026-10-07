@@ -49,3 +49,16 @@ export function quotationNoFromPrNo(prNo: string): string {
   const m = /^(?:PR-)?(\d{4})-(?:\d{2}-)?(\d+)$/.exec(prNo.trim());
   return m ? `${Number(m[2])}-${m[1]}` : prNo;
 }
+
+/**
+ * The RFQ's status as people should read it. The server keeps a canvass-ready RFQ in "Draft" until
+ * the wet-signed copy is uploaded; once its 3 suppliers are chosen it is really waiting to be
+ * printed and signed, so it shows as "For Signing".
+ */
+export function rfqDisplayStatus(rfq: { status: string; stage?: string; suppliers: { status: string }[] }): { status: string; stage: string } {
+  if (rfq.status !== "Draft") return { status: rfq.status, stage: rfq.stage || rfq.status };
+  const chosen = rfq.suppliers.filter((s) => s.status === "Pending").length;
+  return chosen >= 3
+    ? { status: "For Signing", stage: "Print, sign on paper, upload the scan" }
+    : { status: "Draft", stage: `Choosing suppliers (${chosen}/3)` };
+}

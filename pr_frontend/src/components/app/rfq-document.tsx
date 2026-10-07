@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import { formatLongDate } from "@/lib/date-format";
 import { fmtAmount } from "@/lib/lib-store";
-import { RFQ_FORM_CODE, RFQ_MIN_TABLE_ROWS, rfqDocumentLines, rfqDocumentsLead, splitRfqDescription } from "@/lib/rfq-format";
+import { RFQ_FORM_CODE, rfqDocumentLines, rfqDocumentsLead, splitRfqDescription } from "@/lib/rfq-format";
 import { cn } from "@/lib/utils";
 
 export type RfqPrintItem = { itemNo: number; qty: number | string; unit: string; description: string; unitAbc: number; totalAbc: number };
@@ -25,6 +25,10 @@ export type RfqPrintData = {
 };
 
 const SERIF = '"Cambria", "Times New Roman", Times, serif';
+/** Printed slightly smaller so the form stays on one sheet even where the browser adds its own header/footer space. */
+const PRINT_ZOOM = 0.9;
+/** Blank ruled rows under the items on paper (the Excel export keeps the full RFQ_MIN_TABLE_ROWS). */
+const PRINT_MIN_TABLE_ROWS = 6;
 const cell = "border border-black px-1.5 py-0.5 align-top";
 const money = (n: number) => (n ? fmtAmount(n) : "");
 
@@ -38,13 +42,16 @@ export function RfqDocument({ data, className }: { data: RfqPrintData; className
   const documentLines = rfqDocumentLines(data.requiredDocuments);
   const opening = formatLongDate(data.openingDate);
   const itemRows = data.items.reduce((n, it) => n + 1 + splitRfqDescription(it.description).specs.length, 0);
-  const fillerRows = Math.max(0, RFQ_MIN_TABLE_ROWS - itemRows);
+  const fillerRows = Math.max(0, PRINT_MIN_TABLE_ROWS - itemRows);
   const notes = data.notes.split("\n").map((l) => l.trim()).filter(Boolean);
 
   return (
     <div className={cn("rfq-document bg-white text-[11px] leading-snug text-black", className)} style={{ fontFamily: SERIF }}>
-      {/* "Page X of Y" in the printed page's footer (Chrome/Edge). */}
-      <style>{`@media print { @page { size: A4 portrait; margin: 12mm 12mm 14mm; @bottom-center { content: "Page " counter(page) " of " counter(pages); font: 9px ${SERIF}; } } }`}</style>
+      {/* No page margin: the form keeps a thin 8mm gap of its own instead, on whatever paper is chosen.
+          A browser page margin adds its own space at the top (and room for the browser's
+          title/date/URL lines); with none, the form starts near the top of the sheet. Padding repeats
+          on every printed page where the browser supports it. */}
+      <style>{`@media print { @page { margin: 0; } .rfq-document { zoom: ${PRINT_ZOOM}; padding: 8mm 12mm; box-decoration-break: clone; -webkit-box-decoration-break: clone; } }`}</style>
 
       <p className="text-right text-[7px] uppercase tracking-wide">{RFQ_FORM_CODE}</p>
 

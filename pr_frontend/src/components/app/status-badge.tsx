@@ -22,6 +22,7 @@ const styles: Record<string, string> = {
   "BAC Returned": "bg-warning/15 text-warning-foreground border-warning/40",
   "Cancelled": "bg-destructive/10 text-destructive border-destructive/30",
   // RFQ canvass
+  "For Signing": "bg-secondary text-navy border-soft-blue",
   "Pending Supply Officer Countersign": "bg-secondary text-navy border-soft-blue",
   "Pending BAC Signature": "bg-secondary text-navy border-soft-blue",
   "Ready to Send": "bg-primary/10 text-primary border-primary/30",

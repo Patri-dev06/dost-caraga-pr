@@ -8,6 +8,7 @@ import { RfqSupplierEditDialog } from "@/components/app/rfq-supplier-edit-dialog
 import { SignedCopiesList, SignedCopyDialog } from "@/components/app/signed-copy";
 import { isSupplyTeam } from "@/lib/signed-copies";
 import { exportRfqExcel } from "@/lib/rfq-excel";
+import { rfqDisplayStatus } from "@/lib/rfq-format";
 import { formatLongDate } from "@/lib/date-format";
 import { useSignatories } from "@/lib/signatories";
 import { useEffect, useState } from "react";
@@ -323,7 +324,7 @@ function RfqDetailPage() {
         subtitle={`Request for Quotation${rfq.preparedByName ? ` · Prepared by ${rfq.preparedByName}${rfq.preparedByPosition ? `, ${rfq.preparedByPosition}` : ""}` : ""}`}
         actions={
           <>
-            <StatusBadge status={rfq.status} />
+            <StatusBadge status={rfqDisplayStatus(rfq).status} />
             {/* The official RFQ form, as saved — what Supply prints and brings to each supplier. */}
             <Button variant="outline" size="sm" className="gap-1.5 border-border" onClick={() => window.print()}>
               <Printer className="h-4 w-4" /> Print RFQ
@@ -346,7 +347,7 @@ function RfqDetailPage() {
         </div>
         <div>
           <p className="label-eyebrow">Stage</p>
-          <p className="mt-0.5 text-sm font-semibold text-navy">{rfq.stage}</p>
+          <p className="mt-0.5 text-sm font-semibold text-navy">{rfqDisplayStatus(rfq).stage}</p>
         </div>
         <div>
           <p className="label-eyebrow">Export</p>
