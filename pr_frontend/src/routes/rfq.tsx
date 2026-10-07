@@ -1,4 +1,5 @@
-import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { rowClick } from "@/lib/row-click";
 import { useState } from "react";
 import { FilePlus2, FileText, AlertTriangle, FileCheck2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ export const Route = createFileRoute("/rfq")({
 
 function RfqListPage() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const navigate = useNavigate();
   const [prPage, setPrPage] = useState(1);
   const [rfqPage, setRfqPage] = useState(1);
 
@@ -77,7 +79,11 @@ function RfqListPage() {
               <h2 className="text-sm font-semibold text-navy">Generated RFQs</h2>
               <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
                 {rfqs.map((rfq) => (
-                  <div key={rfq.id} className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40">
+                  <div
+                    key={rfq.id}
+                    onClick={rowClick(() => navigate({ to: "/rfq/$rfqId", params: { rfqId: rfq.id } }), `/rfq/${rfq.id}`)}
+                    className="flex cursor-pointer items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40"
+                  >
                     <FileCheck2 className="h-4 w-4 shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
                       <Link to="/rfq/$rfqId" params={{ rfqId: rfq.id }} className="text-sm font-medium text-navy hover:underline">
@@ -133,8 +139,12 @@ function RfqListPage() {
 }
 
 function ApprovedPrCard({ pr, openRfq }: { pr: PurchaseRequest; openRfq?: Rfq }) {
+  const navigate = useNavigate();
   return (
-    <div className="flex flex-wrap items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40">
+    <div
+      onClick={rowClick(() => navigate({ to: "/purchase-requests/$prId", params: { prId: pr.id } }), `/purchase-requests/${pr.id}`)}
+      className="flex cursor-pointer flex-wrap items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40"
+    >
       <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-navy">{pr.prNo}</p>

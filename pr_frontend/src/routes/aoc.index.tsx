@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { rowClick } from "@/lib/row-click";
 import { useState } from "react";
 import { FileSpreadsheet, Scale } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
@@ -21,6 +22,7 @@ export const Route = createFileRoute("/aoc/")({
 });
 
 function AocListPage() {
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const { data, isLoading, error } = useQuery({
     queryKey: ["aocs", "list", page],
@@ -60,7 +62,11 @@ function AocListPage() {
         <div className="space-y-3">
           <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
             {aocs.map((aoc) => (
-              <div key={aoc.id} className="flex flex-wrap items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40">
+              <div
+                key={aoc.id}
+                onClick={rowClick(() => navigate({ to: "/aoc/$aocId", params: { aocId: aoc.id } }), `/aoc/${aoc.id}`)}
+                className="flex cursor-pointer flex-wrap items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40"
+              >
                 <FileSpreadsheet className="h-4 w-4 shrink-0 text-primary" />
                 <div className="min-w-0 flex-1">
                   <Link to="/aoc/$aocId" params={{ aocId: aoc.id }} className="text-sm font-medium text-navy hover:underline">

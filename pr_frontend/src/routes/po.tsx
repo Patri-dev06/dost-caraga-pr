@@ -1,4 +1,5 @@
-import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { rowClick } from "@/lib/row-click";
 import { useState } from "react";
 import { AlertTriangle, FileCheck2, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ function PurchaseOrderListPage() {
   // /po/$poId is a child of this route: the list only renders at /po itself (same as /rfq).
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isList = pathname === "/po";
+  const navigate = useNavigate();
   const [poPage, setPoPage] = useState(1);
 
   const { data: poPageData, isLoading: loadingPos, error: posError } = useQuery({
@@ -67,7 +69,11 @@ function PurchaseOrderListPage() {
               <h2 className="text-sm font-semibold text-navy">Purchase Orders Awaiting Action</h2>
               <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
                 {pendingPos.map((po) => (
-                  <div key={po.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  <div
+                    key={po.id}
+                    onClick={rowClick(() => navigate({ to: "/po/$poId", params: { poId: po.id } }), `/po/${po.id}`)}
+                    className="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-3 transition-colors hover:bg-secondary/40"
+                  >
                     <div className="min-w-0 flex-1">
                       <Link to="/po/$poId" params={{ poId: po.id }} className="text-sm font-medium text-navy hover:underline">
                         {po.poNo}
@@ -91,7 +97,11 @@ function PurchaseOrderListPage() {
               <h2 className="text-sm font-semibold text-navy">Purchase Orders</h2>
               <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
                 {purchaseOrders.map((po) => (
-                  <div key={po.id} className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40">
+                  <div
+                    key={po.id}
+                    onClick={rowClick(() => navigate({ to: "/po/$poId", params: { poId: po.id } }), `/po/${po.id}`)}
+                    className="flex cursor-pointer items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40"
+                  >
                     <FileCheck2 className="h-4 w-4 shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
                       <Link to="/po/$poId" params={{ poId: po.id }} className="text-sm font-medium text-navy hover:underline">

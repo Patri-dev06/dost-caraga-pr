@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { rowClick } from "@/lib/row-click";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Ban, Eye, FilePlus2, Inbox, Pencil } from "lucide-react";
@@ -96,9 +97,13 @@ function SubmissionCard({ pr }: { pr: MySubmission }) {
   const { done, total, next, stopped } = pr.progress;
   const editable = pr.status === "Draft" || pr.status === "Returned";
   const date = pr.submittedAt ?? pr.createdAt;
+  const navigate = useNavigate();
 
   return (
-    <Card className="border border-border p-4 shadow-card">
+    <Card
+      onClick={rowClick(() => navigate({ to: "/purchase-requests/$prId", params: { prId: pr.id } }), `/purchase-requests/${pr.id}`)}
+      className="cursor-pointer border border-border p-4 shadow-card transition-colors hover:bg-secondary/40"
+    >
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

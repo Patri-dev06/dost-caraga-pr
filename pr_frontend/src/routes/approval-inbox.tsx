@@ -1,4 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { rowClick } from "@/lib/row-click";
 import { useState } from "react";
 import { Filter, Eye, Gavel } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -147,7 +148,7 @@ function Inbox() {
               <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">{error instanceof Error ? error.message : "Unable to load approval inbox."}</TableCell></TableRow>
             )}
             {queue.map((pr) => (
-              <TableRow key={pr.id}>
+              <TableRow key={pr.id} className="cursor-pointer" onClick={rowClick(() => { setOpen(pr); setRemarks(""); })}>
                 <TableCell className="font-semibold text-navy">{pr.prNo}</TableCell>
                 <TableCell>{pr.office}</TableCell>
                 <TableCell>{pr.fundType}</TableCell>
@@ -246,6 +247,7 @@ const BAC_FILTERS: { key: string; label: string; statuses: string[] }[] = [
 ];
 
 function BacReviewQueue({ canReview }: { canReview: boolean }) {
+  const navigate = useNavigate();
   const [filter, setFilter] = useState("pending");
   const [page, setPage] = useState(1);
   const active = BAC_FILTERS.find((f) => f.key === filter) ?? BAC_FILTERS[0];
@@ -298,7 +300,7 @@ function BacReviewQueue({ canReview }: { canReview: boolean }) {
                 <TableRow><TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">Nothing here right now.</TableCell></TableRow>
               )}
               {rows.map((aoc) => (
-                <TableRow key={aoc.id}>
+                <TableRow key={aoc.id} className="cursor-pointer" onClick={rowClick(() => navigate({ to: "/aoc/$aocId", params: { aocId: aoc.id } }), `/aoc/${aoc.id}`)}>
                   <TableCell className="font-semibold text-navy">{aoc.rfqNo}</TableCell>
                   <TableCell>{aoc.prNo}</TableCell>
                   <TableCell>{aoc.procurementCategory}</TableCell>

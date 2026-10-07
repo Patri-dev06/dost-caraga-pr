@@ -1,4 +1,5 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { rowClick } from "@/lib/row-click";
 import { Eye, Pencil, SearchX } from "lucide-react";
 import type { MonitoringRow } from "@/lib/api";
 import { MONITORING_COLUMNS } from "@/lib/monitoring-columns";
@@ -23,6 +24,7 @@ export function MonitoringTable({
   onEdit?: (row: MonitoringRow) => void;
   onView?: (row: MonitoringRow) => void;
 }) {
+  const navigate = useNavigate();
   // Nothing to show: a small centered note in the card — not a cell stretched across 60 columns.
   if (rows.length === 0) {
     return (
@@ -59,7 +61,11 @@ export function MonitoringTable({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.prId} className="group align-top hover:bg-secondary/20">
+            <tr
+              key={row.prId}
+              onClick={rowClick(() => navigate({ to: "/purchase-requests/$prId", params: { prId: row.prId } }), `/purchase-requests/${row.prId}`)}
+              className="group cursor-pointer align-top hover:bg-secondary/20"
+            >
               {actions && (
                 <td className="sticky left-0 z-10 border-b border-r border-border bg-card px-1 py-1 group-hover:bg-secondary">
                   <div className="flex items-center gap-0.5">
