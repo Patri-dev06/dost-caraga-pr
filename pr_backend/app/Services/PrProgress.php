@@ -28,7 +28,8 @@ final class PrProgress
 
         $rfq = $pr->rfqs->where('status', '!=', 'Cancelled')->sortByDesc('id')->first();
         $aoc = $rfq?->abstractOfCanvas;
-        $pos = $rfq?->purchaseOrders->where('status', '!=', 'Cancelled')->sortBy('id')->values() ?? collect();
+        // A waived PO's items move to a Re-PR, so the remaining suppliers alone decide these steps.
+        $pos = $rfq?->purchaseOrders->whereNotIn('status', ['Cancelled', 'Delivery Waived'])->sortBy('id')->values() ?? collect();
         $manual = $pr->monitoringEntry?->values ?? [];
         $action = fn (string $name) => $pr->approvalActions->where('action', $name)->sortByDesc('id')->first();
         $iso = fn (?CarbonInterface $at) => $at?->toISOString();

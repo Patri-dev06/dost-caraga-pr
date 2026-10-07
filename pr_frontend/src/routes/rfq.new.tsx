@@ -101,6 +101,8 @@ function AmountInput({ value, onChange }: { value: string; onChange: (v: string)
 
 interface RfqFormItem {
   id: string;
+  /** The PR line this RFQ line canvasses. */
+  prItemId?: string;
   itemNo: number;
   qty: string;
   unit: string;
@@ -174,6 +176,7 @@ function CreateRfqPage() {
 
         const items: RfqFormItem[] = pr.items.map((item, i) => ({
           id: crypto.randomUUID(),
+          prItemId: item.id,
           itemNo: i + 1,
           qty: String(item.qty),
           unit: item.uom,
@@ -237,6 +240,7 @@ function CreateRfqPage() {
       required_documents: doc.requiredDocuments,
       notes: doc.notes,
       items: doc.items.map((it) => ({
+        purchase_request_item_id: it.prItemId ? Number(it.prItemId) : null,
         item_no: it.itemNo,
         description: it.description,
         uom: it.unit,

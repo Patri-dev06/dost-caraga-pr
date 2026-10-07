@@ -30,8 +30,9 @@ function PRDetail() {
   const { prId } = useParams({ from: "/purchase-requests/$prId" });
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // Without an id: re-files the whole cancelled PR. With a waived PO's id: only that supplier's items.
   const rePr = useMutation({
-    mutationFn: () => apiRePurchaseRequest(prId),
+    mutationFn: (purchaseOrderId?: string) => apiRePurchaseRequest(prId, purchaseOrderId),
     onSuccess: async (result) => {
       toast.success(result.message);
       await queryClient.invalidateQueries({ queryKey: ["purchase-requests"] });
@@ -136,15 +137,44 @@ function PRDetail() {
             )}
           </div>
           {!pr.rePr && (
-            <Button className="gap-2" disabled={rePr.isPending} onClick={() => rePr.mutate()}>
+            <Button className="gap-2" disabled={rePr.isPending} onClick={() => rePr.mutate(undefined)}>
               {rePr.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />} Re-PR
             </Button>
           )}
         </Card>
       )}
+      {(pr.waivedOrders ?? []).map((order) => (
+        // One awarded supplier waived delivery while the others carry on: only its items need a Re-PR.
+        <Card key={order.id} className="flex flex-wrap items-start gap-3 border border-warning/40 bg-warning/10 p-4">
+          <Ban className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="font-semibold text-warning-foreground">
+              {order.supplierName} waived delivery of {order.poNo}.
+            </p>
+            {order.reason && <p className="mt-1 text-foreground">Reason: {order.reason}</p>}
+            {order.items.length > 0 && <p className="mt-1 text-muted-foreground">Items: {order.items.join("; ")}</p>}
+            {order.rePr ? (
+              <p className="mt-1 text-muted-foreground">
+                Re-filed as{" "}
+                <Link to="/purchase-requests/$prId" params={{ prId: order.rePr.id }} className="font-semibold text-primary underline-offset-2 hover:underline">
+                  {order.rePr.prNo}
+                </Link>
+                .
+              </p>
+            ) : order.canRePr ? (
+              <p className="mt-1 text-muted-foreground">The other awarded supplier(s) are unaffected. If these items are still needed, Re-PR copies just them into a new draft.</p>
+            ) : null}
+          </div>
+          {order.canRePr && (
+            <Button className="gap-2" disabled={rePr.isPending} onClick={() => rePr.mutate(order.id)}>
+              {rePr.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />} Re-PR these items
+            </Button>
+          )}
+        </Card>
+      ))}
       {pr.rePrOf && (
         <p className="text-sm text-muted-foreground">
-          Re-filed from cancelled{" "}
+          {pr.rePrOf.poNo ? `Re-files the items ${pr.rePrOf.supplierName ?? "a supplier"} waived on ${pr.rePrOf.poNo}, from ` : "Re-filed from cancelled "}
           <Link to="/purchase-requests/$prId" params={{ prId: pr.rePrOf.id }} className="font-semibold text-primary underline-offset-2 hover:underline">
             {pr.rePrOf.prNo}
           </Link>

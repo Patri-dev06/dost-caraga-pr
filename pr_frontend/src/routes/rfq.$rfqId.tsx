@@ -87,6 +87,7 @@ interface EditDoc {
 
 interface EditItem {
   id: string;
+  purchaseRequestItemId: string | null;
   itemNo: number;
   description: string;
   unit: string;
@@ -117,6 +118,7 @@ function docFromRfq(rfq: Rfq): EditDoc {
 function itemsFromRfq(rfq: Rfq): EditItem[] {
   return rfq.items.map((it) => ({
     id: it.id,
+    purchaseRequestItemId: it.purchaseRequestItemId,
     itemNo: it.itemNo,
     description: it.description,
     unit: it.unit,
@@ -232,6 +234,7 @@ function RfqDetailPage() {
       required_documents: editDoc.requiredDocuments,
       notes: editDoc.notes,
       items: editItems.map((it) => ({
+        purchase_request_item_id: it.purchaseRequestItemId ? Number(it.purchaseRequestItemId) : null,
         item_no: it.itemNo,
         description: it.description,
         uom: it.unit,

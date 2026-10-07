@@ -30,6 +30,7 @@ class PurchaseRequest extends Model
         'cancel_reason',
         'cancelled_from',
         're_pr_of_id',
+        're_pr_of_purchase_order_id',
     ];
 
     /** Statuses that no longer draw on a PPMP's budget or quantities. */
@@ -162,6 +163,12 @@ class PurchaseRequest extends Model
         return $this->belongsTo(self::class, 're_pr_of_id');
     }
 
+    /** For a partial Re-PR: the waived Purchase Order whose items this PR re-files. */
+    public function rePrOfPurchaseOrder(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrder::class, 're_pr_of_purchase_order_id');
+    }
+
     public function requester(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
@@ -213,6 +220,12 @@ class PurchaseRequest extends Model
     public function purchaseOrders(): HasMany
     {
         return $this->hasMany(PurchaseOrder::class);
+    }
+
+    /** POs whose supplier waived delivery — their items are re-filed by a (partial) Re-PR. */
+    public function waivedPurchaseOrders(): HasMany
+    {
+        return $this->hasMany(PurchaseOrder::class)->where('status', 'Delivery Waived')->orderBy('id');
     }
 
     /** Supplementary Documents (PPMP, LIB, ...) attached when the PR was submitted. */

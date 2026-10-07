@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class PurchaseOrder extends Model
@@ -104,5 +105,25 @@ class PurchaseOrder extends Model
     public function approvalActions(): MorphMany
     {
         return $this->morphMany(ApprovalAction::class, 'actionable');
+    }
+
+    /** The partial Re-PR that re-files this (waived) PO's items, if one was filed. */
+    public function rePurchaseRequest(): HasOne
+    {
+        return $this->hasOne(PurchaseRequest::class, 're_pr_of_purchase_order_id');
+    }
+
+    /**
+     * The PR lines this PO delivers, traced through its RFQ lines. Null when any line can't be traced
+     * (an RFQ line never linked to its PR line), so callers never re-file a partial or wrong set.
+     *
+     * @return array<int, int>|null
+     */
+    public function purchaseRequestItemIds(): ?array
+    {
+        $this->loadMissing('items.rfqItem');
+        $ids = $this->items->map(fn (PurchaseOrderItem $item) => $item->rfqItem?->purchase_request_item_id);
+
+        return $ids->contains(null) ? null : $ids->map(fn ($id) => (int) $id)->unique()->values()->all();
     }
 }

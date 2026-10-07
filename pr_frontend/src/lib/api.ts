@@ -804,9 +804,15 @@ export async function apiSubmitPurchaseRequest(id: string | number) {
   return mapPurchaseRequest(result.data);
 }
 
-/** Flowchart "Notify End-user to Re-PR": copies a cancelled PR into a new Draft for its requester. */
-export async function apiRePurchaseRequest(id: string | number) {
-  const result = await request<ApiRecord<BackendPurchaseRequest> & { message: string }>(`/purchase-requests/${id}/re-pr`, { method: "POST" });
+/**
+ * Flowchart "Notify End-user to Re-PR": copies a cancelled PR into a new Draft for its requester —
+ * or, with `purchaseOrderId`, only the items of one PO whose supplier waived delivery.
+ */
+export async function apiRePurchaseRequest(id: string | number, purchaseOrderId?: string | number) {
+  const result = await request<ApiRecord<BackendPurchaseRequest> & { message: string }>(`/purchase-requests/${id}/re-pr`, {
+    method: "POST",
+    body: purchaseOrderId ? { purchase_order_id: Number(purchaseOrderId) } : undefined,
+  });
   return { message: result.message, data: mapPurchaseRequest(result.data) };
 }
 
@@ -1265,8 +1271,18 @@ type BackendPurchaseRequest = {
   cancelled_at?: string | null;
   cancel_reason?: string | null;
   cancelled_from?: "AOC" | "PO" | null;
-  re_pr_of?: { id: number; pr_no: string } | null;
+  re_pr_of?: { id: number; pr_no: string; po_no?: string | null; supplier_name?: string | null } | null;
   re_pr?: { id: number; pr_no: string } | null;
+  waived_orders?: {
+    id: number;
+    po_no: string;
+    supplier_name: string;
+    reason: string | null;
+    waived_at: string | null;
+    items: string[];
+    re_pr: { id: number; pr_no: string } | null;
+    can_re_pr: boolean;
+  }[];
 };
 
 type BackendNamedRecord = {
@@ -1471,8 +1487,20 @@ function mapPurchaseRequest(pr: BackendPurchaseRequest): PurchaseRequest {
     cancelledAt: pr.cancelled_at ?? null,
     cancelReason: pr.cancel_reason ?? null,
     cancelledFrom: pr.cancelled_from ?? null,
-    rePrOf: pr.re_pr_of ? { id: String(pr.re_pr_of.id), prNo: pr.re_pr_of.pr_no } : null,
+    rePrOf: pr.re_pr_of
+      ? { id: String(pr.re_pr_of.id), prNo: pr.re_pr_of.pr_no, poNo: pr.re_pr_of.po_no ?? null, supplierName: pr.re_pr_of.supplier_name ?? null }
+      : null,
     rePr: pr.re_pr ? { id: String(pr.re_pr.id), prNo: pr.re_pr.pr_no } : null,
+    waivedOrders: (pr.waived_orders ?? []).map((o) => ({
+      id: String(o.id),
+      poNo: o.po_no,
+      supplierName: o.supplier_name,
+      reason: o.reason,
+      waivedAt: o.waived_at,
+      items: o.items,
+      rePr: o.re_pr ? { id: String(o.re_pr.id), prNo: o.re_pr.pr_no } : null,
+      canRePr: o.can_re_pr,
+    })),
   };
 }
 
@@ -1498,6 +1526,8 @@ function mapValidation(result: BackendValidation): ValidationCheck & { itemId?: 
 
 export interface RfqItem {
   id: string;
+  /** The PR line this RFQ line canvasses. */
+  purchaseRequestItemId: string | null;
   itemNo: number;
   qty: number;
   unit: string;
@@ -1674,6 +1704,7 @@ type BackendRfq = {
 function mapRfqItem(item: BackendRfqItem): RfqItem {
   return {
     id: String(item.id),
+    purchaseRequestItemId: item.purchase_request_item_id ? String(item.purchase_request_item_id) : null,
     itemNo: item.item_no,
     qty: Number(item.quantity),
     unit: item.uom ?? "",

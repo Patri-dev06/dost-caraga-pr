@@ -287,9 +287,29 @@ class PurchaseOrderController extends Controller
         $this->recordAction($request, $po, 'Supply', 'Delivery Waived', $reason);
 
         $purchaseRequest = $po->purchaseRequest;
-        if ($purchaseRequest) {
-            $this->cancelPurchaseRequest($request, $purchaseRequest, "The winning supplier ({$po->supplier_name}) waived delivery of {$po->po_no}: {$reason}", 'PO');
+        if (! $purchaseRequest) {
+            return;
         }
+
+        // With per-item awards a PR can have several POs. Another supplier still delivering (or still
+        // being signed) keeps the PR alive: only this supplier's items need a Re-PR. The whole PR is
+        // cancelled — the flowchart's "Cancel PR -> Re-PR" — only when nothing else is left of it.
+        $otherStillLive = PurchaseOrder::where('purchase_request_id', $purchaseRequest->id)
+            ->whereKeyNot($po->id)
+            ->where(fn ($q) => $q->whereNotIn('status', PurchaseOrder::CLOSED_STATUSES)->orWhere('status', 'Delivery Accepted'))
+            ->exists();
+
+        if (! $otherStillLive) {
+            $this->cancelPurchaseRequest($request, $purchaseRequest, "The winning supplier ({$po->supplier_name}) waived delivery of {$po->po_no}: {$reason}", 'PO');
+
+            return;
+        }
+
+        $this->recordAction($request, $purchaseRequest, 'Supply', 'Supplier waived delivery', "{$po->supplier_name} ({$po->po_no}): {$reason}");
+        $purchaseRequest->loadMissing('requester');
+        $this->notify($purchaseRequest->requester, 'pr_partial_waiver', 'A supplier waived delivery — re-file its items',
+            "{$po->supplier_name} waived delivery of {$po->po_no} ({$purchaseRequest->pr_no}). Reason: {$reason}\nThe other awarded supplier(s) are unaffected. Open the PR and choose Re-PR for this supplier's items if they are still needed.",
+            "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id, 'poId' => $po->id]);
     }
 
     /**

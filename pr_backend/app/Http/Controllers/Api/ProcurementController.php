@@ -17,6 +17,7 @@ use App\Models\PpmpItem;
 use App\Models\PrMonitoringEntry;
 use App\Models\ProcurementItem;
 use App\Models\Project;
+use App\Models\PurchaseOrder;
 use App\Models\PurchaseRequest;
 use App\Models\PurchaseRequestItem;
 use App\Models\Role;
@@ -2167,20 +2168,42 @@ class ProcurementController extends Controller
     }
 
     /**
-     * Flowchart: "Notify End-user to Re-PR". Copies a cancelled PR (items, fund source, charged PPMP,
-     * project, purpose) into a new Draft for the same requester, who reviews and submits it as usual.
+     * Flowchart: "Notify End-user to Re-PR". Copies a PR (fund source, charged PPMP, project, purpose)
+     * into a new Draft for the same requester, who reviews and submits it as usual.
+     *
+     * Without `purchase_order_id`: re-files a cancelled PR — every item not already delivered or
+     * re-filed. With it: re-files only the items of one PO whose supplier waived delivery while the
+     * PR's other awarded supplier(s) carry on (a partial Re-PR).
      */
     public function rePurchaseRequest(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->guardModule('pr');
         abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
         abort_unless($purchaseRequest->isManageableBy($request->user()), 403, 'Only the requester who owns this Purchase Request may re-file it.');
-        abort_unless($purchaseRequest->status === 'Cancelled', 422, 'Only a cancelled Purchase Request can be re-filed (Re-PR).');
+        $data = $request->validate(['purchase_order_id' => ['nullable', 'integer']]);
 
-        $existing = PurchaseRequest::where('re_pr_of_id', $purchaseRequest->id)->first();
-        abort_if($existing !== null, 422, "This Purchase Request was already re-filed as {$existing?->pr_no}.");
+        $waivedPo = null;
+        if (! empty($data['purchase_order_id'])) {
+            $waivedPo = PurchaseOrder::where('purchase_request_id', $purchaseRequest->id)->find($data['purchase_order_id']);
+            abort_if($waivedPo === null, 404);
+            abort_unless($waivedPo->status === 'Delivery Waived', 422, 'Only the items of a Purchase Order whose supplier waived delivery can be re-filed on their own.');
+            abort_if($purchaseRequest->status === 'Cancelled', 422, 'This Purchase Request was cancelled. Use Re-PR on the whole request instead.');
+            $existing = $waivedPo->rePurchaseRequest()->first();
+            abort_if($existing !== null, 422, "These items were already re-filed as {$existing?->pr_no}.");
 
-        $copy = DB::transaction(function () use ($purchaseRequest): PurchaseRequest {
+            $itemIds = $waivedPo->purchaseRequestItemIds();
+            abort_if($itemIds === null, 422, "{$waivedPo->po_no}'s items can't be traced back to this Purchase Request's lines. File a new PR for them instead.");
+            $items = $purchaseRequest->items()->whereIn('id', $itemIds)->orderBy('id')->get();
+        } else {
+            abort_unless($purchaseRequest->status === 'Cancelled', 422, 'Only a cancelled Purchase Request can be re-filed (Re-PR).');
+            $existing = PurchaseRequest::where('re_pr_of_id', $purchaseRequest->id)->whereNull('re_pr_of_purchase_order_id')->first();
+            abort_if($existing !== null, 422, "This Purchase Request was already re-filed as {$existing?->pr_no}.");
+
+            $items = $purchaseRequest->items()->whereNotIn('id', $this->itemsAlreadyCovered($purchaseRequest))->orderBy('id')->get();
+            abort_if($items->isEmpty(), 422, 'Every item on this Purchase Request was already delivered or re-filed.');
+        }
+
+        $copy = DB::transaction(function () use ($purchaseRequest, $items, $waivedPo): PurchaseRequest {
             $copy = PurchaseRequest::create([
                 'pr_no' => $this->nextPrNo(),
                 'office_id' => $purchaseRequest->office_id,
@@ -2191,17 +2214,39 @@ class ProcurementController extends Controller
                 'mode_of_procurement' => $purchaseRequest->mode_of_procurement,
                 'purpose' => $purchaseRequest->purpose,
                 're_pr_of_id' => $purchaseRequest->id,
+                're_pr_of_purchase_order_id' => $waivedPo?->id,
             ]);
-            $copy->items()->createMany($purchaseRequest->items()->get()
+            $copy->items()->createMany($items
                 ->map(fn (PurchaseRequestItem $item): array => $item->only(['procurement_item_id', 'name', 'description', 'uom', 'quantity', 'unit_cost']))
                 ->all());
 
             return $copy;
         });
 
-        $this->audit($request, 'Purchase Requests', 'Re-PR', "{$purchaseRequest->pr_no} -> {$copy->pr_no}");
+        $scope = $waivedPo ? " ({$waivedPo->supplier_name}'s items from {$waivedPo->po_no})" : '';
+        $this->audit($request, 'Purchase Requests', 'Re-PR', "{$purchaseRequest->pr_no} -> {$copy->pr_no}{$scope}");
 
         return response()->json(['message' => "Re-filed as {$copy->pr_no}. Review it and submit.", 'data' => $this->format($copy->fresh())], 201);
+    }
+
+    /**
+     * PR lines a whole-PR Re-PR must leave out: delivered by a supplier who accepted, or already
+     * re-filed by a partial Re-PR of a waived PO.
+     *
+     * @return array<int, int>
+     */
+    private function itemsAlreadyCovered(PurchaseRequest $purchaseRequest): array
+    {
+        return PurchaseOrder::with('items.rfqItem')
+            ->where('purchase_request_id', $purchaseRequest->id)
+            ->where(fn ($q) => $q->where('status', 'Delivery Accepted')->orWhereHas('rePurchaseRequest'))
+            ->get()
+            ->flatMap(fn (PurchaseOrder $po) => $po->items->map(fn ($item) => $item->rfqItem?->purchase_request_item_id))
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**
@@ -3135,7 +3180,8 @@ class ProcurementController extends Controller
             return $record;
         }
 
-        $record->loadMissing(['office', 'fundSource', 'project', 'ppmpDocument.libDocument', 'rePrOf', 'requester.roles', 'recommendingOfficer', 'items', 'validationResults', 'approvalActions.user']);
+        $record->loadMissing(['office', 'fundSource', 'project', 'ppmpDocument.libDocument', 'rePrOf', 'rePrOfPurchaseOrder', 'requester.roles', 'recommendingOfficer', 'items', 'validationResults', 'approvalActions.user',
+            'waivedPurchaseOrders.items.rfqItem.purchaseRequestItem', 'waivedPurchaseOrders.rePurchaseRequest']);
         $checks = $this->prChecks();
 
         return [
@@ -3173,9 +3219,27 @@ class ProcurementController extends Controller
             'cancelled_at' => $record->cancelled_at?->toISOString(),
             'cancel_reason' => $record->cancel_reason,
             'cancelled_from' => $record->cancelled_from,
-            're_pr_of' => $record->rePrOf ? ['id' => $record->rePrOf->id, 'pr_no' => $record->rePrOf->pr_no] : null,
-            're_pr' => ($refiled = PurchaseRequest::where('re_pr_of_id', $record->id)->latest('id')->first(['id', 'pr_no']))
+            're_pr_of' => $record->rePrOf ? [
+                'id' => $record->rePrOf->id,
+                'pr_no' => $record->rePrOf->pr_no,
+                // Set for a partial Re-PR: the waived PO whose items this PR re-files.
+                'po_no' => $record->rePrOfPurchaseOrder?->po_no,
+                'supplier_name' => $record->rePrOfPurchaseOrder?->supplier_name,
+            ] : null,
+            // The whole-PR Re-PR (a partial Re-PR shows under its waived PO instead).
+            're_pr' => ($refiled = PurchaseRequest::where('re_pr_of_id', $record->id)->whereNull('re_pr_of_purchase_order_id')->latest('id')->first(['id', 'pr_no']))
                 ? ['id' => $refiled->id, 'pr_no' => $refiled->pr_no] : null,
+            // Suppliers who waived delivery while the PR carried on: their items can be re-filed alone.
+            'waived_orders' => $record->waivedPurchaseOrders->map(fn (PurchaseOrder $po): array => [
+                'id' => $po->id,
+                'po_no' => $po->po_no,
+                'supplier_name' => $po->supplier_name,
+                'reason' => $po->delivery_waived_reason,
+                'waived_at' => $po->delivery_waived_at?->toISOString(),
+                'items' => $po->items->map(fn ($item) => $item->rfqItem?->purchaseRequestItem?->name ?? $item->description)->values(),
+                're_pr' => $po->rePurchaseRequest ? ['id' => $po->rePurchaseRequest->id, 'pr_no' => $po->rePurchaseRequest->pr_no] : null,
+                'can_re_pr' => $record->status !== 'Cancelled' && $po->rePurchaseRequest === null && $po->purchaseRequestItemIds() !== null,
+            ])->values(),
             'purpose' => $record->purpose,
             'items' => $record->items,
             'validation' => $record->validationResults,

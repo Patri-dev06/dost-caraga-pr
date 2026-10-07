@@ -25,6 +25,17 @@ export interface ValidationCheck {
   message: string;
 }
 
+export interface WaivedOrder {
+  id: string;
+  poNo: string;
+  supplierName: string;
+  reason: string | null;
+  waivedAt: string | null;
+  items: string[];
+  rePr: { id: string; prNo: string } | null;
+  canRePr: boolean;
+}
+
 export interface PurchaseRequest {
   id: string;
   prNo: string;
@@ -54,8 +65,11 @@ export interface PurchaseRequest {
   cancelledAt?: string | null;
   cancelReason?: string | null;
   cancelledFrom?: "AOC" | "PO" | null;
-  rePrOf?: { id: string; prNo: string } | null;
+  /** For a partial Re-PR, poNo/supplierName name the waived PO whose items it re-files. */
+  rePrOf?: { id: string; prNo: string; poNo?: string | null; supplierName?: string | null } | null;
   rePr?: { id: string; prNo: string } | null;
+  /** Suppliers who waived delivery while the PR carried on: their items can be re-filed on their own. */
+  waivedOrders?: WaivedOrder[];
   /** The PR's real history (submitted, recommended, approved…), oldest first. */
   approvalTrail?: PrTrailEntry[];
   /** The checks as last run on this PR (saved with it), per item where they apply. */

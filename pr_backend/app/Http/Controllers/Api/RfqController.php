@@ -108,7 +108,7 @@ class RfqController extends Controller
                 'created_by' => $request->user()->id,
             ]);
 
-            $rfq->items()->createMany($this->normalizedItems($data['items']));
+            $rfq->items()->createMany($this->normalizedItems($data['items'], $purchaseRequest));
 
             return $rfq;
         });
@@ -204,7 +204,7 @@ class RfqController extends Controller
 
             if ($items !== null) {
                 $rfq->items()->delete();
-                $rfq->items()->createMany($this->normalizedItems($items));
+                $rfq->items()->createMany($this->normalizedItems($items, $rfq->purchaseRequest));
             }
         });
 
@@ -658,17 +658,41 @@ class RfqController extends Controller
     }
 
     /** @param array<int, array<string, mixed>> $items */
-    private function normalizedItems(array $items): array
+    /**
+     * Each RFQ line is linked to the PR line it canvasses, so a supplier's award (and a waiver of it)
+     * traces back to the PR. A given link must belong to this PR; an unlinked line is linked by
+     * position when the RFQ lists every PR line (the RFQ is generated from the PR in its order), else
+     * by a unique match of its first row against a PR item name.
+     */
+    private function normalizedItems(array $items, ?PurchaseRequest $purchaseRequest): array
     {
-        return collect($items)->values()->map(fn (array $item, int $index): array => [
-            'purchase_request_item_id' => $item['purchase_request_item_id'] ?? null,
-            'item_no' => $item['item_no'] ?? $index + 1,
-            'description' => $item['description'] ?? null,
-            'uom' => $item['uom'] ?? null,
-            'quantity' => $item['quantity'],
-            'unit_abc' => $item['unit_abc'] ?? 0,
-            'total_abc' => $item['total_abc'] ?? 0,
-        ])->all();
+        $prItems = $purchaseRequest?->items()->orderBy('id')->get() ?? collect();
+        $sameCount = count($items) === $prItems->count();
+        $byName = $prItems->groupBy(fn ($item) => mb_strtolower(trim((string) $item->name)));
+
+        $given = collect($items)->pluck('purchase_request_item_id')->filter();
+        abort_if($given->contains(fn ($id) => ! $prItems->contains('id', (int) $id)), 422, 'An RFQ line can only list an item from its own Purchase Request.');
+        abort_if($given->duplicates()->isNotEmpty(), 422, 'Each Purchase Request item can appear on the RFQ only once.');
+
+        return collect($items)->values()->map(function (array $item, int $index) use ($prItems, $sameCount, $byName): array {
+            $linked = $item['purchase_request_item_id'] ?? null;
+            if ($linked === null && $sameCount) {
+                $linked = $prItems[$index]->id;
+            } elseif ($linked === null) {
+                $matches = $byName->get(mb_strtolower(trim(explode("\n", (string) ($item['description'] ?? ''))[0])));
+                $linked = $matches !== null && $matches->count() === 1 ? $matches->first()->id : null;
+            }
+
+            return [
+                'purchase_request_item_id' => $linked,
+                'item_no' => $item['item_no'] ?? $index + 1,
+                'description' => $item['description'] ?? null,
+                'uom' => $item['uom'] ?? null,
+                'quantity' => $item['quantity'],
+                'unit_abc' => $item['unit_abc'] ?? 0,
+                'total_abc' => $item['total_abc'] ?? 0,
+            ];
+        })->all();
     }
 
     private function format(Rfq $rfq): array

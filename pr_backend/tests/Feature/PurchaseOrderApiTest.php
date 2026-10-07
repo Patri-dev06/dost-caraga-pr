@@ -278,4 +278,146 @@ class PurchaseOrderApiTest extends TestCase
         $this->assertDatabaseHas('purchase_requests', ['id' => $prId, 'status' => 'Cancelled', 'cancelled_from' => 'PO']);
         $this->assertDatabaseHas('user_notifications', ['type' => 'pr_cancelled']);
     }
+
+    /**
+     * Two PR lines, each awarded to a different supplier, both POs fully signed.
+     *
+     * @return array{0: int, 1: array<string, int>} [prId, po id keyed by supplier name]
+     */
+    private function twoAwardeeSignedPos(string $token): array
+    {
+        $prId = $this->createApprovedPr($token, [
+            ['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 2, 'unit_cost' => 150],
+            ['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 3, 'unit_cost' => 250],
+        ]);
+        $rfqId = $this->withToken($token)->postJson('/api/v1/rfqs', [
+            'purchase_request_id' => $prId,
+            'procurement_category' => 'Goods',
+            'canvasser' => 'Juan Dela Cruz',
+            'items' => [
+                ['description' => 'Bond paper', 'uom' => 'ream', 'quantity' => 2, 'unit_abc' => 150, 'total_abc' => 300],
+                ['description' => 'Bond paper, legal', 'uom' => 'ream', 'quantity' => 3, 'unit_abc' => 250, 'total_abc' => 750],
+            ],
+        ])->assertCreated()->json('data.id');
+
+        $this->addSuppliers($token, $rfqId);
+        $this->completeRfqSigning($rfqId);
+        $this->withToken($token)->postJson("/api/v1/rfqs/{$rfqId}/send")->assertOk();
+        $rfq = $this->withToken($token)->getJson("/api/v1/rfqs/{$rfqId}")->json('data');
+        [$firstId, $secondId] = collect($rfq['items'])->pluck('id')->all();
+        $suppliers = collect($rfq['suppliers'])->keyBy('supplier_name');
+
+        // ACME wins line 1, Bayanihan wins line 2.
+        $this->recordQuote($token, $rfqId, $suppliers['ACME Trading']['id'], [
+            ['rfq_item_id' => $firstId, 'offer_status' => 'Quoted', 'unit_price' => 100],
+            ['rfq_item_id' => $secondId, 'offer_status' => 'Quoted', 'unit_price' => 230],
+        ])->assertOk();
+        $this->recordQuote($token, $rfqId, $suppliers['Bayanihan Supplies']['id'], [
+            ['rfq_item_id' => $firstId, 'offer_status' => 'Quoted', 'unit_price' => 120],
+            ['rfq_item_id' => $secondId, 'offer_status' => 'Quoted', 'unit_price' => 200],
+        ])->assertOk();
+        $this->recordQuote($token, $rfqId, $suppliers['Caraga Merchants']['id'], [
+            ['rfq_item_id' => $firstId, 'offer_status' => 'Quoted', 'unit_price' => 130],
+            ['rfq_item_id' => $secondId, 'offer_status' => 'No Bid'],
+        ])->assertOk();
+        $this->notedAoc($token, $rfqId);
+
+        $pos = PurchaseOrder::where('rfq_id', $rfqId)->pluck('id', 'supplier_name')->all();
+        $this->assertCount(2, $pos);
+        foreach ($pos as $poId) {
+            $this->withToken($token)->postJson("/api/v1/purchase-orders/{$poId}/submit")->assertOk();
+            $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/obligate")->assertOk();
+            $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/account")->assertOk();
+            $this->withToken($token)->postJson("/api/v1/approvals/po/{$poId}/final-approve")->assertOk();
+        }
+
+        return [$prId, $pos];
+    }
+
+    public function test_one_supplier_waiving_keeps_the_pr_and_re_files_only_its_items(): void
+    {
+        $token = $this->loginAsAdmin();
+        [$prId, $pos] = $this->twoAwardeeSignedPos($token);
+
+        $this->withToken($token)->postJson("/api/v1/purchase-orders/{$pos['ACME Trading']}/deliver", ['waived' => false])->assertOk();
+        $this->withToken($token)->postJson("/api/v1/purchase-orders/{$pos['Bayanihan Supplies']}/deliver", ['waived' => true, 'reason' => 'Out of stock.'])
+            ->assertOk()->assertJsonPath('data.status', 'Delivery Waived');
+
+        // ACME is still delivering, so the PR carries on and only Bayanihan's items need a Re-PR.
+        $this->assertDatabaseHas('purchase_requests', ['id' => $prId, 'status' => 'Approved']);
+        $this->assertDatabaseHas('purchase_orders', ['id' => $pos['ACME Trading'], 'status' => 'Delivery Accepted']);
+        $this->assertDatabaseHas('user_notifications', ['type' => 'pr_partial_waiver']);
+        $this->assertDatabaseMissing('user_notifications', ['type' => 'pr_cancelled']);
+
+        $this->withToken($token)->getJson("/api/v1/purchase-requests/{$prId}")
+            ->assertJsonPath('data.waived_orders.0.supplier_name', 'Bayanihan Supplies')
+            ->assertJsonPath('data.waived_orders.0.can_re_pr', true);
+
+        // Not cancelled, so no whole-PR Re-PR; a non-waived PO can't be re-filed on its own.
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/re-pr")->assertStatus(422);
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/re-pr", ['purchase_order_id' => $pos['ACME Trading']])->assertStatus(422);
+
+        $copy = $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/re-pr", ['purchase_order_id' => $pos['Bayanihan Supplies']])
+            ->assertCreated()
+            ->assertJsonPath('data.status', 'Draft')
+            ->assertJsonPath('data.re_pr_of.po_no', PurchaseOrder::find($pos['Bayanihan Supplies'])->po_no)
+            ->assertJsonCount(1, 'data.items');
+        // Bayanihan won line 2: 3 reams at the requester's estimate of 250.
+        $this->assertSame('3.00', (string) $copy->json('data.items.0.quantity'));
+        $this->assertSame('250.00', (string) $copy->json('data.items.0.unit_cost'));
+
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/re-pr", ['purchase_order_id' => $pos['Bayanihan Supplies']])->assertStatus(422);
+        $this->withToken($token)->getJson("/api/v1/purchase-requests/{$prId}")
+            ->assertJsonPath('data.waived_orders.0.re_pr.id', $copy->json('data.id'))
+            ->assertJsonPath('data.waived_orders.0.can_re_pr', false)
+            ->assertJsonPath('data.re_pr', null);
+    }
+
+    public function test_last_supplier_waiving_cancels_the_pr_and_the_re_pr_skips_items_already_re_filed(): void
+    {
+        $token = $this->loginAsAdmin();
+        [$prId, $pos] = $this->twoAwardeeSignedPos($token);
+
+        // Bayanihan waives while ACME is still pending: partial, and its line is re-filed on its own.
+        $this->withToken($token)->postJson("/api/v1/purchase-orders/{$pos['Bayanihan Supplies']}/deliver", ['waived' => true, 'reason' => 'Out of stock.'])->assertOk();
+        $this->assertDatabaseHas('purchase_requests', ['id' => $prId, 'status' => 'Approved']);
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/re-pr", ['purchase_order_id' => $pos['Bayanihan Supplies']])->assertCreated();
+
+        // ACME waives too: nothing of the PR is left, so it is cancelled as before.
+        $this->withToken($token)->postJson("/api/v1/purchase-orders/{$pos['ACME Trading']}/deliver", ['waived' => true, 'reason' => 'Closed shop.'])->assertOk();
+        $this->assertDatabaseHas('purchase_requests', ['id' => $prId, 'status' => 'Cancelled', 'cancelled_from' => 'PO']);
+        $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/re-pr", ['purchase_order_id' => $pos['ACME Trading']])->assertStatus(422);
+
+        // The whole-PR Re-PR leaves out Bayanihan's line, already re-filed: only ACME's 2 reams remain.
+        $whole = $this->withToken($token)->postJson("/api/v1/purchase-requests/{$prId}/re-pr")->assertCreated()->assertJsonCount(1, 'data.items');
+        $this->assertSame('2.00', (string) $whole->json('data.items.0.quantity'));
+        $this->withToken($token)->getJson("/api/v1/purchase-requests/{$prId}")->assertJsonPath('data.re_pr.id', $whole->json('data.id'));
+    }
+
+    public function test_rfq_lines_are_linked_to_the_pr_items_they_canvass(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token, [
+            ['name' => 'A4-sized Bond Paper', 'uom' => 'ream', 'quantity' => 2, 'unit_cost' => 150],
+            ['name' => 'Wireless Mouse', 'uom' => 'pc', 'quantity' => 3, 'unit_cost' => 250],
+        ]);
+        $prItemIds = \App\Models\PurchaseRequestItem::where('purchase_request_id', $prId)->orderBy('id')->pluck('id')->all();
+
+        // Unlinked lines listing every PR item link by position.
+        $rfqId = $this->withToken($token)->postJson('/api/v1/rfqs', [
+            'purchase_request_id' => $prId,
+            'items' => [
+                ['description' => 'Paper', 'uom' => 'ream', 'quantity' => 2],
+                ['description' => 'Mouse', 'uom' => 'pc', 'quantity' => 3],
+            ],
+        ])->assertCreated()->json('data.id');
+        $this->assertSame($prItemIds, \App\Models\RfqItem::where('rfq_id', $rfqId)->orderBy('item_no')->pluck('purchase_request_item_id')->all());
+
+        // A line pointing at another PR's item is refused.
+        $otherPrItem = \App\Models\PurchaseRequestItem::where('purchase_request_id', '!=', $prId)->value('id');
+        $this->withToken($token)->postJson('/api/v1/rfqs', [
+            'purchase_request_id' => $prId,
+            'items' => [['purchase_request_item_id' => $otherPrItem, 'description' => 'Paper', 'uom' => 'ream', 'quantity' => 2]],
+        ])->assertStatus(422);
+    }
 }
