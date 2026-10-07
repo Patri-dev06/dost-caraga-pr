@@ -12,7 +12,7 @@ import { DEFAULT_RFQ_DOCUMENTS, DEFAULT_RFQ_NOTES, quotationNoFromPrNo } from "@
 import { PersonPicker } from "@/components/app/person-picker";
 import { useSignatories } from "@/lib/signatories";
 import { formatLongDate } from "@/lib/date-format";
-import { apiGetPurchaseRequest, apiCreateRfq, apiGetWorkflowSignatories, type RfqCreatePayload, type Signatory } from "@/lib/api";
+import { apiGetPurchaseRequest, apiGetRfqsPage, apiCreateRfq, apiGetWorkflowSignatories, type RfqCreatePayload, type Signatory } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { fmtAmount, parseAmount } from "@/lib/lib-store";
 import { exportRfqExcel } from "@/lib/rfq-excel";
@@ -171,6 +171,13 @@ function CreateRfqPage() {
 
     (async () => {
       try {
+        // A PR has one live RFQ: if it already has one, continue there instead of starting an empty copy.
+        const existing = (await apiGetRfqsPage(1, 20, { purchaseRequestId: prId })).items.find((r) => r.status !== "Cancelled");
+        if (existing) {
+          toast.info(`${existing.prNo} already has ${existing.rfqNo}. Opened it so you can continue.`);
+          navigate({ to: "/rfq/$rfqId", params: { rfqId: existing.id }, replace: true });
+          return;
+        }
         const pr = await apiGetPurchaseRequest(prId);
         setSourcePr(pr);
 
@@ -261,7 +268,7 @@ function CreateRfqPage() {
     setSaving(true);
     try {
       const rfq = await apiCreateRfq(buildPayload());
-      toast.success("RFQ created. Next: complete the BAC signing chain before canvassing suppliers.");
+      toast.success("RFQ created. Next: choose the 3 suppliers, then print it for signing.");
       navigate({ to: "/rfq/$rfqId", params: { rfqId: rfq.id } });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to save RFQ.");
@@ -535,7 +542,7 @@ function CreateRfqPage() {
 
           <p className="no-print mx-auto mt-3 max-w-xl text-center text-xs text-muted-foreground">
             {sourcePr ? "Items are auto-populated from the Purchase Request. " : ""}
-            After saving, the Supply Officer signs it, then the BAC Chairman (or Vice-Chairman); Supply then delivers it to 3 suppliers. Print shows the official form, with UNIT PRICE and TOTAL left blank for the supplier.
+            After saving, choose the 3 suppliers, print the RFQ for the Supply Officer and the BAC Chairman (or Vice-Chairman) to sign on paper, and upload the signed copy; Supply then delivers it to the 3 suppliers. Print shows the official form, with UNIT PRICE and TOTAL left blank for the supplier.
           </p>
         </div>
       </div>

@@ -88,6 +88,10 @@ class RfqController extends Controller
 
         $purchaseRequest = PurchaseRequest::with('fundSource')->findOrFail($data['purchase_request_id']);
         abort_unless($purchaseRequest->status === 'Approved', 422, 'RFQs can only be generated from an approved Purchase Request.');
+        // One live RFQ per PR: re-canvassing happens inside it (replacement suppliers), so a second
+        // "Generate RFQ" would only start an empty copy and leave the chosen suppliers on the first.
+        $open = Rfq::where('purchase_request_id', $purchaseRequest->id)->where('status', '!=', 'Cancelled')->first(['id', 'rfq_no']);
+        abort_if($open !== null, 422, "{$purchaseRequest->pr_no} already has {$open?->rfq_no}. Open it to continue.");
         $this->abortIfItemsAdded($data['items'], $purchaseRequest);
 
         $rfq = DB::transaction(function () use ($data, $purchaseRequest, $request): Rfq {

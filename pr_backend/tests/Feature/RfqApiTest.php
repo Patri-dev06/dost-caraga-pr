@@ -97,15 +97,23 @@ class RfqApiTest extends TestCase
     public function test_rfq_number_is_continuous_and_formatted_per_year(): void
     {
         $token = $this->loginAsAdmin();
-        $prId = $this->createApprovedPr($token);
-
-        $first = $this->createRfq($token, $prId)->assertCreated()->json('data.rfq_no');
-        $second = $this->createRfq($token, $prId)->assertCreated()->json('data.rfq_no');
+        $first = $this->createRfq($token, $this->createApprovedPr($token))->assertCreated()->json('data.rfq_no');
+        $second = $this->createRfq($token, $this->createApprovedPr($token))->assertCreated()->json('data.rfq_no');
 
         $year = now()->year;
         $this->assertMatchesRegularExpression("/^RFQ-{$year}-\\d{4}$/", $first);
         $this->assertMatchesRegularExpression("/^RFQ-{$year}-\\d{4}$/", $second);
         $this->assertNotSame($first, $second);
+    }
+
+    public function test_a_pr_has_only_one_open_rfq(): void
+    {
+        $token = $this->loginAsAdmin();
+        $prId = $this->createApprovedPr($token);
+        $rfqNo = $this->createRfq($token, $prId)->assertCreated()->json('data.rfq_no');
+
+        // Generating again would start an empty copy; the existing RFQ is where work continues.
+        $this->createRfq($token, $prId)->assertStatus(422)->assertJsonPath('message', fn ($m) => str_contains($m, $rfqNo));
     }
 
     public function test_rfq_cannot_be_created_from_a_non_approved_purchase_request(): void

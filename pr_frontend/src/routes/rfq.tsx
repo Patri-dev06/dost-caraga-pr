@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { ListPagination } from "@/components/app/list-pagination";
-import { apiGetPurchaseRequestsPage, apiGetRfqsPage } from "@/lib/api";
+import { apiGetPurchaseRequestsPage, apiGetRfqsPage, type Rfq } from "@/lib/api";
 import { fmtAmount } from "@/lib/lib-store";
 import { rfqDisplayStatus } from "@/lib/rfq-format";
 import type { PurchaseRequest } from "@/lib/mock-data";
@@ -112,7 +112,7 @@ function RfqListPage() {
               <div className="divide-y divide-border rounded-xl border border-border bg-card shadow-card">
                 {approvedPrs.map((pr) => (
                   // Counted against just this page's RFQs, not every RFQ ever generated for this PR.
-                  <ApprovedPrCard key={pr.id} pr={pr} existingRfqCount={rfqs.filter((r) => r.prId === pr.id).length} />
+                  <ApprovedPrCard key={pr.id} pr={pr} openRfq={rfqs.find((r) => r.prId === pr.id && r.status !== "Cancelled")} />
                 ))}
               </div>
               {prPageData && <ListPagination page={prPage} lastPage={prPageData.lastPage} total={prPageData.total} onPageChange={setPrPage} />}
@@ -132,7 +132,7 @@ function RfqListPage() {
   );
 }
 
-function ApprovedPrCard({ pr, existingRfqCount }: { pr: PurchaseRequest; existingRfqCount: number }) {
+function ApprovedPrCard({ pr, openRfq }: { pr: PurchaseRequest; openRfq?: Rfq }) {
   return (
     <div className="flex flex-wrap items-center gap-4 px-4 py-3 transition-colors hover:bg-secondary/40">
       <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -144,20 +144,27 @@ function ApprovedPrCard({ pr, existingRfqCount }: { pr: PurchaseRequest; existin
       </div>
       <div className="text-right">
         <p className="text-sm font-semibold tabular-nums text-navy">₱{fmtAmount(pr.amount)}</p>
-        {existingRfqCount > 0 && (
-          <p className="text-[10px] text-muted-foreground">{existingRfqCount} RFQ(s) generated</p>
-        )}
+        {openRfq && <p className="text-[10px] text-muted-foreground">{openRfq.rfqNo} in progress</p>}
       </div>
       <Button asChild variant="outline" size="sm" className="gap-1.5">
         <Link to="/purchase-requests/new" search={{ view: pr.id }}>
           <Eye className="h-4 w-4" /> Preview PR
         </Link>
       </Button>
-      <Button asChild size="sm" className="gap-1.5">
-        <Link to="/rfq/new" search={{ pr: pr.id }}>
-          <FilePlus2 className="h-4 w-4" /> Generate RFQ
-        </Link>
-      </Button>
+      {/* One live RFQ per PR: continue it rather than starting an empty copy. */}
+      {openRfq ? (
+        <Button asChild size="sm" className="gap-1.5">
+          <Link to="/rfq/$rfqId" params={{ rfqId: openRfq.id }}>
+            <FileCheck2 className="h-4 w-4" /> Open {openRfq.rfqNo}
+          </Link>
+        </Button>
+      ) : (
+        <Button asChild size="sm" className="gap-1.5">
+          <Link to="/rfq/new" search={{ pr: pr.id }}>
+            <FilePlus2 className="h-4 w-4" /> Generate RFQ
+          </Link>
+        </Button>
+      )}
     </div>
   );
 }
