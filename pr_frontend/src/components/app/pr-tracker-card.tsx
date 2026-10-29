@@ -19,9 +19,11 @@ type Section = { key: string; label: string; icon: LucideIcon; rows: Row[]; empt
  */
 function NeedsYourActionCard() {
   const canAccess = useCanAccess();
-  const { user } = useCurrentUser();
+  const { user, ready } = useCurrentUser();
   const superadmin = user?.tier === "superadmin";
-  const showApprovals = canAccess("approvals");
+  // Wait for the user's modules: before they load, canAccess allows everything (to avoid flicker),
+  // and asking for the approval queue then gets refused for users without the Approval Inbox.
+  const showApprovals = ready && Boolean(user) && canAccess("approvals");
   const canRfq = canAccess("rfq");
   const isBac = Boolean(user?.isBacChair || user?.isBacViceChair || superadmin);
   const isSupply = Boolean(user?.isSupplyOfficer || superadmin) && canRfq;

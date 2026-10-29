@@ -53,9 +53,9 @@ const NAV: Item[] = [
   },
 ];
 
-const FOOTER: { title: string; url: string; icon: LucideIcon }[] = [
-  { title: "Help Center", url: "/settings", icon: HelpCircle },
-  { title: "Contact MIS Unit", url: "/settings", icon: Headset },
+const FOOTER: { title: string; url: string; icon: LucideIcon; module: ModuleKey }[] = [
+  { title: "Help Center", url: "/settings", icon: HelpCircle, module: "settings" },
+  { title: "Contact MIS Unit", url: "/settings", icon: Headset, module: "settings" },
 ];
 
 export function AppSidebar() {
@@ -68,6 +68,8 @@ export function AppSidebar() {
     const children = item.children.filter((c) => canAccess(c.module));
     return children.length > 0 ? [{ ...item, children }] : [];
   });
+  // Help Center and Contact MIS Unit open Settings for now; hide them from anyone who can't open it.
+  const footer = FOOTER.filter((f) => canAccess(f.module));
 
   const isActive = (url: string) => {
     if (url === "/") return pathname === "/";
@@ -125,20 +127,22 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border p-2 group-data-[collapsible=icon]:items-center">
-        <SidebarMenu className="gap-0.5">
-          {FOOTER.map((f) => (
-            <SidebarMenuItem key={f.title}>
-              <SidebarMenuButton asChild tooltip={f.title} className="h-9 rounded-lg px-3 text-muted-foreground">
-                <Link to={f.url} className="flex items-center gap-2.5">
-                  {f.icon && <f.icon className="h-4 w-4" strokeWidth={1.75} />}
-                  <span>{f.title}</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-      </SidebarFooter>
+      {footer.length > 0 && (
+        <SidebarFooter className="border-t border-sidebar-border p-2 group-data-[collapsible=icon]:items-center">
+          <SidebarMenu className="gap-0.5">
+            {footer.map((f) => (
+              <SidebarMenuItem key={f.title}>
+                <SidebarMenuButton asChild tooltip={f.title} className="h-9 rounded-lg px-3 text-muted-foreground">
+                  <Link to={f.url} className="flex items-center gap-2.5">
+                    {f.icon && <f.icon className="h-4 w-4" strokeWidth={1.75} />}
+                    <span>{f.title}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        </SidebarFooter>
+      )}
       <SidebarRail />
     </Sidebar>
   );
