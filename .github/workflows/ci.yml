@@ -107,5 +107,9 @@ jobs:
         run: |
           cp .env.example .env
           php artisan key:generate --force
+      - name: Install the PNPKI signing helper (Python)
+        run: |
+          python3 -m venv signing/.venv
+          signing/.venv/bin/pip install --quiet -r signing/requirements.txt
       - name: Run unit and feature tests on the isolated CI database
         run: vendor/bin/phpunit --configuration phpunit.xml

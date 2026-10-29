@@ -3,6 +3,7 @@ import { Loader2, Trash2, Upload } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { apiDeleteMySignature, apiGetMySignature, apiMe, apiSetMySignature } from "@/lib/api";
+import { PnpkiCertificatePanel } from "@/components/app/pnpki-certificate-panel";
 import { toast } from "sonner";
 
 const MAX_BYTES = 1_500_000; // ~1.5 MB image cap
@@ -10,15 +11,19 @@ const MAX_BYTES = 1_500_000; // ~1.5 MB image cap
 /**
  * Upload / preview / remove the current user's e-signature. A signature is
  * required before the user can sign or approve documents (enforced server-side).
+ * With PNPKI on, it is "My Digital Signature": the image is how the signature looks on documents,
+ * and the PNPKI certificate below is what signs them.
  */
 export function SignatureDialog({
   open,
   onOpenChange,
   onChanged,
+  pnpki = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onChanged?: () => void;
+  pnpki?: boolean;
 }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -88,13 +93,17 @@ export function SignatureDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>My E-Signature</DialogTitle>
+          <DialogTitle>{pnpki ? "My Digital Signature" : "My E-Signature"}</DialogTitle>
           <DialogDescription>
-            Upload a photo or scan of your signature. It's required before you can sign or approve documents.
+            {pnpki
+              ? "Two parts: your signature image, which shows on the documents you sign, and your PNPKI certificate from DICT, which signs them."
+              : "Upload a photo or scan of your signature. It's required before you can sign or approve documents."}
           </DialogDescription>
         </DialogHeader>
+
+        {pnpki && <h3 className="text-sm font-bold text-navy">1 · Signature image</h3>}
 
         <div className="flex min-h-[140px] items-center justify-center rounded-md border border-dashed border-border bg-secondary/20 p-4">
           {loading ? (
@@ -130,6 +139,13 @@ export function SignatureDialog({
             Save signature
           </Button>
         </DialogFooter>
+
+        {pnpki && (
+          <section className="space-y-2 border-t border-border pt-4">
+            <h3 className="text-sm font-bold text-navy">2 · PNPKI certificate</h3>
+            <PnpkiCertificatePanel onChanged={onChanged} />
+          </section>
+        )}
       </DialogContent>
     </Dialog>
   );

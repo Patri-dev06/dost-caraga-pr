@@ -49,6 +49,7 @@ export interface PurchaseRequest {
   dateSubmitted: string;
   requestedBy: string;
   requestedByPosition?: string; // the requester's position, for the form's Designation line
+  requestedById?: number | null;
   /** The recommending officer the PR is routed to — only they are notified and may recommend it. */
   recommendingOfficer?: { id: number; name: string; position: string | null } | null;
   recommendingDesignation?: string;
@@ -76,6 +77,8 @@ export interface PurchaseRequest {
   approvalTrail?: PrTrailEntry[];
   /** Scans of the wet-signed PR. */
   signedCopies?: SignedCopy[];
+  /** Parts of the PR's PDF signed digitally with PNPKI so far: "recommending", "approving". */
+  digitallySigned?: string[];
   /** The checks as last run on this PR (saved with it), per item where they apply. */
   savedValidation?: (ValidationCheck & { itemId?: string })[];
 }

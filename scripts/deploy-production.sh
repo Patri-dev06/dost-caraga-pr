@@ -80,6 +80,13 @@ composer install \
     --optimize-autoloader \
     --no-progress
 
+# PNPKI signing helper: a shared Python environment set up once (PRODUCTION_DEPLOYMENT.md),
+# brought up to this release's requirements. Skipped until PNPKI is set up on the server.
+if [[ -x "$DEPLOY_ROOT/shared/pnpki-venv/bin/pip" ]]; then
+    "$DEPLOY_ROOT/shared/pnpki-venv/bin/pip" install --quiet --disable-pip-version-check \
+        -r "$RELEASE_PATH/pr_backend/signing/requirements.txt"
+fi
+
 npx --yes npm@11.10.0 --prefix "$RELEASE_PATH/pr_frontend" ci --no-audit --no-fund
 npm --prefix "$RELEASE_PATH/pr_frontend" run build
 

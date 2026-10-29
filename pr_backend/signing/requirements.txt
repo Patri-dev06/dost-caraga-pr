@@ -1,0 +1,3 @@
+# PNPKI digital signing helper (signing/pnpki.py). Install on the server with:
+#   python3 -m venv signing/.venv && signing/.venv/bin/pip install -r signing/requirements.txt
+pyHanko[image-support]==0.33.0
