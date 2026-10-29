@@ -11,17 +11,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { logout, hasValidToken, apiGetNotifications, apiMarkNotificationRead, apiMarkAllNotificationsRead, type AppNotification } from "@/lib/api";
-import { useCanAccess, useCurrentUser } from "@/lib/current-user";
+import { useCurrentUser } from "@/lib/current-user";
 import { SignatureDialog } from "@/components/app/signature-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 export function AppTopbar() {
   const navigate = useNavigate();
-  const { user, refresh, ready } = useCurrentUser();
-  const canAccess = useCanAccess();
-  // Settings is for those who may open it; for anyone else the button would just bounce back.
-  const canOpenSettings = ready && Boolean(user) && canAccess("settings");
+  const { user, refresh } = useCurrentUser();
   const [signingOut, setSigningOut] = useState(false);
   const [isDark, setIsDark] = useState(false);
   const [sigOpen, setSigOpen] = useState(false);
@@ -76,11 +73,9 @@ export function AppTopbar() {
 
       <div className="ml-auto flex min-w-0 items-center gap-0.5 sm:gap-1">
         <NotificationsBell />
-        {canOpenSettings && (
-          <IconButton label="Settings" onClick={() => navigate({ to: "/settings" })}>
-            <Settings className="h-[18px] w-[18px]" />
-          </IconButton>
-        )}
+        <IconButton label="Settings" onClick={() => navigate({ to: "/settings" })}>
+          <Settings className="h-[18px] w-[18px]" />
+        </IconButton>
         <IconButton
           label={isDark ? "Light mode" : "Night mode"}
           onClick={toggleTheme}
@@ -122,7 +117,7 @@ export function AppTopbar() {
                 {(user.pnpkiEnabled ? !user.hasPnpkiCertificate : !user.hasSignature) && <span className="ml-auto text-[10px] font-semibold text-destructive">Set up</span>}
               </DropdownMenuItem>
             )}
-            {canOpenSettings && <DropdownMenuItem asChild><Link to="/settings">Settings</Link></DropdownMenuItem>}
+            <DropdownMenuItem asChild><Link to="/settings">Profile & Settings</Link></DropdownMenuItem>
             <DropdownMenuItem
               disabled={signingOut}
               onSelect={(event) => {

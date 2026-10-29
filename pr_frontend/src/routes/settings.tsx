@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/app/page-header";
+import { SignatureDialog } from "@/components/app/signature-dialog";
 import { cn } from "@/lib/utils";
 import {
   apiGetSystemSettings,
@@ -56,6 +57,7 @@ function SettingsPage() {
   const [draftProfile, setDraftProfile] = useState(profile);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [confirmProfileSave, setConfirmProfileSave] = useState(false);
+  const [signatureOpen, setSignatureOpen] = useState(false);
 
   // Show the signed-in user's real account details.
   useEffect(() => {
@@ -140,7 +142,11 @@ function SettingsPage() {
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
-      <PageHeader eyebrow="Administration" title="Settings" subtitle="Personal preferences and administrator-managed system controls." />
+      <PageHeader
+        eyebrow={canManageSystem ? "Administration" : "Account"}
+        title={canManageSystem ? "Settings" : "Profile & Settings"}
+        subtitle={canManageSystem ? "Your profile and digital signature, and the administrator-managed system controls." : "Your account details and your digital signature."}
+      />
 
       <Card className="border border-border bg-card p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -191,6 +197,37 @@ function SettingsPage() {
           </div>
         )}
       </Card>
+
+      <Card className="border border-border bg-card p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="label-eyebrow">Signature</p>
+            <h3 className="mt-1 text-base font-bold text-navy">{user?.pnpkiEnabled ? "My Digital Signature" : "Signature"}</h3>
+            <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+              {user?.pnpkiEnabled
+                ? "Your signature image, which shows on the documents you sign, and your PNPKI certificate (.p12) from DICT, which signs them."
+                : user?.eSignatureEnabled
+                  ? "Your signature image, used when you sign or approve documents."
+                  : "Digital signing with PNPKI is not turned on yet. For now, documents are signed on paper and the scanned copy is uploaded."}
+            </p>
+            {user?.pnpkiEnabled && (
+              <p className="mt-2 text-xs">
+                <span className={user.hasSignature ? "text-success" : "text-destructive"}>{user.hasSignature ? "Signature image saved" : "No signature image yet"}</span>
+                <span className="text-muted-foreground"> · </span>
+                <span className={user.hasPnpkiCertificate ? "text-success" : "text-destructive"}>{user.hasPnpkiCertificate ? "PNPKI certificate registered" : "No PNPKI certificate yet"}</span>
+              </p>
+            )}
+          </div>
+          {(user?.pnpkiEnabled || user?.eSignatureEnabled) && (
+            <Button variant="outline" className="border-border" onClick={() => setSignatureOpen(true)}>
+              {user.pnpkiEnabled && !(user.hasSignature && user.hasPnpkiCertificate) ? "Set up" : "Manage"}
+            </Button>
+          )}
+        </div>
+      </Card>
+      {(user?.pnpkiEnabled || user?.eSignatureEnabled) && (
+        <SignatureDialog open={signatureOpen} onOpenChange={setSignatureOpen} onChanged={refresh} pnpki={user.pnpkiEnabled} />
+      )}
 
       {canManageSystem && (
       <Card className="border border-border bg-card p-6">
@@ -287,14 +324,16 @@ function SettingsPage() {
         </div>
       </Card>
 
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" className="border-border" onClick={() => setDraftSettings({})} disabled={!hasSettingDrafts}>
-          Reset Preference Changes
-        </Button>
-        <Button onClick={saveSystemSettings} disabled={!hasSettingDrafts || updateSettings.isPending}>
-          {updateSettings.isPending ? "Saving..." : "Save Changes"}
-        </Button>
-      </div>
+      {canManageSystem && (
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" className="border-border" onClick={() => setDraftSettings({})} disabled={!hasSettingDrafts}>
+            Reset Preference Changes
+          </Button>
+          <Button onClick={saveSystemSettings} disabled={!hasSettingDrafts || updateSettings.isPending}>
+            {updateSettings.isPending ? "Saving..." : "Save Changes"}
+          </Button>
+        </div>
+      )}
 
       <AlertDialog open={confirmProfileSave} onOpenChange={setConfirmProfileSave}>
         <AlertDialogContent>

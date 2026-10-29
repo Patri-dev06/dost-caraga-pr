@@ -53,6 +53,8 @@ export function moduleForPath(pathname: string): ModuleKey | null {
   if (pathname.startsWith("/reports")) return "reports";
   if (pathname.startsWith("/users")) return "users";
   if (pathname.startsWith("/audit-logs")) return "audit";
-  if (pathname.startsWith("/settings")) return "settings";
+  // Every user opens Settings for their own profile and digital signature; the page itself shows the
+  // system-wide controls only to accounts with the "settings" module (and the server enforces it).
+  if (pathname.startsWith("/settings")) return null;
   return null;
 }
