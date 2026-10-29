@@ -20,6 +20,8 @@ import { ValidationResultPanel } from "@/components/app/validation-result-panel"
 import type { PRItem, ValidationCheck } from "@/lib/mock-data";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCurrentUser } from "@/lib/current-user";
+import { PnpkiSignDialog } from "@/components/app/pnpki-sign";
+import { canSignPrDigitally } from "@/lib/signed-copies";
 import { useSignatories } from "@/lib/signatories";
 import { PersonPicker } from "@/components/app/person-picker";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -434,6 +436,8 @@ function NewPR() {
   const [appDesig, setAppDesig] = useState("");
 
   const [action, setAction] = useState<"draft" | "submit" | null>(null);
+  // Submitting with the requester's PNPKI certificate: the payload waits here while they type its password.
+  const [pendingSubmit, setPendingSubmit] = useState<PurchaseRequestCreatePayload | null>(null);
 
   // Signatories come from the accounts in the database: type part of a name to find one.
   // "Recommending Approval" is an account holding the Recommender role — the PR is routed to that
@@ -525,12 +529,12 @@ function NewPR() {
   const [validationFailure, setValidationFailure] = useState<{ items: PRItem[]; results: (ValidationCheck & { itemId?: string })[] } | null>(null);
 
   const mutation = useMutation({
-    mutationFn: async ({ payload, submit }: { payload: PurchaseRequestCreatePayload; submit: boolean }) => {
+    mutationFn: async ({ payload, submit, pnpkiPassword }: { payload: PurchaseRequestCreatePayload; submit: boolean; pnpkiPassword?: string }) => {
       if (editId) {
         const updated = await apiUpdatePurchaseRequest(editId, payload);
-        return submit ? apiSubmitPurchaseRequest(editId) : updated;
+        return submit ? apiSubmitPurchaseRequest(editId, pnpkiPassword) : updated;
       }
-      return apiCreatePurchaseRequest({ ...payload, submit });
+      return apiCreatePurchaseRequest({ ...payload, submit, pnpki_password: pnpkiPassword });
     },
     onMutate: () => setValidationFailure(null),
     onSuccess: async (result) => {
@@ -539,7 +543,9 @@ function NewPR() {
       if (editId) await queryClient.invalidateQueries({ queryKey: ["purchase-request", editId] });
       toast.success(
         result.status === "For Recommendation"
-          ? "Purchase Request submitted, with its PPMP and LIB attached as supporting documents."
+          ? (result.digitallySigned ?? []).includes("requested")
+            ? "Purchase Request signed digitally and submitted, with its PPMP and LIB attached as supporting documents."
+            : "Purchase Request submitted, with its PPMP and LIB attached as supporting documents."
           : isEditing
             ? "Purchase Request updated."
             : "Purchase Request saved as draft.",
@@ -671,6 +677,10 @@ function NewPR() {
   function submitRequest() {
     const payload = buildPayload(true);
     if (!payload) return;
+    if (canSignPrDigitally(currentUser, existing ?? null, "submit")) {
+      setPendingSubmit(payload);
+      return;
+    }
     setAction("submit");
     mutation.mutate({ payload, submit: true });
   }
@@ -804,6 +814,27 @@ function NewPR() {
           </div>
         </div>
       </div>
+
+      <PnpkiSignDialog
+        open={pendingSubmit !== null}
+        onOpenChange={(v) => !v && setPendingSubmit(null)}
+        title="Sign and submit the Purchase Request"
+        description="Sign the PR digitally as its requester. The system makes the PR's PDF from what you submit and signs it with your certificate; the recommending officer and the Regional Director sign the same PDF next."
+        confirmLabel="Sign and submit"
+        remarks={false}
+        toastErrors={false}
+        paperLabel="Submit without digital signing"
+        onPaper={() => {
+          if (!pendingSubmit) return;
+          setAction("submit");
+          mutation.mutate({ payload: pendingSubmit, submit: true });
+        }}
+        onSign={async (password) => {
+          if (!pendingSubmit) return;
+          setAction("submit");
+          await mutation.mutateAsync({ payload: pendingSubmit, submit: true, pnpkiPassword: password });
+        }}
+      />
 
       {validationFailure && (
         <div className="no-print mx-auto w-full max-w-3xl px-3 pt-6 sm:px-6">

@@ -13,7 +13,8 @@ import { ValidationResultPanel } from "@/components/app/validation-result-panel"
 import { PrSupportingDocuments } from "@/components/app/pr-supporting-documents";
 import { PrProgressCard } from "@/components/app/pr-progress-card";
 import { PrSignedCopies, SignedCopyDialog } from "@/components/app/signed-copy";
-import { isSupplyTeam } from "@/lib/signed-copies";
+import { canSignPrDigitally, isSupplyTeam } from "@/lib/signed-copies";
+import { PnpkiSignDialog, PrDigitalDocumentCard } from "@/components/app/pnpki-sign";
 import { useCurrentUser } from "@/lib/current-user";
 import { fmtPHP, prTotal } from "@/lib/mock-data";
 import { apiApprovalAction, apiGetPurchaseRequest, apiRePurchaseRequest, apiValidatePurchaseRequest } from "@/lib/api";
@@ -36,6 +37,7 @@ function PRDetail() {
   const queryClient = useQueryClient();
   const { user } = useCurrentUser();
   const [approving, setApproving] = useState(false);
+  const [signingDigitally, setSigningDigitally] = useState(false);
   // Without an id: re-files the whole cancelled PR. With a waived PO's id: only that supplier's items.
   const rePr = useMutation({
     mutationFn: (purchaseOrderId?: string) => apiRePurchaseRequest(prId, purchaseOrderId),
@@ -92,6 +94,17 @@ function PRDetail() {
   // The RD approves with the scan of the wet-signed PR; the Supply team may upload it for the RD.
   const isApprover = user?.tier === "superadmin" || Boolean(user?.isRegionalDirector);
   const canRecordApproval = pr.status === "For Approval" && (isApprover || isSupplyTeam(user));
+  // The RD signs digitally when the recommending officer did; otherwise the scan of the paper copy.
+  const canApproveDigitally = pr.status === "For Approval" && canSignPrDigitally(user, pr, "approve");
+  const refreshAfterApproval = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["purchase-request", prId] }),
+      queryClient.invalidateQueries({ queryKey: ["pr-progress", prId] }),
+      queryClient.invalidateQueries({ queryKey: ["pr-signed-copies", prId] }),
+      queryClient.invalidateQueries({ queryKey: ["pr-digital-document", prId] }),
+      queryClient.invalidateQueries({ queryKey: ["approvals"] }),
+      queryClient.invalidateQueries({ queryKey: ["purchase-requests"] }),
+    ]);
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
@@ -105,13 +118,21 @@ function PRDetail() {
         onConfirm={async ({ file, remarks }) => {
           const result = await apiApprovalAction(pr.id, "approve", remarks || undefined, file);
           toast.success(result.message);
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ["purchase-request", prId] }),
-            queryClient.invalidateQueries({ queryKey: ["pr-progress", prId] }),
-            queryClient.invalidateQueries({ queryKey: ["pr-signed-copies", prId] }),
-            queryClient.invalidateQueries({ queryKey: ["approvals"] }),
-            queryClient.invalidateQueries({ queryKey: ["purchase-requests"] }),
-          ]);
+          await refreshAfterApproval();
+        }}
+      />
+      <PnpkiSignDialog
+        open={signingDigitally}
+        onOpenChange={setSigningDigitally}
+        title={`Approve ${pr.prNo}`}
+        description="Sign the PR digitally as the Regional Director. The PDF the recommending officer signed gets your signature too."
+        confirmLabel="Sign and approve"
+        paperLabel="Upload a scanned copy instead"
+        onPaper={() => setApproving(true)}
+        onSign={async (password, remarks) => {
+          const result = await apiApprovalAction(pr.id, "approve", remarks || undefined, null, password);
+          toast.success(result.message);
+          await refreshAfterApproval();
         }}
       />
       <Button asChild variant="ghost" size="sm" className="gap-1 -ml-2 text-muted-foreground hover:text-navy">
@@ -125,10 +146,16 @@ function PRDetail() {
         actions={
           <>
             <StatusBadge status={pr.status} />
-            {canRecordApproval && (
-              <Button className="gap-2" onClick={() => setApproving(true)}>
-                <FileSignature className="h-4 w-4" /> {isApprover ? "Approve with signed copy" : "Upload signed PR for the RD"}
+            {canApproveDigitally ? (
+              <Button className="gap-2" onClick={() => setSigningDigitally(true)}>
+                <FileSignature className="h-4 w-4" /> Approve and sign digitally
               </Button>
+            ) : (
+              canRecordApproval && (
+                <Button className="gap-2" onClick={() => setApproving(true)}>
+                  <FileSignature className="h-4 w-4" /> {isApprover ? "Approve with signed copy" : "Upload signed PR for the RD"}
+                </Button>
+              )
             )}
             {(pr.status === "Draft" || pr.status === "Returned") && (
               <Button asChild className="gap-2">
@@ -306,6 +333,7 @@ function PRDetail() {
 
         <TabsContent value="attachments" className="mt-4">
           <div className="space-y-4">
+            <PrDigitalDocumentCard prId={pr.id} prNo={pr.prNo} />
             <PrSignedCopies prId={pr.id} />
             <PrSupportingDocuments prId={pr.id} submitted={pr.status !== "Draft"} />
           </div>

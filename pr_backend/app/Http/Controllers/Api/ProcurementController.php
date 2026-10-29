@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Documents\PurchaseRequestPdf;
 use App\Http\Controllers\Concerns\HandlesSignedCopies;
 use App\Http\Controllers\Concerns\HasProcurementHelpers;
 use App\Http\Controllers\Controller;
@@ -10,6 +11,7 @@ use App\Models\AppCseItem;
 use App\Models\AppNonCseItem;
 use App\Models\AuditLog;
 use App\Models\BudgetAllocation;
+use App\Models\DigitalSignature;
 use App\Models\FundSource;
 use App\Models\LibDocument;
 use App\Models\LibDocumentRow;
@@ -28,6 +30,7 @@ use App\Models\SignedCopy;
 use App\Models\SystemPreference;
 use App\Models\User;
 use App\Models\UserNotification;
+use App\Services\Pnpki\DigitalSigning;
 use App\Services\PrProgress;
 use App\Services\PrSupportingDocuments;
 use App\Services\PurchaseRequestChecks;
@@ -243,7 +246,8 @@ class ProcurementController extends Controller
     /** Upload / replace the current user's e-signature image (base64 data URL). */
     public function storeSignature(Request $request): JsonResponse
     {
-        abort_unless(config('features.e_signature'), 403, 'E-signatures are turned off for now. Digital signing will come with PNPKI.');
+        // The signature image is how a PNPKI signature looks on the document.
+        abort_unless(config('features.e_signature') || config('pnpki.enabled'), 403, 'E-signatures are turned off for now. Digital signing will come with PNPKI.');
         $data = $request->validate([
             'signature' => ['required', 'string', 'starts_with:data:image/', 'max:2000000'],
         ]);
@@ -2077,6 +2081,7 @@ class ProcurementController extends Controller
         abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
         abort_unless($purchaseRequest->isManageableBy($request->user()), 403, 'Only the requester who owns this Purchase Request may submit it.');
         abort_unless(in_array($purchaseRequest->status, ['Draft', 'Returned'], true), 422, 'Only a draft or returned Purchase Request can be submitted.');
+        $this->preflightRequesterSignature($request, $purchaseRequest->requested_by);
         $validation = $this->validateForSubmission($request, $purchaseRequest);
 
         if ($validation['status'] === 'Failed') {
@@ -2110,15 +2115,18 @@ class ProcurementController extends Controller
             }
         }
 
+        // With their certificate password, the requester signs the PR's PDF digitally — the PDF is made
+        // now, from the PR as submitted, and the recommending officer and RD sign that same file.
+        $purchaseRequest->submitted_at = now();
+        $signature = $this->signPrDigitally($request, $purchaseRequest, 'requested', 'Requested by');
         $purchaseRequest->forceFill([
             'status' => 'For Recommendation',
             'stage' => $this->preferenceValue('recommending_approval_stage', 'Division Chief Recommendation'),
-            'submitted_at' => now(),
         ])->save();
 
         $attached = PrSupportingDocuments::attach($purchaseRequest, $request->user());
 
-        $this->recordAction($request, $purchaseRequest, 'Requester', 'Submitted PR', 'Initial submission.');
+        $this->recordAction($request, $purchaseRequest, 'Requester', 'Submitted PR', $this->digitalNote($signature, 'Initial submission.'));
         $this->notifyPrSubmitted($purchaseRequest);
 
         return $attached;
@@ -2396,11 +2404,18 @@ class ProcurementController extends Controller
         // The order is fixed: submitted -> recommended -> approved by the Regional Director.
         abort_unless($purchaseRequest->status === 'For Recommendation', 422, "Only a submitted Purchase Request awaiting recommendation can be recommended (this one is {$purchaseRequest->status}).");
         $this->requireSignature($request->user());
+        // With their certificate password, the recommending officer signs the PR's PDF digitally (PNPKI),
+        // the one the requester signed at submission.
+        if ($request->filled('pnpki_password')) {
+            abort_unless(DigitalSigning::documentFor($purchaseRequest, 'purchase_request')?->isSigned('requested'), 422,
+                'The requester did not sign this PR digitally. Recommend it without your certificate password, and sign the printed copy.');
+        }
+        $signature = $this->signPrDigitally($request, $purchaseRequest, 'recommending', 'Recommending Approval');
         $purchaseRequest->forceFill([
             'status' => 'For Approval',
             'stage' => $this->preferenceValue('rd_approval_stage', 'Director Approval'),
         ])->save();
-        $this->recordAction($request, $purchaseRequest, 'Recommender', 'Recommended', $request->input('remarks'));
+        $this->recordAction($request, $purchaseRequest, 'Recommender', 'Recommended', $this->digitalNote($signature, $request->input('remarks')));
 
         $this->notify($this->designatedRegionalDirector(), 'pr_for_approval', 'Purchase Request awaiting your approval',
             "{$purchaseRequest->pr_no} was recommended and is awaiting your digital sign.", '/approval-inbox', ['prId' => $purchaseRequest->id]);
@@ -2411,9 +2426,11 @@ class ProcurementController extends Controller
     }
 
     /**
-     * The Regional Director's approval. Signatures are wet: it goes through with the scan of the PR
-     * signed by the Recommending officer and the RD attached — uploaded by the RD, or by the Supply
-     * team for them (recorded as such on the trail).
+     * The Regional Director's approval, in one of two ways:
+     *  - digitally (PNPKI): the RD types their certificate password and signs the PR's PDF, which the
+     *    recommending officer already signed digitally; or
+     *  - on paper: with the scan of the PR signed by the Recommending officer and the RD attached —
+     *    uploaded by the RD, or by the Supply team for them (recorded as such on the trail).
      */
     public function approve(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
@@ -2427,15 +2444,134 @@ class ProcurementController extends Controller
             ? 'This Purchase Request has not been recommended yet. The recommending officer signs it first.'
             : "Only a recommended Purchase Request can be approved (this one is {$purchaseRequest->status}).");
         $this->requireSignature($user);
-        $scan = $this->signedCopyFile($request);
+        $digital = $request->filled('pnpki_password');
+        if ($digital) {
+            abort_unless(DigitalSigning::documentFor($purchaseRequest, 'purchase_request')?->isSigned('recommending'), 422,
+                'The recommending officer did not sign this PR digitally. Print it for wet signatures and upload the scanned copy instead.');
+        }
+        $scan = $digital ? null : $this->signedCopyFile($request);
+        $signature = $this->signPrDigitally($request, $purchaseRequest, 'approving', 'Approved by the Regional Director');
 
         $purchaseRequest->forceFill(['status' => 'Approved', 'stage' => 'Approved'])->save();
         $this->storeSignedCopy($request, $purchaseRequest, 'pr_approved', $this->signatoryName($this->designatedRegionalDirector(), 'Regional Director'), $scan, $onBehalf);
-        $this->recordAction($request, $purchaseRequest, 'Approver', 'Approved', $this->onBehalfNote($request, $onBehalf, 'Regional Director', $request->input('remarks')));
+        $this->recordAction($request, $purchaseRequest, 'Approver', 'Approved', $this->digitalNote($signature, $this->onBehalfNote($request, $onBehalf, 'Regional Director', $request->input('remarks'))));
         $this->notify($purchaseRequest->requester, 'pr_approved', 'Purchase Request approved',
             "{$purchaseRequest->pr_no} was approved. It can now proceed to RFQ.", "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id]);
 
         return response()->json(['message' => 'Purchase Request approved.', 'data' => $this->format($purchaseRequest->fresh())]);
+    }
+
+    /**
+     * Signs one part of the PR's PDF with the signed-in user's PNPKI certificate, when they typed its
+     * password (`pnpki_password`); null when they did not (the paper route). Only the person named for
+     * that part signs it — never someone on their behalf, and never a superadmin in their place.
+     */
+    private function signPrDigitally(Request $request, PurchaseRequest $purchaseRequest, string $field, string $reason): ?DigitalSignature
+    {
+        if (! $request->filled('pnpki_password')) {
+            return null;
+        }
+        abort_unless(config('pnpki.enabled'), 403, 'PNPKI digital signing is not turned on yet.');
+
+        $user = $request->user();
+        $named = match ($field) {
+            'requested' => $purchaseRequest->requested_by,
+            'recommending' => $purchaseRequest->recommending_officer_id,
+            'approving' => $this->designatedRegionalDirector()?->id,
+            default => null,
+        };
+        abort_unless($named !== null && $user?->id === $named, 403, match ($field) {
+            'requested' => 'Only the requester can sign this PR digitally, with their own certificate.',
+            'recommending' => 'Only the recommending officer named on this PR can sign it digitally, with their own certificate.',
+            default => 'Only the Regional Director can sign this PR digitally, with their own certificate.',
+        });
+
+        return app(DigitalSigning::class)->sign(
+            $purchaseRequest,
+            'purchase_request',
+            fn () => PurchaseRequestPdf::build($purchaseRequest, $this->designatedRegionalDirector()),
+            $field,
+            $user,
+            (string) $request->input('pnpki_password'),
+            $reason,
+        );
+    }
+
+    /**
+     * Before a PR is saved or submitted with the requester's certificate password: the password must
+     * open their certificate, so a wrong one stops everything instead of leaving a half-done submission.
+     */
+    private function preflightRequesterSignature(Request $request, ?int $requesterId, bool $filedForSomeoneElse = false): void
+    {
+        if (! $request->filled('pnpki_password')) {
+            return;
+        }
+        abort_unless(config('pnpki.enabled'), 403, 'PNPKI digital signing is not turned on yet.');
+        abort_if($filedForSomeoneElse || $requesterId !== $request->user()?->id, 403, 'Only the requester can sign this PR digitally, with their own certificate.');
+        app(DigitalSigning::class)->preflight($request->user(), (string) $request->input('pnpki_password'));
+    }
+
+    /** "Signed digitally with PNPKI (certificate JUAN DELA CRUZ, serial 1A2B)." ahead of any remarks. */
+    private function digitalNote(?DigitalSignature $signature, ?string $remarks): ?string
+    {
+        if ($signature === null) {
+            return $remarks;
+        }
+        $note = "Signed digitally with PNPKI (certificate {$signature->certificate_cn}, serial {$signature->certificate_serial}).";
+
+        return $remarks ? "{$note} {$remarks}" : $note;
+    }
+
+    /**
+     * The PR's digitally signed PDF: its signatures so far and, with ?verify=1, a fresh check of each
+     * one (intact, by whom, trusted) — the same check Adobe Reader makes.
+     */
+    public function purchaseRequestDigitalDocument(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
+    {
+        $this->guardModule('pr');
+        abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
+        $document = DigitalSigning::documentFor($purchaseRequest, 'purchase_request');
+        if ($document === null) {
+            return response()->json(['data' => null]);
+        }
+
+        $checks = $request->boolean('verify') ? collect(app(DigitalSigning::class)->verify($document))->keyBy('field') : collect();
+
+        return response()->json(['data' => [
+            'version' => $document->version,
+            'updated_at' => $document->updated_at?->toISOString(),
+            'fields' => collect($document->fields)->map(function (array $spec) use ($document, $checks): array {
+                $signature = $document->signatures->firstWhere('field', $spec['name']);
+                $check = $checks->get($spec['name']);
+
+                return [
+                    'name' => $spec['name'],
+                    'label' => $spec['label'],
+                    'signed' => $signature !== null,
+                    'signer_name' => $signature?->signer_name,
+                    'certificate_cn' => $signature?->certificate_cn,
+                    'certificate_serial' => $signature?->certificate_serial,
+                    'issuer_cn' => $signature?->issuer_cn,
+                    'signed_at' => $signature?->signed_at?->toISOString(),
+                    'check' => $check ? [
+                        'intact' => $check['intact'],
+                        'valid' => $check['valid'],
+                        'trusted' => $check['trusted'],
+                        'summary' => $check['summary'],
+                    ] : null,
+                ];
+            })->values(),
+        ]]);
+    }
+
+    public function purchaseRequestDigitalDocumentDownload(Request $request, PurchaseRequest $purchaseRequest)
+    {
+        $this->guardModule('pr');
+        abort_unless($purchaseRequest->isVisibleTo($request->user()), 404);
+        $document = DigitalSigning::documentFor($purchaseRequest, 'purchase_request');
+        abort_if($document === null || ! Storage::disk('local')->exists($document->path), 404, 'This PR has no digitally signed PDF yet.');
+
+        return Storage::disk('local')->download($document->path, "PR {$purchaseRequest->pr_no} (digitally signed).pdf", ['Content-Type' => 'application/pdf']);
     }
 
     public function reject(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
@@ -2465,6 +2601,8 @@ class ProcurementController extends Controller
         $role = $this->abortUnlessCanActOnPr($request->user(), $purchaseRequest);
         $data = $request->validate(['reason' => ['required', 'string']]);
         $purchaseRequest->forceFill(['status' => 'Returned', 'stage' => "Returned by {$role}"])->save();
+        // The requester revises it, so its signed PDF no longer matches; the resubmission makes a new one.
+        DigitalSigning::supersede($purchaseRequest, 'purchase_request');
         $this->recordAction($request, $purchaseRequest, $role, 'Returned', $data['reason']);
         $this->notify($purchaseRequest->requester, 'pr_returned', 'Purchase Request returned for revision',
             "{$purchaseRequest->pr_no} was returned: {$data['reason']}", "/purchase-requests/{$purchaseRequest->id}", ['prId' => $purchaseRequest->id]);
@@ -2653,6 +2791,10 @@ class ProcurementController extends Controller
             'submit' => ['sometimes', 'boolean'],
         ])->validate();
         $this->abortUnlessCanRecommend($data['recommending_officer_id'] ?? null);
+        if ($data['submit'] ?? false) {
+            // A PR filed for someone else is never signed digitally by whoever filed it.
+            $this->preflightRequesterSignature($request, $request->user()->id, (bool) ($data['requested_by'] ?? null) && (int) $data['requested_by'] !== $request->user()->id);
+        }
 
         $purchaseRequest = DB::transaction(function () use ($data, $request): PurchaseRequest {
             // Only Admin/Superadmin may file a PR on someone else's behalf; everyone else is always the requester.
@@ -3339,6 +3481,8 @@ class ProcurementController extends Controller
             'validation' => $record->validationResults,
             // Scans of the wet-signed PR (signatures are on paper for now).
             'signed_copies' => $this->signedCopiesOf($record),
+            // Which parts of the PR's PDF are signed digitally with PNPKI so far.
+            'digitally_signed' => DigitalSigning::documentFor($record, 'purchase_request')?->signatures->pluck('field')->values() ?? [],
             // The PR's real history, oldest first, with who acted.
             'approval_trail' => $record->approvalActions->sortBy('id')->values()->map(fn ($a): array => [
                 'id' => $a->id,

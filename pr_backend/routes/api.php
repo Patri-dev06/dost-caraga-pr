@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AbstractOfCanvasController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\PnpkiCertificateController;
 use App\Http\Controllers\Api\ProcurementController;
 use App\Http\Controllers\Api\PurchaseOrderController;
 use App\Http\Controllers\Api\RfqController;
@@ -29,6 +30,11 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/me/signature', [ProcurementController::class, 'showSignature']);
         Route::post('/me/signature', [ProcurementController::class, 'storeSignature']);
         Route::delete('/me/signature', [ProcurementController::class, 'destroySignature']);
+        // Current user's PNPKI certificate (.p12): registered once, stored encrypted, password asked at each signing.
+        Route::get('/me/pnpki-certificate', [PnpkiCertificateController::class, 'show']);
+        Route::post('/me/pnpki-certificate', [PnpkiCertificateController::class, 'store']);
+        Route::post('/me/pnpki-certificate/verify', [PnpkiCertificateController::class, 'verify']);
+        Route::delete('/me/pnpki-certificate', [PnpkiCertificateController::class, 'destroy']);
 
         // In-app notifications.
         Route::get('/notifications', [ProcurementController::class, 'notifications']);
@@ -92,6 +98,8 @@ Route::prefix('v1')->group(function (): void {
         Route::get('/purchase-requests/{purchaseRequest}/supporting-documents', [ProcurementController::class, 'purchaseRequestSupportingDocuments']);
         Route::get('/purchase-requests/{purchaseRequest}/progress', [ProcurementController::class, 'purchaseRequestProgress']);
         Route::get('/purchase-requests/{purchaseRequest}/signed-copies', [ProcurementController::class, 'purchaseRequestSignedCopies']);
+        Route::get('/purchase-requests/{purchaseRequest}/digital-document', [ProcurementController::class, 'purchaseRequestDigitalDocument']);
+        Route::get('/purchase-requests/{purchaseRequest}/digital-document/download', [ProcurementController::class, 'purchaseRequestDigitalDocumentDownload']);
         Route::get('/signed-copies/{signedCopy}', [ProcurementController::class, 'signedCopyDownload']);
         // Supply's hand-kept Monitoring Sheet columns (ORS/BURS, delivery, IAR, issuance, payment).
         Route::put('/purchase-requests/{purchaseRequest}/monitoring', [ProcurementController::class, 'updateMonitoringEntry']);

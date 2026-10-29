@@ -14,6 +14,8 @@ import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
 import { ListPagination } from "@/components/app/list-pagination";
 import { SignedCopyDialog } from "@/components/app/signed-copy";
+import { PnpkiSignDialog } from "@/components/app/pnpki-sign";
+import { canSignPrDigitally } from "@/lib/signed-copies";
 import { fmtPHP, prTotal, PurchaseRequest } from "@/lib/mock-data";
 import { toast } from "sonner";
 import { apiApprovalAction, apiGetApprovalsPage, apiGetAocs, apiGetAocsPage } from "@/lib/api";
@@ -41,6 +43,8 @@ function Inbox() {
   const [remarks, setRemarks] = useState("");
   // Approving needs the scan of the PR with its wet signatures (Recommending + RD).
   const [approving, setApproving] = useState<PurchaseRequest | null>(null);
+  // Recommending / approving digitally with the user's PNPKI certificate, when they can.
+  const [signing, setSigning] = useState<{ pr: PurchaseRequest; step: "recommend" | "approve" } | null>(null);
   const queryClient = useQueryClient();
   const { user } = useCurrentUser();
   const search = Route.useSearch();
@@ -81,6 +85,11 @@ function Inbox() {
       return;
     }
     if (!open) return;
+    if ((action === "recommend" || action === "approve") && canSignPrDigitally(user, open, action)) {
+      setSigning({ pr: open, step: action });
+      setOpen(null);
+      return;
+    }
     if (action === "approve") {
       setApproving(open);
       setOpen(null);
@@ -220,6 +229,30 @@ function Inbox() {
           )}
         </DialogContent>
       </Dialog>
+
+      <PnpkiSignDialog
+        open={signing !== null}
+        onOpenChange={(v) => !v && setSigning(null)}
+        title={`${signing?.step === "approve" ? "Approve" : "Recommend"} ${signing?.pr.prNo ?? "Purchase Request"}`}
+        description={
+          signing?.step === "approve"
+            ? "Sign the PR digitally as the Regional Director. The PDF the recommending officer signed gets your signature too."
+            : "Sign the PR digitally as its recommending officer. The system makes the PR's PDF and signs it with your certificate; the Regional Director signs the same PDF next."
+        }
+        confirmLabel={signing?.step === "approve" ? "Sign and approve" : "Sign and recommend"}
+        remarks={false}
+        paperLabel={signing?.step === "approve" ? "Upload a scanned copy instead" : "Recommend without digital signing"}
+        onPaper={() => {
+          if (!signing) return;
+          if (signing.step === "approve") setApproving(signing.pr);
+          else actionMutation.mutate({ id: signing.pr.id, action: "recommend", reason: remarks.trim() || undefined });
+        }}
+        onSign={async (password) => {
+          if (!signing) return;
+          const result = await apiApprovalAction(signing.pr.id, signing.step, remarks.trim() || undefined, null, password);
+          await afterAction(result.message);
+        }}
+      />
 
       <SignedCopyDialog
         open={approving !== null}

@@ -94,6 +94,32 @@ The templates assume the deployment user is `talinoserver2`, npm is
 `/usr/local/bin/npm`, and the paths above are unchanged. Edit the tracked templates
 before bootstrap if an assumption changes.
 
+## PNPKI digital signing (off until set up)
+
+Signatories register their DICT PNPKI certificate (.p12) once; it is stored encrypted and its
+password is asked at every signing. A small Python helper (`pr_backend/signing/pnpki.py`, built on
+pyHanko) reads the certificates and signs the PDFs. To turn it on:
+
+```bash
+cd /home/talinoserver2/apps/dost-caraga-pr
+python3 -m venv shared/pnpki-venv
+shared/pnpki-venv/bin/pip install -r current/pr_backend/signing/requirements.txt
+php current/pr_backend/artisan pnpki:key        # prints PNPKI_STORAGE_KEY=...
+```
+
+Add to `shared/backend.env`, then save the DICT PNPKI root and intermediate CA certificates (PEM)
+to `shared/storage/app/pnpki/trusted-ca.pem`:
+
+```dotenv
+PNPKI_ENABLED=true
+PNPKI_PYTHON=/home/talinoserver2/apps/dost-caraga-pr/shared/pnpki-venv/bin/python
+PNPKI_STORAGE_KEY=base64:...
+```
+
+Run `php current/pr_backend/artisan pnpki:check`; it lists anything still missing. Back up
+`PNPKI_STORAGE_KEY` with the database backups: without it, the stored certificates cannot be opened
+and every signatory must register theirs again. Deployments keep `shared/pnpki-venv` up to date.
+
 ## GitHub configuration
 
 Create a GitHub environment named `production`. An approval rule is recommended for

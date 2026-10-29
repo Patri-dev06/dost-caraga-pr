@@ -8,6 +8,7 @@ use App\Models\ApiToken;
 use App\Models\AuditLog;
 use App\Models\Office;
 use App\Models\Role;
+use App\Models\SigningCertificate;
 use App\Models\SystemPreference;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -70,7 +71,7 @@ class AuthController extends Controller
         $when = now()->timezone('Asia/Manila')->format('F j, Y g:i A').' (Philippine time)';
         $body = implode("\n", [
             "Hello {$user->name},",
-            "Your account was just used to sign in to the DOST Caraga Procurement System.",
+            'Your account was just used to sign in to the DOST Caraga Procurement System.',
             "When: {$when}",
             'IP address: '.($request->ip() ?? 'unknown'),
             'Browser/device: '.Str::limit((string) ($request->userAgent() ?? 'unknown'), 200),
@@ -198,6 +199,9 @@ class AuthController extends Controller
             'is_twg_lead' => $twgLeadId !== null && (int) $twgLeadId === $user->id,
             // Whether uploaded e-signatures are in use (off until PNPKI) — the app hides them when not.
             'e_signature_enabled' => (bool) config('features.e_signature'),
+            // PNPKI digital signing: on/off, and whether this user has registered their certificate.
+            'pnpki_enabled' => (bool) config('pnpki.enabled'),
+            'has_pnpki_certificate' => SigningCertificate::where('user_id', $user->id)->active()->exists(),
         ]);
     }
 

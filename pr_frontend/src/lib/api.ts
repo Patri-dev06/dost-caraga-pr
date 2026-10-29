@@ -47,6 +47,9 @@ export type CurrentUser = {
   hasSignature: boolean; // an e-signature is uploaded (required to sign/approve while e-signatures are on)
   /** Uploaded e-signatures are in use. Off until PNPKI: signing needs no upload, and none are shown. */
   eSignatureEnabled: boolean;
+  /** PNPKI digital signing is on, and whether this user has registered their certificate (.p12). */
+  pnpkiEnabled: boolean;
+  hasPnpkiCertificate: boolean;
 };
 
 export type RoleRecord = {
@@ -178,6 +181,8 @@ export type PurchaseRequestCreatePayload = {
   recommending_designation?: string;
   approving_designation?: string;
   submit?: boolean;
+  /** Submitting: signs the PR's PDF digitally with the requester's PNPKI certificate. */
+  pnpki_password?: string;
   items: Array<{
     name: string;
     description?: string;
@@ -797,9 +802,11 @@ export async function apiUpdatePurchaseRequest(id: string | number, payload: Pur
   return mapPurchaseRequest(result.data);
 }
 
-export async function apiSubmitPurchaseRequest(id: string | number) {
+/** `pnpkiPassword`: the requester signs the PR's PDF digitally (PNPKI) as they submit it. */
+export async function apiSubmitPurchaseRequest(id: string | number, pnpkiPassword?: string) {
   const result = await request<ApiRecord<BackendPurchaseRequest> & { message: string }>(`/purchase-requests/${id}/submit`, {
     method: "POST",
+    body: pnpkiPassword ? { pnpki_password: pnpkiPassword } : undefined,
   });
   return mapPurchaseRequest(result.data);
 }
@@ -834,12 +841,79 @@ export async function apiGetApprovals(limit?: number, perPage = 100) {
   return result.data.map(mapPurchaseRequest);
 }
 
-/** `signedCopy`: the scan of the wet-signed PR, required to approve it. */
-export async function apiApprovalAction(id: string | number, action: "recommend" | "approve" | "reject" | "return", reason?: string, signedCopy?: File | null) {
+/**
+ * Recommend / approve either digitally — `pnpkiPassword` signs the PR's PDF with the user's registered
+ * PNPKI certificate — or on paper, where approving needs `signedCopy`, the scan of the wet-signed PR.
+ */
+export async function apiApprovalAction(
+  id: string | number,
+  action: "recommend" | "approve" | "reject" | "return",
+  reason?: string,
+  signedCopy?: File | null,
+  pnpkiPassword?: string,
+) {
   return request<ApiRecord<BackendPurchaseRequest> & { message: string }>(`/approvals/${id}/${action}`, {
     method: "POST",
-    body: action === "reject" || action === "return" ? { reason } : withSignedCopy({ remarks: reason }, signedCopy),
+    body:
+      action === "reject" || action === "return"
+        ? { reason }
+        : pnpkiPassword
+          ? { remarks: reason, pnpki_password: pnpkiPassword }
+          : withSignedCopy({ remarks: reason }, signedCopy),
   });
+}
+
+/** One signatory's place on a PR's digitally signed PDF, and (when checked) whether the signature holds. */
+export type DigitalSignatureField = {
+  name: string;
+  label: string;
+  signed: boolean;
+  signerName: string | null;
+  certificateCn: string | null;
+  certificateSerial: string | null;
+  issuerCn: string | null;
+  signedAt: string | null;
+  check: { intact: boolean; valid: boolean; trusted: boolean; summary: string } | null;
+};
+
+export type DigitalDocumentInfo = { version: number; updatedAt: string | null; fields: DigitalSignatureField[] };
+
+/** The PR's PNPKI-signed PDF; `verify` re-checks every signature (the same check Adobe Reader makes). */
+export async function apiGetPrDigitalDocument(prId: string, verify = false): Promise<DigitalDocumentInfo | null> {
+  const result = await request<{ data: Record<string, unknown> | null }>(`/purchase-requests/${prId}/digital-document${verify ? "?verify=1" : ""}`);
+  if (!result.data) return null;
+  const d = result.data;
+  return {
+    version: Number(d.version ?? 0),
+    updatedAt: (d.updated_at as string | null) ?? null,
+    fields: ((d.fields as Record<string, unknown>[]) ?? []).map((f) => ({
+      name: String(f.name),
+      label: String(f.label ?? f.name),
+      signed: Boolean(f.signed),
+      signerName: (f.signer_name as string | null) ?? null,
+      certificateCn: (f.certificate_cn as string | null) ?? null,
+      certificateSerial: (f.certificate_serial as string | null) ?? null,
+      issuerCn: (f.issuer_cn as string | null) ?? null,
+      signedAt: (f.signed_at as string | null) ?? null,
+      check: (f.check as DigitalSignatureField["check"]) ?? null,
+    })),
+  };
+}
+
+export async function apiDownloadPrDigitalDocument(prId: string, prNo: string) {
+  const token = getToken();
+  if (!token) {
+    notifyAuthExpired();
+    throw new Error("Please sign in to continue.");
+  }
+  const response = await fetch(`${API_BASE_URL}/purchase-requests/${prId}/digital-document/download`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) throw new Error("Could not download the signed PDF.");
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `PR ${prNo} (digitally signed).pdf`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function apiGetUsers() {
@@ -1325,6 +1399,7 @@ function withSignedCopy(fields: Record<string, unknown>, signedCopy?: File | nul
 type BackendPurchaseRequest = {
   id: number;
   signed_copies?: Record<string, unknown>[];
+  digitally_signed?: string[];
   pr_no: string;
   office: string | BackendNamedRecord | null;
   fund_source: string | (BackendNamedRecord & { fund_type?: "GAA" | "Trust" | "Special" }) | null;
@@ -1424,6 +1499,8 @@ type BackendUser = {
   is_twg_lead?: boolean;
   has_signature?: boolean;
   e_signature_enabled?: boolean;
+  pnpki_enabled?: boolean;
+  has_pnpki_certificate?: boolean;
   last_login_at: string | null;
 };
 
@@ -1541,6 +1618,7 @@ function mapPurchaseRequest(pr: BackendPurchaseRequest): PurchaseRequest {
     id: String(pr.id),
     prNo: pr.pr_no,
     signedCopies: (pr.signed_copies ?? []).map(mapSignedCopy),
+    digitallySigned: pr.digitally_signed ?? [],
     office: textFromRelation(pr.office, "Unassigned"),
     fundSource: textFromRelation(pr.fund_source, "Unassigned"),
     fundType,
@@ -1549,6 +1627,7 @@ function mapPurchaseRequest(pr: BackendPurchaseRequest): PurchaseRequest {
     dateSubmitted: dateOnly(pr.date_submitted ?? pr.submitted_at) ?? "Not submitted",
     requestedBy: textFromRelation(pr.requester ?? pr.requested_by, "Unassigned"),
     requestedByPosition: typeof (pr.requester ?? pr.requested_by) === "object" ? ((pr.requester ?? pr.requested_by) as BackendNamedRecord | null)?.position ?? "" : "",
+    requestedById: typeof (pr.requester ?? pr.requested_by) === "object" ? (((pr.requester ?? pr.requested_by) as BackendNamedRecord | null)?.id ?? null) : null,
     recommendingOfficer: pr.recommending_officer
       ? { id: pr.recommending_officer.id, name: pr.recommending_officer.name, position: pr.recommending_officer.position ?? null }
       : null,
@@ -2829,6 +2908,8 @@ function mapCurrentUser(user: BackendUser): CurrentUser {
     isTwgLead: Boolean(user.is_twg_lead),
     hasSignature: Boolean(user.has_signature),
     eSignatureEnabled: Boolean(user.e_signature_enabled),
+    pnpkiEnabled: Boolean(user.pnpki_enabled),
+    hasPnpkiCertificate: Boolean(user.has_pnpki_certificate),
   };
 }
 
@@ -2846,6 +2927,62 @@ export async function apiSetMySignature(signature: string): Promise<void> {
 /** Remove the current user's e-signature. */
 export async function apiDeleteMySignature(): Promise<void> {
   await request<{ data: { has_signature: boolean } }>("/me/signature", { method: "DELETE" });
+}
+
+/** The current user's registered PNPKI certificate (public details only — the key never leaves the server). */
+export type PnpkiCertificate = {
+  id: string;
+  subjectCn: string;
+  email: string | null;
+  serial: string;
+  issuerCn: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  expired: boolean;
+  issuerTrusted: boolean;
+  fingerprint: string;
+  registeredAt: string | null;
+};
+
+function mapPnpkiCertificate(c: Record<string, unknown>): PnpkiCertificate {
+  return {
+    id: String(c.id),
+    subjectCn: String(c.subject_cn ?? ""),
+    email: (c.email as string | null) ?? null,
+    serial: String(c.serial ?? ""),
+    issuerCn: (c.issuer_cn as string | null) ?? null,
+    validFrom: (c.valid_from as string | null) ?? null,
+    validTo: (c.valid_to as string | null) ?? null,
+    expired: Boolean(c.expired),
+    issuerTrusted: Boolean(c.issuer_trusted),
+    fingerprint: String(c.fingerprint ?? ""),
+    registeredAt: (c.registered_at as string | null) ?? null,
+  };
+}
+
+export async function apiGetMyPnpkiCertificate(): Promise<{ enabled: boolean; certificate: PnpkiCertificate | null }> {
+  const result = await request<{ data: { enabled: boolean; certificate: Record<string, unknown> | null } }>("/me/pnpki-certificate");
+  return { enabled: result.data.enabled, certificate: result.data.certificate ? mapPnpkiCertificate(result.data.certificate) : null };
+}
+
+/** Registers (or replaces) the certificate: the .p12 is stored encrypted; the password only opens it to check it. */
+export async function apiRegisterPnpkiCertificate(certificate: File, password: string) {
+  const form = new FormData();
+  form.append("certificate", certificate);
+  form.append("password", password);
+  const result = await request<{ message: string; data: Record<string, unknown> }>("/me/pnpki-certificate", { method: "POST", body: form });
+  return { message: result.message, data: mapPnpkiCertificate(result.data) };
+}
+
+/** Checks that the password opens the stored certificate. */
+export async function apiVerifyPnpkiPassword(password: string) {
+  const result = await request<{ message: string; data: Record<string, unknown> }>("/me/pnpki-certificate/verify", { method: "POST", body: { password } });
+  return result.message;
+}
+
+export async function apiRemovePnpkiCertificate() {
+  const result = await request<{ message: string }>("/me/pnpki-certificate", { method: "DELETE" });
+  return result.message;
 }
 
 function mapRole(role: BackendRole): RoleRecord {
